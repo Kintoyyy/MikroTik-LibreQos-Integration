@@ -1,3 +1,6 @@
+[![Watch the video](https://img.youtube.com/vi/N9SZzuuo3CU/0.jpg)](https://www.youtube.com/watch?v=N9SZzuuo3CU)
+
+
 ### **Script Description: LibreQoS MikroTik PPP Secret Sync**
 
 This script automates the synchronization of MikroTik PPP secrets (e.g., PPPoE users) with a LibreQoS-compatible CSV file (`ShapedDevices.csv`). It continuously monitors the MikroTik router for changes to PPP secrets, such as additions, updates, or deletions, and updates the CSV file accordingly. The script also calculates rate limits (download/upload speeds) based on the assigned PPP profile and ensures the CSV file is always up-to-date.
