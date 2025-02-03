@@ -1,5 +1,3 @@
-sudo nano /opt/libreqos/src/updatecsv.py
-
 import csv
 import logging
 import time
