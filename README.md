@@ -1,3 +1,5 @@
+This script has been discontinued and is no longer maintained. It may no longer function as expected or receive updates. Thank you for your support!
+
 [![Watch the video](https://img.youtube.com/vi/N9SZzuuo3CU/0.jpg)](https://www.youtube.com/watch?v=N9SZzuuo3CU)
 
 
