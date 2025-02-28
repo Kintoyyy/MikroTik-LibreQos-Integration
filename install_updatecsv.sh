@@ -4,6 +4,7 @@
 LIBREQOS_DIR="/opt/libreqos"
 SRC_DIR="$LIBREQOS_DIR/src"
 PYTHON_SCRIPT="$SRC_DIR/updatecsv.py"
+ROUTER_FILE="$SRC_DIR/routers.csv"
 SERVICE_FILE="/etc/systemd/system/updatecsv.service"
 
 # Create the directories if they don't exist
@@ -459,6 +460,11 @@ ExecStartPre=/bin/chmod -R 755 /opt/libreqos/src
 
 [Install]
 WantedBy=multi-user.target
+EOF
+
+# Write the routers.csv file
+cat << 'EOF' > "$ROUTER_FILE"
+Router Name / ID,IP,API Username,API Password,API Port
 EOF
 
 # Reload the systemd daemon

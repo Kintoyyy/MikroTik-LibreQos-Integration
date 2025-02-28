@@ -24,7 +24,8 @@ Before proceeding, ensure the following:
 
 2. **Install the `routeros_api` library**:
    ```bash
-   pip3 install routeros_api
+   sudo apt install pipx
+   pipx install routeros_api
    ```
 
 ---
