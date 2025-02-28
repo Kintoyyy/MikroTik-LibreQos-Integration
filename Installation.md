@@ -1,6 +1,6 @@
-### **Installation Guide: LibreQoS MikroTik PPP Secret Sync**
+### **Installation Guide: LibreQoS MikroTik PPP and Active Hotspot User Sync**
 
-This guide will walk you through the installation and setup of the **LibreQoS MikroTik PPP Secret Sync** script. The script synchronizes MikroTik PPP secrets with a LibreQoS-compatible CSV file (`ShapedDevices.csv`) and runs as a background service using `systemd`.
+This guide will walk you through the installation and setup of the **LibreQoS MikroTik PPP and Active Hotspot User Sync** script. The script synchronizes MikroTik PPP secrets (PPPoE users) and active hotspot users with a LibreQoS-compatible CSV file (`ShapedDevices.csv`). It continuously monitors the MikroTik router for changes and ensures the CSV file remains up to date. The script runs as a background service using `systemd`.
 
 ---
 
@@ -8,8 +8,9 @@ This guide will walk you through the installation and setup of the **LibreQoS Mi
 Before proceeding, ensure the following:
 1. **Python 3** is installed on your system.
 2. **`routeros_api` Python library** is installed.
-3. **MikroTik Router** is accessible and configured with PPP secrets.
+3. **MikroTik Router** is accessible and configured with PPP secrets and hotspot users.
 4. **LibreQoS** is set up and requires the `ShapedDevices.csv` file.
+5. **A `routers.csv` file** is used to store MikroTik credentials for easy management.
 
 ---
 
@@ -69,19 +70,28 @@ Before proceeding, ensure the following:
 
 ### **Step 4: Configure the Script (Optional)**
 If you need to customize the script (e.g., change the MikroTik router IP or credentials), follow these steps:
-1. **Edit the Python script**:
+
+1. **Edit the `routers.csv` file** (stores multiple MikroTik router credentials):
+   ```bash
+   sudo nano /opt/libreqos/src/routers.csv
+   ```
+   - Format:
+     ```csv
+      Router Name / ID,IP,API Username,API Password,API Port
+      MikroTik,192.168.88.1,api,password,8728
+     ```
+
+2. **Edit the Python script** (for additional customizations):
    ```bash
    sudo nano /opt/libreqos/src/updatecsv.py
    ```
-   - Update the following variables as needed:
+   - Update the following variables if necessary:
      ```python
-     ROUTER_IP = '172.2.0.237'  # Replace with your MikroTik router IP
-     USERNAME = 'demo'          # Replace with your MikroTik username
-     PASSWORD = 'demo123'       # Replace with your MikroTik password
-     CSV_FILE = 'ShapedDevices.csv'  # Replace with your desired CSV file path
+     SHAPED_DEVICES_CSV = 'ShapedDevices.csv'  # Replace with your desired CSV file path
+     SCAN_INTERVAL = 600  # Sync every 10 minutes
      ```
 
-2. **Restart the service**:
+3. **Restart the service**:
    ```bash
    sudo systemctl restart updatecsv.service
    ```
@@ -89,9 +99,9 @@ If you need to customize the script (e.g., change the MikroTik router IP or cred
 ---
 
 ### **Step 5: Test the Script**
-1. **Add or modify a PPP secret on your MikroTik router**.
+1. **Add or modify a PPP secret or active hotspot user on your MikroTik router**.
 2. **Check the `ShapedDevices.csv` file**:
-   - The file should be updated with the new or modified PPP secret.
+   - The file should be updated with the new or modified user.
    - Example location: `/opt/libreqos/src/ShapedDevices.csv`.
    - View the file:
      ```bash
@@ -130,10 +140,14 @@ sudo systemctl enable updatecsv.service
      ```
 
 2. **CSV file not updating**:
-   - Verify the MikroTik router IP, username, and password in the script.
-   - Ensure the PPP secrets exist on the MikroTik router.
+   - Verify the MikroTik router IP, username, and password in `routers.csv`.
+   - Ensure the PPP secrets and active hotspot users exist on the MikroTik router.
 
-3. **Permission issues**:
+3. **Rate limit values incorrect**:
+   - Ensure the script correctly extracts values from PPP profiles.
+   - Modify the calculation logic in `updatecsv.py` if necessary.
+
+4. **Permission issues**:
    - Ensure the script and directories have the correct permissions:
      ```bash
      sudo chown -R root:root /opt/libreqos/src
@@ -167,4 +181,5 @@ To remove the script and service:
 
 ---
 
-This installation guide ensures a smooth setup and operation of the **LibreQoS MikroTik PPP Secret Sync** script. If you encounter any issues, refer to the troubleshooting section or consult the logs for detailed error messages.
+This installation guide ensures a smooth setup and operation of the **LibreQoS MikroTik PPP and Active Hotspot User Sync** script. If you encounter any issues, refer to the troubleshooting section or consult the logs for detailed error messages.
+

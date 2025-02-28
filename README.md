@@ -1,11 +1,6 @@
-This script has been discontinued and is no longer maintained. It may no longer function as expected or receive updates. Thank you for your support!
+### **LibreQoS MikroTik PPP and Active Hotspot User Sync**
 
-[![Watch the video](https://img.youtube.com/vi/N9SZzuuo3CU/0.jpg)](https://www.youtube.com/watch?v=N9SZzuuo3CU)
-
-
-### **Script Description: LibreQoS MikroTik PPP Secret Sync**
-
-This script automates the synchronization of MikroTik PPP secrets (e.g., PPPoE users) with a LibreQoS-compatible CSV file (`ShapedDevices.csv`). It continuously monitors the MikroTik router for changes to PPP secrets, such as additions, updates, or deletions, and updates the CSV file accordingly. The script also calculates rate limits (download/upload speeds) based on the assigned PPP profile and ensures the CSV file is always up-to-date.
+This script automates the synchronization of MikroTik PPP secrets (e.g., PPPoE users) and active hotspot users with a LibreQoS-compatible CSV file (`ShapedDevices.csv`). It continuously monitors the MikroTik router for changes to PPP secrets and active hotspot users, such as additions, updates, or deletions, and updates the CSV file accordingly. The script also calculates rate limits (download/upload speeds) based on the assigned PPP profile and ensures the CSV file is always up-to-date.
 
 The script is designed to run as a background service using `systemd`, ensuring it starts automatically on boot and restarts in case of failures.
 
@@ -13,12 +8,13 @@ The script is designed to run as a background service using `systemd`, ensuring 
 
 ### **Key Features**
 1. **Automatic Synchronization**:
-   - Regularly checks for changes in MikroTik PPP secrets.
+   - Regularly checks for changes in MikroTik PPP secrets and active hotspot users.
    - Updates the `ShapedDevices.csv` file with new, modified, or deleted entries.
+   - Updates occur every 10 minutes.
 
 2. **Rate Limit Calculation**:
    - Extracts rate limits from MikroTik PPP profiles.
-   - Calculates minimum rates as 50% of the maximum rates for both download and upload.
+   - Computes minimum rates as 50% of maximum values and 115% for the maximum.
 
 3. **Logging**:
    - Logs all actions (additions, updates, deletions) for easy monitoring and debugging.
@@ -29,34 +25,36 @@ The script is designed to run as a background service using `systemd`, ensuring 
 
 5. **Customizable Configuration**:
    - Easily configure the MikroTik router IP, credentials, and CSV file path.
+   - MikroTik credentials are stored in `routers.csv` for easy management.
 
 ---
 
 ### **Use Case**
-This script is ideal for network administrators using **LibreQoS** for traffic shaping and **MikroTik** routers for PPPoE management. It ensures that the `ShapedDevices.csv` file used by LibreQoS is always synchronized with the latest PPP secrets and rate limits from the MikroTik router.
+This script is ideal for network administrators using **LibreQoS** for traffic shaping and **MikroTik** routers for managing PPPoE and hotspot users. It ensures that the `ShapedDevices.csv` file used by LibreQoS is always synchronized with the latest PPP secrets and active hotspot users from the MikroTik router.
 
 ---
 
 ### **How It Works**
 1. **Connects to MikroTik Router**:
-   - Uses the `routeros_api` Python library to connect to the MikroTik router and fetch PPP secrets.
+   - Uses the `routeros_api` Python library to connect to the MikroTik router and fetch PPP secrets and active hotspot users.
 
-2. **Processes PPP Secrets**:
-   - Compares the current PPP secrets with the existing CSV data.
+2. **Processes PPP Secrets and Active Hotspot Users**:
+   - Compares the current PPP secrets and active hotspot users with the existing CSV data.
    - Adds new entries, updates modified entries, and removes deleted entries.
 
 3. **Writes to CSV**:
    - Updates the `ShapedDevices.csv` file with the latest data in the required format for LibreQoS.
 
 4. **Runs Continuously**:
-   - The script runs in an infinite loop, checking for changes every 10 seconds.
+   - The script runs in an infinite loop, checking for changes every 10 minutes.
 
 ---
 
 ### **Prerequisites**
 - Python 3 installed on the system.
 - `routeros_api` Python library installed (`pip install routeros_api`).
-- MikroTik router with PPP secrets configured.
+- MikroTik router with configured PPP secrets and active hotspot users.
+- MikroTik credentials stored in `routers.csv`.
 - LibreQoS setup requiring the `ShapedDevices.csv` file.
 
 ---
@@ -73,6 +71,18 @@ This script is ideal for network administrators using **LibreQoS** for traffic s
 
 ---
 
+### **MikroTik Configuration**
+To ensure proper access, create a dedicated user group and user on the MikroTik router:
+
+```shell
+/user group add name=API_READ policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon"
+/user add name="libreQos_API" group=API_READ password="<Strong Password>" address="<LibreQos IP Address>" disabled=no;
+```
+
+This ensures the API user has the necessary permissions while restricting unnecessary access.
+
+---
+
 ### **Example Output**
 The script will generate a `ShapedDevices.csv` file with the following columns:
 - `Circuit ID`, `Circuit Name`, `Device ID`, `Device Name`, `Parent Node`, `MAC`, `IPv4`, `IPv6`, `Download Min Mbps`, `Upload Min Mbps`, `Download Max Mbps`, `Upload Max Mbps`, `Comment`
@@ -80,7 +90,8 @@ The script will generate a `ShapedDevices.csv` file with the following columns:
 Example CSV Entry:
 ```
 Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
-550e8400-e29b-41d4-a716-446655440000,PPPoE_User1,550e8400-e29b-41d4-a716-446655440001,PPPoE_User1,,,192.168.1.10,,50,25,100,50,Test User
+49A05TNK,VC1234,H6ZO7WEL,VC1234,HS-ROUTER,5C:1C:B9:CD:4B:D1,10.0.0.230,,3,3,8,8,Hotspot
+HI11R8ZV,USER1,DX29J8P8,USER1,PPP-ROUTER,,10.120.00.254,,5,5,11,111,PPPoE
 ```
 
 ---
@@ -89,3 +100,6 @@ Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download
 - **Automation**: Eliminates manual updates to the `ShapedDevices.csv` file.
 - **Accuracy**: Ensures rate limits and PPP secret data are always in sync with the MikroTik router.
 - **Efficiency**: Saves time and reduces errors in managing LibreQoS traffic shaping.
+
+---
+
