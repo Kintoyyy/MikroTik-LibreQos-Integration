@@ -1,0 +1,21 @@
+{
+    "MikroTik-XYZ": {
+        "downloadBandwidthMbps": 2000,
+        "uploadBandwidthMbps": 2000,
+        "type": "site",
+        "children": {
+            "PPP-MikroTik-XYZ": {
+                "downloadBandwidthMbps": 1000,
+                "uploadBandwidthMbps": 1000,
+                "type": "site",
+                "children": {}
+            },
+            "HS-MikroTik-XYZ": {
+                "downloadBandwidthMbps": 1000,
+                "uploadBandwidthMbps": 1000,
+                "type": "site",
+                "children": {}
+            }
+        }
+    }
+}

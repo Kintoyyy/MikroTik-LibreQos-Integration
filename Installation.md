@@ -11,6 +11,7 @@ Before proceeding, ensure the following:
 3. **MikroTik Router** is accessible and configured with PPP secrets and hotspot users.
 4. **LibreQoS** is set up and requires the `ShapedDevices.csv` file.
 5. **A `routers.csv` file** is used to store MikroTik credentials for easy management.
+6. **A `network.json` file** is manually configured for proper bandwidth management.
 
 ---
 
@@ -68,60 +69,83 @@ Before proceeding, ensure the following:
 
 ---
 
-### **Step 4: Configure the Script (Optional)**
+### **Step 4: Configure `network.json` Manually**
+The `network.json` file must be manually configured to include the routers listed in `routers.csv`. Each router should have child nodes prefixed with `PPP-` and `HS-`.
+
+1. **Edit the `network.json` file**:
+   ```bash
+   sudo nano /opt/libreqos/src/network.json
+   ```
+
+2. **Ensure it follows this structure:**
+   ```json
+   {
+       "MikroTik-XYZ": {
+           "downloadBandwidthMbps": 2000,
+           "uploadBandwidthMbps": 2000,
+           "type": "site",
+           "children": {
+               "PPP-MikroTik-XYZ": {
+                   "downloadBandwidthMbps": 1000,
+                   "uploadBandwidthMbps": 1000,
+                   "type": "site",
+                   "children": {}
+               },
+               "HS-MikroTik-XYZ": {
+                   "downloadBandwidthMbps": 1000,
+                   "uploadBandwidthMbps": 1000,
+                   "type": "site",
+                   "children": {}
+               }
+           }
+       }
+   }
+   ```
+
+3. **Save and exit** the file.
+
+4. **Restart the LibreQoS service**:
+   ```bash
+   sudo systemctl restart libreqos
+   ```
+
+---
+
+### **Step 5: Configure the Script**
 If you need to customize the script (e.g., change the MikroTik router IP or credentials), follow these steps:
 
-1. **Edit the `routers.csv` file** (stores multiple MikroTik router credentials):
+1. **Edit the `routers.csv` file**:
    ```bash
    sudo nano /opt/libreqos/src/routers.csv
    ```
    - Format:
      ```csv
       Router Name / ID,IP,API Username,API Password,API Port
-      MikroTik,192.168.88.1,api,password,8728
+      MikroTik-XYZ,192.168.88.1,api,password,8728
      ```
 
-2. **Edit the Python script** (for additional customizations):
-   ```bash
-   sudo nano /opt/libreqos/src/updatecsv.py
-   ```
-   - Update the following variables if necessary:
-     ```python
-     SHAPED_DEVICES_CSV = 'ShapedDevices.csv'  # Replace with your desired CSV file path
-     SCAN_INTERVAL = 600  # Sync every 10 minutes
-     ```
-
-3. **Restart the service**:
+2. **Restart the service**:
    ```bash
    sudo systemctl restart updatecsv.service
    ```
 
 ---
 
-### **Step 5: Test the Script**
-1. **Add or modify a PPP secret or active hotspot user on your MikroTik router**.
+### **Step 6: Test the Script**
+1. **Modify a PPP secret or active hotspot user on your MikroTik router**.
 2. **Check the `ShapedDevices.csv` file**:
-   - The file should be updated with the new or modified user.
-   - Example location: `/opt/libreqos/src/ShapedDevices.csv`.
-   - View the file:
-     ```bash
-     cat /opt/libreqos/src/ShapedDevices.csv
-     ```
-
+   ```bash
+   cat /opt/libreqos/src/ShapedDevices.csv
+   ```
 3. **Check the logs**:
-   - Use the following command to view the script logs:
-     ```bash
-     journalctl -u updatecsv.service
-     ```
+   ```bash
+   journalctl -u updatecsv.service
+   ```
 
 ---
 
-### **Step 6: Enable the Service to Start on Boot**
-The installation script should have already enabled the service to start on boot. To confirm:
-```bash
-sudo systemctl is-enabled updatecsv.service
-```
-If not enabled, run:
+### **Step 7: Enable the Service to Start on Boot**
+Ensure the service starts automatically:
 ```bash
 sudo systemctl enable updatecsv.service
 ```
@@ -130,34 +154,31 @@ sudo systemctl enable updatecsv.service
 
 ### **Troubleshooting**
 1. **Service not running**:
-   - Check the logs for errors:
+   - Check the logs:
      ```bash
      journalctl -u updatecsv.service
      ```
-   - Ensure the `routeros_api` library is installed:
+   - Ensure `routeros_api` is installed:
      ```bash
      pip3 show routeros_api
      ```
 
 2. **CSV file not updating**:
-   - Verify the MikroTik router IP, username, and password in `routers.csv`.
-   - Ensure the PPP secrets and active hotspot users exist on the MikroTik router.
+   - Verify router details in `routers.csv`.
+   - Ensure PPP secrets and active hotspot users exist on the MikroTik router.
 
 3. **Rate limit values incorrect**:
-   - Ensure the script correctly extracts values from PPP profiles.
-   - Modify the calculation logic in `updatecsv.py` if necessary.
+   - Modify the logic in `updatecsv.py` if needed.
 
 4. **Permission issues**:
-   - Ensure the script and directories have the correct permissions:
-     ```bash
-     sudo chown -R root:root /opt/libreqos/src
-     sudo chmod -R 755 /opt/libreqos/src
-     ```
+   ```bash
+   sudo chown -R root:root /opt/libreqos/src
+   sudo chmod -R 755 /opt/libreqos/src
+   ```
 
 ---
 
 ### **Uninstallation**
-To remove the script and service:
 1. **Stop and disable the service**:
    ```bash
    sudo systemctl stop updatecsv.service
@@ -181,5 +202,5 @@ To remove the script and service:
 
 ---
 
-This installation guide ensures a smooth setup and operation of the **LibreQoS MikroTik PPP and Active Hotspot User Sync** script. If you encounter any issues, refer to the troubleshooting section or consult the logs for detailed error messages.
+This guide ensures smooth installation and operation of the **LibreQoS MikroTik PPP and Active Hotspot User Sync** script. If you encounter issues, refer to the troubleshooting section or check the logs for detailed error messages.
 

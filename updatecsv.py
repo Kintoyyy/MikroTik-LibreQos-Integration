@@ -367,7 +367,7 @@ def process_router(api, router_name, existing_data):
     ]
     
     router_entries = {k: v for k, v in existing_data.items() 
-                     if v.get('Parent Node') in router_patterns}
+                    if v.get('Parent Node') in router_patterns}
     
     for code in list(router_entries.keys()):
         if code not in all_current_users:
