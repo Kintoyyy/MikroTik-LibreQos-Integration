@@ -157,12 +157,9 @@ def convert_to_mbps(value_str):
             return '0'
             
         number_str, unit = match.groups()
-        number = float(number_str)
+        number = int(number_str)
         
-        # Convert to Mbps based on unit
-        if unit and unit.lower() == 'k':
-            return str(round(number / 1000, 2))  # kbps to Mbps
-        elif unit and unit.lower() == 'g':
+        if unit and unit.lower() == 'g':
             return str(round(number * 1000, 2))  # Gbps to Mbps
         else:  # Already in Mbps or no unit specified
             return str(round(number, 2))
@@ -182,8 +179,8 @@ def parse_rate_limit(rate_limit):
         rx, tx = first_rate.split('/')  # Split into download and upload rates
         
         # Convert both values to Mbps
-        rx_mbps = int(convert_to_mbps(rx))
-        tx_mbps = int(convert_to_mbps(tx))
+        rx_mbps = convert_to_mbps(rx)
+        tx_mbps = convert_to_mbps(tx)
         
         return rx_mbps, tx_mbps
         
@@ -199,7 +196,7 @@ def get_profile_rate_limits(api, profile_name, resource_path):
             return '0', '0'
         
         profile = profiles[0]
-        rate_limit = profile.get('rate-limit',  '3M/3M')  # Default rate limit
+        rate_limit = profile.get('rate-limit',  '')  # Default rate limit
         return parse_rate_limit(rate_limit)
     except Exception as e:
         logger.error(f"Failed to get profile rate limits for {profile_name}: {e}")
@@ -245,7 +242,6 @@ def calculate_min_rates(max_rx, max_tx):
 
 def calculate_max_rates(max_rx, max_tx):
     """Calculate maximum rates with a minimum of 2 Mbps."""
-    # Convert rates to integers for calculation
     rx_int = int(max_rx) if max_rx.isdigit() else 0
     tx_int = int(max_tx) if max_tx.isdigit() else 0
     
