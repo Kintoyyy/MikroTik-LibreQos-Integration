@@ -157,17 +157,26 @@ def get_resource_data(api, resource_path):
 
 @lru_cache(maxsize=32)
 def parse_rate_limit(rate_limit):
-    """Parse a rate limit string and return rx, tx values."""
+    """Parse a rate limit string and return rx, tx values with a minimum of 2M/2M."""
     try:
         if not rate_limit or rate_limit == '0/0':
-            return '0', '0'
+            return '2', '2'  # Changed from '4', '4' to '2', '2'
         
         first_rate = rate_limit.split()[0]  # Takes the first "7M/7M" part
         rx, tx = first_rate.split('/')  # Split into download and upload rates
-        return rx.rstrip('M'), tx.rstrip('M')  # Remove 'M' suffix
+        
+        # Remove 'M' suffix and convert to integers
+        rx_val = int(rx.rstrip('M'))
+        tx_val = int(tx.rstrip('M'))
+        
+        # Ensure minimum of 2M/2M
+        rx_val = max(rx_val, 2)
+        tx_val = max(tx_val, 2)
+        
+        return str(rx_val), str(tx_val)
     except Exception:
-        logger.warning(f"Could not parse rate limit: {rate_limit}, using defaults")
-        return '0', '0'
+        logger.warning(f"Could not parse rate limit: {rate_limit}, using default minimum 2M/2M")
+        return '2', '2'  # Changed from '4', '4' to '2', '2'
 
 def get_profile_rate_limits(api, profile_name, resource_path):
     """Fetch rate limits for a profile from the specified resource path."""
@@ -177,7 +186,7 @@ def get_profile_rate_limits(api, profile_name, resource_path):
             return '0', '0'
         
         profile = profiles[0]
-        rate_limit = profile.get('rate-limit', '0/0')
+        rate_limit = profile.get('rate-limit', '4M/4M')  # Default rate limit
         return parse_rate_limit(rate_limit)
     except Exception as e:
         logger.error(f"Failed to get profile rate limits for {profile_name}: {e}")
@@ -206,22 +215,36 @@ def write_shaped_devices_csv(data):
     logger.info(f"Successfully wrote {len(data)} entries to {SHAPED_DEVICES_CSV}")
 
 def calculate_min_rates(max_rx, max_tx):
-    """Calculate minimum rates based on maximum rates."""
+    """Calculate minimum rates based on maximum rates with a minimum of 2 Mbps."""
     # Convert rates to integers for calculation
     rx_int = int(max_rx) if max_rx.isdigit() else 0
     tx_int = int(max_tx) if max_tx.isdigit() else 0
     
     # Calculate min rates as percentage of max rates
-    return str(int(rx_int * MIN_RATE_PERCENTAGE)), str(int(tx_int * MIN_RATE_PERCENTAGE))
+    calculated_min_rx = int(rx_int * MIN_RATE_PERCENTAGE)
+    calculated_min_tx = int(tx_int * MIN_RATE_PERCENTAGE)
+    
+    # Ensure minimum of 2 Mbps for both download and upload
+    min_rx = max(calculated_min_rx, 2)
+    min_tx = max(calculated_min_tx, 2)
+    
+    return str(min_rx), str(min_tx)
 
 def calculate_max_rates(max_rx, max_tx):
-    """Calculate minimum rates based on maximum rates."""
+    """Calculate maximum rates with a minimum of 2 Mbps."""
     # Convert rates to integers for calculation
     rx_int = int(max_rx) if max_rx.isdigit() else 0
     tx_int = int(max_tx) if max_tx.isdigit() else 0
     
-    # Calculate min rates as percentage of max rates
-    return str(int(rx_int * MAX_RATE_PERCENTAGE)), str(int(tx_int * MAX_RATE_PERCENTAGE))
+    # Calculate max rates as percentage of configured rates
+    calculated_max_rx = int(rx_int * MAX_RATE_PERCENTAGE)
+    calculated_max_tx = int(tx_int * MAX_RATE_PERCENTAGE)
+    
+    # Ensure minimum of 2 Mbps for both download and upload
+    max_rx = max(calculated_max_rx, 2)
+    max_tx = max(calculated_max_tx, 2)
+    
+    return str(max_rx), str(max_tx)
 
 def create_new_entry(code, router_name, entry_type, mac='', ipv4=''):
     """Create a new device entry."""
@@ -462,10 +485,24 @@ ExecStartPre=/bin/chmod -R 755 /opt/libreqos/src
 WantedBy=multi-user.target
 EOF
 
-# Write the routers.csv file
-cat << 'EOF' > "$ROUTER_FILE"
-Router Name / ID,IP,API Username,API Password,API Port
-EOF
+# Check if routers.csv exists and has data beyond the header
+if [ -f "$ROUTER_FILE" ]; then
+    # Count lines in the file
+    LINES=$(wc -l < "$ROUTER_FILE")
+    
+    # Check if file has more than just the header line
+    if [ "$LINES" -gt 1 ]; then
+        echo "routers.csv already exists and contains data. Keeping existing file."
+    else
+        # File exists but only has header or is empty, write the header
+        echo "Router Name / ID,IP,API Username,API Password,API Port" > "$ROUTER_FILE"
+        echo "Initialized routers.csv with header only."
+    fi
+else
+    # File doesn't exist, create it with header
+    echo "Router Name / ID,IP,API Username,API Password,API Port" > "$ROUTER_FILE"
+    echo "Created new routers.csv file."
+fi
 
 # Reload the systemd daemon
 systemctl daemon-reload
