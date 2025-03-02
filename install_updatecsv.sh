@@ -22,6 +22,7 @@ import routeros_api
 from collections import OrderedDict
 from functools import lru_cache
 import os
+import re
 
 # Configuration
 ROUTERS_CSV = 'routers.csv'  # CSV file containing router details
@@ -155,28 +156,54 @@ def get_resource_data(api, resource_path):
         logger.error(f"Failed to get data from {resource_path}: {e}")
         return []
 
+def convert_to_mbps(value_str):
+    """
+    Convert a bandwidth value to Mbps regardless of the unit (k/K, m/M, g/G).
+    Examples: "10m", "10M", "2.5G", "1000k" all get converted to Mbps.
+    """
+    try:
+        if not value_str or value_str == '0':
+            return '0'
+            
+        # Extract number and unit using regex
+        match = re.match(r'(\d+(?:\.\d+)?)([kmgKMG])?', value_str.strip())
+        if not match:
+            return '0'
+            
+        number_str, unit = match.groups()
+        number = float(number_str)
+        
+        # Convert to Mbps based on unit
+        if unit and unit.lower() == 'k':
+            return str(round(number / 1000, 2))  # kbps to Mbps
+        elif unit and unit.lower() == 'g':
+            return str(round(number * 1000, 2))  # Gbps to Mbps
+        else:  # Already in Mbps or no unit specified
+            return str(round(number, 2))
+            
+    except Exception as e:
+        logger.warning(f"Could not convert bandwidth value: {value_str} to Mbps: {e}")
+        return '0'
+
 @lru_cache(maxsize=32)
 def parse_rate_limit(rate_limit):
-    """Parse a rate limit string and return rx, tx values with a minimum of 2M/2M."""
+    """Parse a rate limit string and return rx, tx values in Mbps."""
     try:
         if not rate_limit or rate_limit == '0/0':
-            return '2', '2'  # Changed from '4', '4' to '2', '2'
+            return '0', '0'
         
         first_rate = rate_limit.split()[0]  # Takes the first "7M/7M" part
         rx, tx = first_rate.split('/')  # Split into download and upload rates
         
-        # Remove 'M' suffix and convert to integers
-        rx_val = int(rx.rstrip('M'))
-        tx_val = int(tx.rstrip('M'))
+        # Convert both values to Mbps
+        rx_mbps = int(convert_to_mbps(rx))
+        tx_mbps = int(convert_to_mbps(tx))
         
-        # Ensure minimum of 2M/2M
-        rx_val = max(rx_val, 2)
-        tx_val = max(tx_val, 2)
+        return rx_mbps, tx_mbps
         
-        return str(rx_val), str(tx_val)
-    except Exception:
-        logger.warning(f"Could not parse rate limit: {rate_limit}, using default minimum 2M/2M")
-        return '2', '2'  # Changed from '4', '4' to '2', '2'
+    except Exception as e:
+        logger.warning(f"Could not parse rate limit: {rate_limit}, using defaults: {e}")
+        return '3', '3' # Changed from '4', '4' to '2', '2'
 
 def get_profile_rate_limits(api, profile_name, resource_path):
     """Fetch rate limits for a profile from the specified resource path."""
@@ -186,7 +213,7 @@ def get_profile_rate_limits(api, profile_name, resource_path):
             return '0', '0'
         
         profile = profiles[0]
-        rate_limit = profile.get('rate-limit', '4M/4M')  # Default rate limit
+        rate_limit = profile.get('rate-limit',  '3M/3M')  # Default rate limit
         return parse_rate_limit(rate_limit)
     except Exception as e:
         logger.error(f"Failed to get profile rate limits for {profile_name}: {e}")

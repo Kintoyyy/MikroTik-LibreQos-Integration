@@ -129,6 +129,10 @@ If you need to customize the script (e.g., change the MikroTik router IP or cred
    ```bash
    sudo systemctl restart updatecsv.service
    ```
+3. **Check the logs if running successfully**:
+   ```bash
+   journalctl -u updatecsv.service --no-pager --since "1 hour ago"
+   ```
 
 ---
 
