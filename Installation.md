@@ -30,16 +30,23 @@ Before proceeding, ensure the following:
 
 ---
 
-### **Step 2: Download and Run the Installation Script**
-1. **Download the installation script**:
-   - Save the script provided in the previous response to a file, e.g., `install_updatecsv.sh`.
+### **Step 2: Clone and Run the Installation Script**
+1. **Clone this repository**:
+   ```bash
+   git clone https://github.com/Kintoyyy/MikroTik-LibreQos-Integration
+   ```
 
-2. **Make the script executable**:
+2. **Navigate to the directory**:
+   ```bash
+   cd MikroTik-LibreQos-Integration
+   ```
+
+3. **Make the script executable**:
    ```bash
    chmod +x install_updatecsv.sh
    ```
 
-3. **Run the script**:
+4. **Run the script**:
    ```bash
    sudo ./install_updatecsv.sh
    ```
