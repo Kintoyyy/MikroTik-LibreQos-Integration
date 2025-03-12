@@ -131,22 +131,28 @@ def update_network_json(routers):
     
     return network_config
 
-def connect_to_router(router):
-    """Connect to a MikroTik router using the provided details."""
-    try:
-        connection = routeros_api.RouterOsApiPool(
-            router['ip'],
-            username=router['username'],
-            password=router['password'],
-            port=router['port'],
-            plaintext_login=True
-        )
-        api = connection.get_api()
-        logger.info(f"Successfully connected to router: {router['name']} ({router['ip']})")
-        return api
-    except Exception as e:
-        logger.error(f"Connection error to {router['name']} ({router['ip']}): {e}")
-        return None
+def connect_to_router(router, retries=3):
+    """
+    Connect to a MikroTik router with enhanced error handling and retry mechanism.
+    """
+    for attempt in range(retries):
+        try:
+            connection = routeros_api.RouterOsApiPool(
+                router['ip'],
+                username=router['username'],
+                password=router['password'],
+                port=router['port'],
+                plaintext_login=True,
+            )
+            api = connection.get_api()
+            logger.info(f"Successfully connected to router: {router['name']} ({router['ip']}) [Attempt {attempt + 1}]")
+            return api
+        except Exception as e:
+            logger.warning(f"Connection error to {router['name']} ({router['ip']}) [Attempt {attempt + 1}/{retries}]: {e}")
+            if attempt == retries - 1:
+                logger.error(f"Failed to connect to router {router['name']} after {retries} attempts")
+                return None
+            time.sleep(5)  # Wait before retrying
 
 def get_resource_data(api, resource_path):
     """Get data from a specified resource path."""
@@ -203,18 +209,35 @@ def parse_rate_limit(rate_limit):
         return '3', '3' # Changed from '4', '4' to '2', '2'
 
 def get_profile_rate_limits(api, profile_name, resource_path):
-    """Fetch rate limits for a profile from the specified resource path."""
+    """
+    Fetch rate limits for a profile from the specified resource path.
+    """
     try:
+        # Retrieve profiles matching the given name
         profiles = api.get_resource(resource_path).get(name=profile_name)
+        
+        # Return default if no profiles found
         if not profiles:
-            return '0', '0'
+            return '50M/50M'
         
         profile = profiles[0]
-        rate_limit = profile.get('rate-limit',  '')  # Default rate limit
+        
+        # Check rate-limit first
+        rate_limit = profile.get('rate-limit', '')
+        
+        # If rate-limit is empty, check comment
+        if not rate_limit:
+            rate_limit = profile.get('comment', '50M/50M')
+        
+        # If still no rate limit, use default
+        if not rate_limit:
+            return '50M/50M'
+        
         return parse_rate_limit(rate_limit)
+    
     except Exception as e:
         logger.error(f"Failed to get profile rate limits for {profile_name}: {e}")
-        return '0', '0'
+        return '50M/50M'
 
 def read_shaped_devices_csv():
     """Read existing shaped devices from the CSV file."""
@@ -337,6 +360,7 @@ def process_pppoe_users(api, router_name, existing_data):
         # Update values
         new_values = {
             'IPv4': secret.get('address', ''),
+            'Parent Node': profile_name,
             'Comment': secret.get('comment', 'PPP'),
             'Download Max Mbps': rx_max,
             'Upload Max Mbps': tx_max,
