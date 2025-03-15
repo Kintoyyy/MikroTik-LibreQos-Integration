@@ -11,7 +11,7 @@ import os
 import re
 
 # Configuration
-ROUTERS_CSV = 'routers.csv'  # CSV file containing router details
+CONFIG_JSON = 'config.json'  # JSON file containing router configuration
 SHAPED_DEVICES_CSV = 'ShapedDevices.csv'  # Output CSV file
 NETWORK_JSON = 'network.json'  # Network configuration JSON file
 FIELDNAMES = [
@@ -24,7 +24,7 @@ ERROR_RETRY_INTERVAL = 30  # Time in seconds to wait after an error
 MIN_RATE_PERCENTAGE = 0.5  # Calculate min rates as this percentage of max rates
 MAX_RATE_PERCENTAGE = 1.15  # Calculate max rates as this percentage of bandwidth
 ID_LENGTH = 8  # Length of generated short IDs
-DEFAULT_BANDWIDTH = 2000  # Default bandwidth for new routers in Mbps
+DEFAULT_BANDWIDTH = 1000  # Default bandwidth for new routers in Mbps
 
 # Logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -34,27 +34,22 @@ def generate_short_id(length=ID_LENGTH):
     """Generate a short random ID using numbers and uppercase letters."""
     return ''.join(random.choices(string.digits + string.ascii_uppercase, k=length))
 
-def read_routers_csv():
-    """Read router details from the CSV file."""
-    routers = []
+def read_config_json():
+    """Read router configuration from the JSON file."""
     try:
-        with open(ROUTERS_CSV, 'r') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                routers.append({
-                    'name': row['Router Name / ID'],
-                    'ip': row['IP'],
-                    'username': row['API Username'],
-                    'password': row['API Password'],
-                    'port': int(row['API Port'])
-                })
-        logger.info(f"Successfully read {len(routers)} routers from {ROUTERS_CSV}")
+        with open(CONFIG_JSON, 'r') as f:
+            config = json.load(f)
+        routers = config.get('routers', [])
+        logger.info(f"Successfully read {len(routers)} routers from {CONFIG_JSON}")
         return routers
     except FileNotFoundError:
-        logger.error(f"Router CSV file not found: {ROUTERS_CSV}")
+        logger.error(f"Config JSON file not found: {CONFIG_JSON}")
+        return []
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in config file: {e}")
         return []
     except Exception as e:
-        logger.error(f"Error reading router CSV: {e}")
+        logger.error(f"Error reading config JSON: {e}")
         return []
 
 def read_network_json():
@@ -87,26 +82,37 @@ def update_network_json(routers):
     for router in routers:
         router_name = router['name']
         if router_name not in network_config:
-            # Add the router and its child nodes to the network configuration
             network_config[router_name] = {
                 "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
                 "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
                 "type": "site",
-                "children": {
-                    f"PPP-{router_name}": {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH // 2,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH // 2,
-                        "type": "site",
-                        "children": {}
-                    },
-                    f"HS-{router_name}": {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH // 2,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH // 2,
-                        "type": "site",
-                        "children": {}
-                    }
-                }
+                "children": {}
             }
+        
+            if router.get('pppoe', {}).get('enabled', False):
+                network_config[router_name]["children"][f"PPP-{router_name}"] = {
+                    "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                    "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                    "type": "site",
+                    "children": {}
+                }
+            
+            if router.get('hotspot', {}).get('enabled', False):
+                network_config[router_name]["children"][f"HS-{router_name}"] = {
+                    "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                    "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                    "type": "site",
+                    "children": {}
+                }
+                
+            if router.get('dhcp', {}).get('enabled', False):
+                network_config[router_name]["children"][f"DHCP-{router_name}"] = {
+                    "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                    "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                    "type": "site",
+                    "children": {}
+                }
+                
             logger.info(f"Added router {router_name} to network configuration")
             updated = True
     
@@ -124,21 +130,21 @@ def connect_to_router(router, retries=3):
     for attempt in range(retries):
         try:
             connection = routeros_api.RouterOsApiPool(
-                router['ip'],
+                router['address'],
                 username=router['username'],
                 password=router['password'],
                 port=router['port'],
                 plaintext_login=True,
             )
             api = connection.get_api()
-            logger.info(f"Successfully connected to router: {router['name']} ({router['ip']}) [Attempt {attempt + 1}]")
+            logger.info(f"Successfully connected to router: {router['name']} ({router['address']}) [Attempt {attempt + 1}]")
             return api
         except Exception as e:
-            logger.warning(f"Connection error to {router['name']} ({router['ip']}) [Attempt {attempt + 1}/{retries}]: {e}")
+            logger.warning(f"Connection error to {router['name']} ({router['address']}) [Attempt {attempt + 1}/{retries}]: {e}")
             if attempt == retries - 1:
                 logger.error(f"Failed to connect to router {router['name']} after {retries} attempts")
                 return None
-            time.sleep(5)  # Wait before retrying
+            time.sleep(5)
 
 def get_resource_data(api, resource_path):
     """Get data from a specified resource path."""
@@ -157,17 +163,24 @@ def convert_to_mbps(value_str):
         if not value_str or value_str == '0':
             return '0'
             
-        # Extract number and unit using regex
         match = re.match(r'(\d+(?:\.\d+)?)([kmgKMG])?', value_str.strip())
         if not match:
             return '0'
             
         number_str, unit = match.groups()
-        number = int(number_str)
+        number = float(number_str)
         
-        if unit and unit.lower() == 'g':
+        if not unit:
+            return str(round(number, 2))
+        
+        unit = unit.lower()
+        if unit == 'k':
+            return str(round(number / 1000, 2))  # kbps to Mbps
+        elif unit == 'm':
+            return str(round(number, 2))  # Already in Mbps
+        elif unit == 'g':
             return str(round(number * 1000, 2))  # Gbps to Mbps
-        else:  # Already in Mbps or no unit specified
+        else:
             return str(round(number, 2))
             
     except Exception as e:
@@ -181,10 +194,9 @@ def parse_rate_limit(rate_limit):
         if not rate_limit or rate_limit == '0/0':
             return '0', '0'
         
-        first_rate = rate_limit.split()[0]  # Takes the first "7M/7M" part
-        rx, tx = first_rate.split('/')  # Split into download and upload rates
+        first_rate = rate_limit.split()[0]
+        rx, tx = first_rate.split('/')
         
-        # Convert both values to Mbps
         rx_mbps = convert_to_mbps(rx)
         tx_mbps = convert_to_mbps(tx)
         
@@ -192,7 +204,7 @@ def parse_rate_limit(rate_limit):
         
     except Exception as e:
         logger.warning(f"Could not parse rate limit: {rate_limit}, using defaults: {e}")
-        return '3', '3' # Changed from '4', '4' to '2', '2'
+        return '3', '3'
 
 def get_profile_rate_limits(api, profile_name, resource_path):
     """
@@ -219,7 +231,7 @@ def get_profile_rate_limits(api, profile_name, resource_path):
         if not rate_limit:
             return '50M/50M'
         
-        return parse_rate_limit(rate_limit)
+        return rate_limit
     
     except Exception as e:
         logger.error(f"Failed to get profile rate limits for {profile_name}: {e}")
@@ -249,30 +261,25 @@ def write_shaped_devices_csv(data):
 
 def calculate_min_rates(max_rx, max_tx):
     """Calculate minimum rates based on maximum rates with a minimum of 2 Mbps."""
-    # Convert rates to integers for calculation
-    rx_int = int(max_rx) if max_rx.isdigit() else 0
-    tx_int = int(max_tx) if max_tx.isdigit() else 0
+    rx_float = float(max_rx) if max_rx.replace('.', '', 1).isdigit() else 0
+    tx_float = float(max_tx) if max_tx.replace('.', '', 1).isdigit() else 0
     
-    # Calculate min rates as percentage of max rates
-    calculated_min_rx = int(rx_int * MIN_RATE_PERCENTAGE)
-    calculated_min_tx = int(tx_int * MIN_RATE_PERCENTAGE)
+    calculated_min_rx = int(rx_float * MIN_RATE_PERCENTAGE)
+    calculated_min_tx = int(tx_float * MIN_RATE_PERCENTAGE)
     
-    # Ensure minimum of 2 Mbps for both download and upload
     min_rx = max(calculated_min_rx, 2)
     min_tx = max(calculated_min_tx, 2)
     
     return str(min_rx), str(min_tx)
 
-def calculate_max_rates(max_rx, max_tx):
+def calculate_max_rates(rx, tx):
     """Calculate maximum rates with a minimum of 2 Mbps."""
-    rx_int = int(max_rx) if max_rx.isdigit() else 0
-    tx_int = int(max_tx) if max_tx.isdigit() else 0
+    rx_float = float(rx) if rx.replace('.', '', 1).isdigit() else 0
+    tx_float = float(tx) if tx.replace('.', '', 1).isdigit() else 0
     
-    # Calculate max rates as percentage of configured rates
-    calculated_max_rx = int(rx_int * MAX_RATE_PERCENTAGE)
-    calculated_max_tx = int(tx_int * MAX_RATE_PERCENTAGE)
+    calculated_max_rx = int(rx_float * MAX_RATE_PERCENTAGE)
+    calculated_max_tx = int(tx_float * MAX_RATE_PERCENTAGE)
     
-    # Ensure minimum of 2 Mbps for both download and upload
     max_rx = max(calculated_max_rx, 2)
     max_tx = max(calculated_max_tx, 2)
     
@@ -305,25 +312,41 @@ def update_entry_values(entry, new_values):
             changed = True
     return changed
 
-def process_pppoe_users(api, router_name, existing_data):
+def calculate_max_rates(rx, tx):
+    """Calculate maximum rates with a minimum of 2 Mbps."""
+    rx_float = float(rx) if rx.replace('.', '', 1).isdigit() else 0
+    tx_float = float(tx) if tx.replace('.', '', 1).isdigit() else 0
+    
+    calculated_max_rx = int(rx_float * MAX_RATE_PERCENTAGE)
+    calculated_max_tx = int(tx_float * MAX_RATE_PERCENTAGE)
+    
+    max_rx = max(calculated_max_rx, 2)
+    max_tx = max(calculated_max_tx, 2)
+    
+    return str(max_rx), str(max_tx)
+
+def process_pppoe_users(api, router, existing_data, network_config):
     """Process PPPoE users from a router."""
+    if not router.get('pppoe', {}).get('enabled', False):
+        logger.info(f"PPPoE processing disabled for router: {router['name']}")
+        return set(), False
+        
+    router_name = router['name']
     current_users = set()
     updated = False
+    per_plan_node = router.get('pppoe', {}).get('per_plan_node', False)
     
-    # Get all PPP secrets
     secrets = {s['name']: s for s in get_resource_data(api, '/ppp/secret') if 'name' in s}
     active = {a['name']: a for a in get_resource_data(api, '/ppp/active') if 'name' in a}
 
-    # Keep only secrets that exist in active and append the "address" from active
-    secrets = {
-        name: {**data, 'address': active[name]['address']} 
-        for name, data in secrets.items() if name in active and 'address' in active[name]
-    }
+    active_secrets = {}
+    for name, data in secrets.items():
+        if name in active and 'address' in active[name]:
+            active_secrets[name] = {**data, 'address': active[name]['address']}
     
-    for code, secret in secrets.items():
+    for code, secret in active_secrets.items():
         current_users.add(code)
         
-        # Get or create entry
         if code in existing_data:
             entry = existing_data[code]
         else:
@@ -331,22 +354,42 @@ def process_pppoe_users(api, router_name, existing_data):
                 code, 
                 router_name, 
                 'PPP', 
-                '', 
+                secret.get('caller-id', ''), 
                 secret.get('address', '')
             )
+            existing_data[code] = entry
             logger.info(f"Created new entry for PPPoE user: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
             updated = True
         
-        # Get rate limits
         profile_name = secret.get('profile', 'default')
-        rx, tx = get_profile_rate_limits(api, profile_name, '/ppp/profile')
+        rate_limit = get_profile_rate_limits(api, profile_name, '/ppp/profile')
+        rx, tx = parse_rate_limit(rate_limit)
         rx_max, tx_max = calculate_max_rates(rx, tx)
-        rx_min, tx_min = calculate_min_rates(rx, tx)
+        rx_min, tx_min = calculate_min_rates(rx_max, tx_max)
         
-        # Update values
+        parent_node = f"PPP-{router_name}"
+        if per_plan_node:
+            profile_node = f"PLAN-{profile_name}-{router_name}"
+            parent_node = profile_node
+            
+            if profile_node not in network_config.get(router_name, {}).get('children', {}):
+                if router_name in network_config:
+                    if 'children' not in network_config[router_name]:
+                        network_config[router_name]['children'] = {}
+                    
+                    if profile_node not in network_config[router_name]['children']:
+                        network_config[router_name]['children'][profile_node] = {
+                            "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                            "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                            "type": "plan",
+                            "children": {}
+                        }
+                        logger.info(f"Added PPPoE profile node {profile_node} to network configuration")
+                        
         new_values = {
+            'Parent Node': parent_node,
+            'MAC': secret.get('caller-id', ''),
             'IPv4': secret.get('address', ''),
-            'Comment': secret.get('comment', 'PPP'),
             'Download Max Mbps': rx_max,
             'Upload Max Mbps': tx_max,
             'Download Min Mbps': rx_min,
@@ -354,48 +397,55 @@ def process_pppoe_users(api, router_name, existing_data):
         }
         
         if update_entry_values(entry, new_values):
-            logger.info(f"Updated PPPoE user: {code}")
             updated = True
-        
-        existing_data[code] = entry
     
     return current_users, updated
 
-def process_hotspot_users(api, router_name, existing_data):
-    """Process Hotspot users from a router."""
+def process_hotspot_users(api, router, existing_data, network_config):
+    """Process hotspot users from a router."""
+    if not router.get('hotspot', {}).get('enabled', False):
+        logger.info(f"Hotspot processing disabled for router: {router['name']}")
+        return set(), False
+        
+    router_name = router['name']
     current_users = set()
     updated = False
+    include_mac = router.get('hotspot', {}).get('include_mac', True)
     
-    # Get active hotspot users
-    hotspot_users = {u['user']: u for u in get_resource_data(api, '/ip/hotspot/active') if 'user' in u}
+    download_limit = router.get('hotspot', {}).get('download_limit_mbps', 10)
+    upload_limit = router.get('hotspot', {}).get('upload_limit_mbps', 10)
     
-    for code, user in hotspot_users.items():
+    hotspot_users = get_resource_data(api, '/ip/hotspot/active')
+    
+    for user in hotspot_users:
+        mac = user.get('mac-address', '')
+        ip = user.get('address', '')
+        
+        if include_mac and mac:
+            code = f"HS-{mac.replace(':', '')}"
+        else:
+            username = user.get('user', '')
+            if not username:
+                continue
+            code = f"HS-{username}"
+        
         current_users.add(code)
         
-        # Get or create entry
         if code in existing_data:
             entry = existing_data[code]
         else:
-            entry = create_new_entry(
-                code, 
-                router_name, 
-                'HS', 
-                user.get('mac-address', ''), 
-                user.get('address', '')
-            )
-            logger.info(f"Created new entry for Hotspot user: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
+            entry = create_new_entry(code, router_name, 'HS', mac, ip)
+            existing_data[code] = entry
+            logger.info(f"Created new entry for hotspot user: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
             updated = True
         
-        # Get rate limits (using default profile, can be enhanced)
-        rx, tx = get_profile_rate_limits(api, 'default', '/ip/hotspot/user/profile')
-        rx_max, tx_max = calculate_max_rates(rx, tx)
-        rx_min, tx_min = calculate_min_rates(rx, tx)
+        rx_max, tx_max = str(download_limit), str(upload_limit)
+        rx_min, tx_min = calculate_min_rates(rx_max, tx_max)
         
-        # Update values
         new_values = {
-            'MAC': user.get('mac-address', ''),
-            'IPv4': user.get('address', ''),
-            'Comment': 'Hotspot',
+            'Parent Node': f"HS-{router_name}",
+            'MAC': mac,
+            'IPv4': ip,
             'Download Max Mbps': rx_max,
             'Upload Max Mbps': tx_max,
             'Download Min Mbps': rx_min,
@@ -403,89 +453,133 @@ def process_hotspot_users(api, router_name, existing_data):
         }
         
         if update_entry_values(entry, new_values):
-            logger.info(f"Updated Hotspot user: {code}")
             updated = True
-        
-        existing_data[code] = entry
     
     return current_users, updated
 
-def process_router(api, router_name, existing_data):
-    """Process all users from a router and update the existing data."""
-    if not api:
-        return False
-    
-    all_current_users = set()
+def process_dhcp_leases(api, router, existing_data, network_config):
+    """Process DHCP leases from a router."""
+    if not router.get('dhcp', {}).get('enabled', False):
+        logger.info(f"DHCP processing disabled for router: {router['name']}")
+        return set(), False
+        
+    router_name = router['name']
+    current_users = set()
     updated = False
     
-    # Process PPPoE users
-    pppoe_users, pppoe_updated = process_pppoe_users(api, router_name, existing_data)
-    all_current_users.update(pppoe_users)
-    updated = updated or pppoe_updated
+    download_limit = router.get('dhcp', {}).get('download_limit_mbps', 1000)
+    upload_limit = router.get('dhcp', {}).get('upload_limit_mbps', 1000)
+    dhcp_servers = router.get('dhcp', {}).get('dhcp_server', ['dhcp1'])
     
-    # Process Hotspot users
-    hotspot_users, hotspot_updated = process_hotspot_users(api, router_name, existing_data)
-    all_current_users.update(hotspot_users)
-    updated = updated or hotspot_updated
+    dhcp_leases = []
+    for server in dhcp_servers:
+        server_leases = get_resource_data(api, f'/ip/dhcp-server/lease')
+        if server != '*':
+            server_leases = [lease for lease in server_leases if lease.get('server', '') == server]
+        dhcp_leases.extend(server_leases)
     
-    # Process deletions
-    router_patterns = [
-        router_name,
-        f"PPP-{router_name}",
-        f"HS-{router_name}"
-    ]
-    
-    router_entries = {k: v for k, v in existing_data.items() 
-                    if v.get('Parent Node') in router_patterns}
-    
-    for code in list(router_entries.keys()):
-        if code not in all_current_users:
-            del existing_data[code]
-            logger.info(f"Removed user: {code} from router: {router_name}")
+    for lease in dhcp_leases:
+        mac = lease.get('mac-address', '')
+        if not mac:
+            continue
+            
+        ip = lease.get('address', '')
+        hostname = lease.get('host-name', '')
+        
+        if hostname:
+            code = f"DHCP-{hostname}"
+        else:
+            code = f"DHCP-{mac.replace(':', '')}"
+        
+        current_users.add(code)
+        
+        if code in existing_data:
+            entry = existing_data[code]
+        else:
+            entry = create_new_entry(code, router_name, 'DHCP', mac, ip)
+            existing_data[code] = entry
+            logger.info(f"Created new entry for DHCP lease: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
+            updated = True
+        
+        rx_max, tx_max = str(download_limit), str(upload_limit)
+        rx_min, tx_min = calculate_min_rates(rx_max, tx_max)
+        
+        new_values = {
+            'Parent Node': f"DHCP-{router_name}",
+            'MAC': mac,
+            'IPv4': ip,
+            'Comment': f"{hostname}" if hostname else "DHCP",
+            'Download Max Mbps': rx_max,
+            'Upload Max Mbps': tx_max,
+            'Download Min Mbps': rx_min,
+            'Upload Min Mbps': tx_min
+        }
+        
+        if update_entry_values(entry, new_values):
             updated = True
     
-    return updated
+    return current_users, updated
 
-def main_loop():
-    """Main loop to process all routers."""
-    routers = read_routers_csv()
-    if not routers:
-        logger.error("No routers found in the CSV file.")
-        return
+def main():
+    """Main function to run the script."""
+    logger.info("Starting to scan routers")
     
-    # Check and update network.json
-    # update_network_json(routers)
-
     while True:
         try:
             existing_data = read_shaped_devices_csv()
-            updated = False
-
+            
+            routers = read_config_json()
+            
+            network_config = update_network_json(routers)
+            
+            all_current_users = set()
+            any_updates = False
+            
             for router in routers:
-                logger.info(f"Processing router: {router['name']}")
+                logger.info(f"Processing router: {router['name']} at {router['address']}")
+                
                 api = connect_to_router(router)
+                if api is None:
+                    logger.warning(f"Skipping router {router['name']} due to connection failure.")
+                    continue
                 
-                if process_router(api, router['name'], existing_data):
-                    updated = True
+                try:
+                    pppoe_users, pppoe_updated = process_pppoe_users(api, router, existing_data, network_config)
+                    all_current_users.update(pppoe_users)
+                    any_updates = any_updates or pppoe_updated
+                    
+                    hotspot_users, hotspot_updated = process_hotspot_users(api, router, existing_data, network_config)
+                    all_current_users.update(hotspot_users)
+                    any_updates = any_updates or hotspot_updated
+                    
+                    dhcp_users, dhcp_updated = process_dhcp_leases(api, router, existing_data, network_config)
+                    all_current_users.update(dhcp_users)
+                    any_updates = any_updates or dhcp_updated
+                    
+                except Exception as e:
+                    logger.error(f"Error processing router {router['name']}: {e}")
                 
-                # Close connection
-                if api:
-                    try:
-                        api.disconnect()
-                    except:
-                        pass
-
-            if updated:
+            for code in list(existing_data.keys()):
+                if code not in all_current_users:
+                    logger.info(f"Removing inactive user: {code}")
+                    del existing_data[code]
+                    any_updates = True
+            
+            if any_updates:
+                logger.info("Updating CSV file with new data.")
                 write_shaped_devices_csv(existing_data)
-                logger.info("Updated ShapedDevices.csv with changes")
+                write_network_json(network_config)
             else:
-                logger.info("No changes detected")
-
-            logger.info(f"Sleeping for {SCAN_INTERVAL} seconds before next check")
+                logger.info("No updates needed, CSV file remains unchanged.")
+            
+            logger.info(f"Completed scan of {len(routers)} routers. Waiting {SCAN_INTERVAL} seconds before next scan.")
             time.sleep(SCAN_INTERVAL)
+            
         except Exception as e:
-            logger.error(f"Main loop error: {e}")
+            logger.error(f"Error in main loop: {e}")
+            logger.info(f"Waiting {ERROR_RETRY_INTERVAL} seconds before retry.")
             time.sleep(ERROR_RETRY_INTERVAL)
 
 if __name__ == "__main__":
-    main_loop()
+    main()
+
