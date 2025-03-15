@@ -18,6 +18,7 @@ import logging
 import time
 import random
 import string
+import subprocess
 import routeros_api
 from collections import OrderedDict
 from functools import lru_cache
@@ -583,6 +584,14 @@ def main():
                 logger.info("Updating CSV file with new data.")
                 write_shaped_devices_csv(existing_data)
                 write_network_json(network_config)
+                try:
+                    logger.info("Running LibreQoS update command...")
+                    subprocess.run(["sudo", "./LibreQoS.py", "--updateonly"], check=True)
+                    logger.info("LibreQoS update command executed successfully.")
+                except subprocess.CalledProcessError as e:
+                    logger.error(f"Failed to execute LibreQoS update command: {e}")
+                except Exception as e:
+                    logger.error(f"Unexpected error while executing LibreQoS update command: {e}")
             else:
                 logger.info("No updates needed, CSV file remains unchanged.")
             
