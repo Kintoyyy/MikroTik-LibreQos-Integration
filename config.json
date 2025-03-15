@@ -1,0 +1,30 @@
+{
+    "routers": [
+        {
+            "name": "Mikrotik 1",
+            "address": "192.168.88.1",
+            "port": 8728,
+            "username": "admin",
+            "password": "password",
+            "dhcp": {
+                "enabled": true,
+                "download_limit_mbps": 1000,
+                "upload_limit_mbps": 1000,
+                "dhcp_server": [
+                    "dhcp1",
+                    "dhcp2"
+                ]
+            },
+            "hotspot": {
+                "enabled": true,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": true,
+                "per_plan_node": true
+            }
+        }
+    ]
+}

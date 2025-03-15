@@ -1,0 +1,52 @@
+{
+    "routers": [
+        {
+            "name": "Mikrotik AC",
+            "address": "10.0.0.2",
+            "port": 8728,
+            "username": "LibreQos",
+            "password": "ABC11233",
+            "dhcp": {
+                "enabled": false,
+                "download_limit_mbps": 1000,
+                "upload_limit_mbps": 1000,
+                "dhcp_server": []
+            },
+            "hotspot": {
+                "enabled": false,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": true,
+                "per_plan_node": true
+            }
+        },
+        {
+            "name": "Mikrotik AC",
+            "address": "10.0.0.3",
+            "port": 8728,
+            "username": "LibreQos",
+            "password": "1234ABC",
+            "dhcp": {
+                "enabled": true,
+                "download_limit_mbps": 100,
+                "upload_limit_mbps": 100,
+                "dhcp_server": [
+                    "DHCP_LAN"
+                ]
+            },
+            "hotspot": {
+                "enabled": true,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": false,
+                "per_plan_node": true
+            }
+        }
+    ]
+}
