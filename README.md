@@ -24,8 +24,8 @@ The script is designed to run as a background service using `systemd`, ensuring 
    - Ensures the script starts on system boot.
 
 5. **Customizable Configuration**:
-   - Easily configure the MikroTik router IP, credentials, and CSV file path.
-   - MikroTik credentials are stored in `routers.csv` for easy management.
+   - Configure routers via the `config.json` file with detailed settings for DHCP, hotspot, and PPPoE.
+   - Simple JSON structure allows for easy management of router credentials and service settings.
 
 ---
 
@@ -37,6 +37,7 @@ This script is ideal for network administrators using **LibreQoS** for traffic s
 ### **How It Works**
 1. **Connects to MikroTik Router**:
    - Uses the `routeros_api` Python library to connect to the MikroTik router and fetch PPP secrets and active hotspot users.
+   - Reads connection parameters from the `config.json` file.
 
 2. **Processes PPP Secrets and Active Hotspot Users**:
    - Compares the current PPP secrets and active hotspot users with the existing CSV data.
@@ -54,7 +55,6 @@ This script is ideal for network administrators using **LibreQoS** for traffic s
 - Python 3 installed on the system.
 - `routeros_api` Python library installed (`pip install routeros_api`).
 - MikroTik router with configured PPP secrets and active hotspot users.
-- MikroTik credentials stored in `routers.csv`.
 - LibreQoS setup requiring the `ShapedDevices.csv` file.
 
 ---
@@ -62,12 +62,161 @@ This script is ideal for network administrators using **LibreQoS** for traffic s
 ### **Installation and Usage**
 1. **Run the Installation Script**:
    - Execute the provided `.sh` script to install the Python script and systemd service.
+   - The script automatically creates a `config.json` file if it doesn't exist.
 
-2. **Start the Service**:
+2. **Configure the Settings**:
+   - Edit the `config.json` file to match your MikroTik router details and feature settings.
+
+3. **Start the Service**:
    - The script will automatically start the service and enable it to run on boot.
 
-3. **Monitor the Service**:
+4. **Monitor the Service**:
    - Use `systemctl status updatecsv.service` to check the status and logs.
+
+---
+
+### **Configuration File (config.json) Details**
+
+The `config.json` file is the central configuration point for the script. It allows you to configure one or multiple MikroTik routers and their associated services (DHCP, Hotspot, PPPoE). Below is a detailed explanation of each configuration option:
+
+#### **Basic Structure**
+
+```json
+{
+    "routers": [
+        {
+            "name": "Router Name",
+            "address": "Router IP Address",
+            "port": Port Number,
+            "username": "API Username",
+            "password": "API Password",
+            "dhcp": { /* DHCP Configuration */ },
+            "hotspot": { /* Hotspot Configuration */ },
+            "pppoe": { /* PPPoE Configuration */ }
+        }
+    ]
+}
+```
+
+#### **Router Connection Settings**
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `name` | Friendly name for the router | `"Mikrotik 1"` |
+| `address` | IP address of the router | `"192.168.88.1"` |
+| `port` | API port number (default: 8728) | `8728` |
+| `username` | API username | `"admin"` |
+| `password` | API password | `"password"` |
+
+#### **DHCP Configuration**
+
+```json
+"dhcp": {
+    "enabled": true,
+    "download_limit_mbps": 1000,
+    "upload_limit_mbps": 1000,
+    "dhcp_server": [
+        "dhcp1",
+        "dhcp2"
+    ]
+}
+```
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `enabled` | Enable DHCP client tracking | `true` or `false` |
+| `download_limit_mbps` | Default download speed limit for DHCP clients (Mbps) | `1000` |
+| `upload_limit_mbps` | Default upload speed limit for DHCP clients (Mbps) | `1000` |
+| `dhcp_server` | Array of DHCP server names to monitor | `["dhcp1", "dhcp2"]` |
+
+#### **Hotspot Configuration**
+
+```json
+"hotspot": {
+    "enabled": true,
+    "include_mac": true,
+    "download_limit_mbps": 10,
+    "upload_limit_mbps": 10
+}
+```
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `enabled` | Enable hotspot user tracking | `true` or `false` |
+| `include_mac` | Include MAC addresses for hotspot users | `true` or `false` |
+| `download_limit_mbps` | Default download speed limit for hotspot users (Mbps) | `10` |
+| `upload_limit_mbps` | Default upload speed limit for hotspot users (Mbps) | `10` |
+
+#### **PPPoE Configuration**
+
+```json
+"pppoe": {
+    "enabled": true,
+    "per_plan_node": true
+}
+```
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `enabled` | Enable PPPoE user tracking | `true` or `false` |
+| `per_plan_node` | Create separate parent nodes for each PPP profile | `true` or `false` |
+
+#### **Multiple Router Example**
+
+```json
+{
+    "routers": [
+        {
+            "name": "Mikrotik AC",
+            "address": "10.0.0.2",
+            "port": 8728,
+            "username": "LibreQos",
+            "password": "ABC11233",
+            "dhcp": {
+                "enabled": false,
+                "download_limit_mbps": 1000,
+                "upload_limit_mbps": 1000,
+                "dhcp_server": []
+            },
+            "hotspot": {
+                "enabled": false,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": true,
+                "per_plan_node": true
+            }
+        },
+        {
+            "name": "Mikrotik AC",
+            "address": "10.0.0.3",
+            "port": 8728,
+            "username": "LibreQos",
+            "password": "1234ABC",
+            "dhcp": {
+                "enabled": true,
+                "download_limit_mbps": 100,
+                "upload_limit_mbps": 100,
+                "dhcp_server": [
+                    "DHCP_LAN"
+                ]
+            },
+            "hotspot": {
+                "enabled": true,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": false,
+                "per_plan_node": true
+            }
+        }
+    ]
+}
+```
 
 ---
 
@@ -100,6 +249,7 @@ HI11R8ZV,USER1,DX29J8P8,USER1,PPP-ROUTER,,10.120.00.254,,5,5,11,111,PPPoE
 - **Automation**: Eliminates manual updates to the `ShapedDevices.csv` file.
 - **Accuracy**: Ensures rate limits and PPP secret data are always in sync with the MikroTik router.
 - **Efficiency**: Saves time and reduces errors in managing LibreQoS traffic shaping.
+- **Flexibility**: Configure multiple routers and their features through the centralized `config.json` file.
+- **Granular Control**: Fine-tune settings for each service type (DHCP, Hotspot, PPPoE) on a per-router basis.
 
 ---
-
