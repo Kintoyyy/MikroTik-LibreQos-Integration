@@ -1,4 +1,4 @@
-### **LibreQoS MikroTik PPP and Active Hotspot User Sync**
+# **LibreQoS MikroTik PPP and Active Hotspot User Sync**
 
 This script automates the synchronization of MikroTik PPP secrets (e.g., PPPoE users) and active hotspot users with a LibreQoS-compatible CSV file (`ShapedDevices.csv`). It continuously monitors the MikroTik router for changes to PPP secrets and active hotspot users, such as additions, updates, or deletions, and updates the CSV file accordingly. The script also calculates rate limits (download/upload speeds) based on the assigned PPP profile and ensures the CSV file is always up-to-date.
 
@@ -364,3 +364,27 @@ Example:
 4. Save the profile.
 
 The script will automatically extract these values and apply them to the corresponding PPP users in the `ShapedDevices.csv` file.
+
+---
+
+### **Donations**
+
+If this script has helped you streamline your network management, synchronize MikroTik PPP and hotspot users with LibreQoS, or saved you time and effort, please consider supporting the development and maintenance of this project. Your donations help ensure that the script remains up-to-date, reliable, and free for everyone to use.
+
+#### **How to Donate**
+You can support this project by donating via the following methods:
+
+- **PayPal**: [Donate via PayPal](https://paypal.me/Kintoyyyy?country.x=PH)  
+- **Buy Me a Coffee**: [Buy Me a Coffee](https://www.buymeacoffee.com/kintoyyy)  
+
+
+<img src="https://i.imgur.com/nfxbhOv.jpeg" alt="LibreQoS MikroTik Sync" width="500" />
+
+Every contribution, no matter how small, is greatly appreciated and helps keep this project alive. Thank you for your support!
+
+---
+
+### **Thank You!**
+Your support motivates further development and improvements to this script. If you have any feedback, feature requests, or issues, feel free to open an issue on the project's GitHub repository. Together, we can make network management easier and more efficient for everyone.
+
+Happy networking! 🚀
