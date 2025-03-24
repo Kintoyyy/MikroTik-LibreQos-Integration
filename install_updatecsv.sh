@@ -300,8 +300,26 @@ def calculate_max_rates(rx, tx):
     
     return str(max_rx), str(max_tx)
 
-def create_new_entry(code, router_name, entry_type, mac='', ipv4=''):
+def check_duplicate_ip(existing_data, ip, code):
+    """
+    Check if the IP address already exists in another entry.
+    Return True if there's a duplicate (that's not the current entry).
+    """
+    if not ip:
+        return False
+        
+    for existing_code, entry in existing_data.items():
+        if existing_code != code and entry.get('IPv4') == ip:
+            logger.warning(f"Duplicate IP address detected: {ip} already used by {existing_code}")
+            return True
+    return False
+
+def create_new_entry(code, router_name, entry_type, mac='', ipv4='', existing_data=None):
     """Create a new device entry."""
+    if existing_data and ipv4 and check_duplicate_ip(existing_data, ipv4, code):
+        logger.warning(f"Not creating entry with duplicate IP {ipv4} for {code}")
+        return None
+        
     return {
         'Circuit ID': generate_short_id(),
         'Device ID': generate_short_id(),
@@ -326,19 +344,6 @@ def update_entry_values(entry, new_values):
             entry[k] = v
             changed = True
     return changed
-
-def calculate_max_rates(rx, tx):
-    """Calculate maximum rates with a minimum of 2 Mbps."""
-    rx_float = float(rx) if rx.replace('.', '', 1).isdigit() else 0
-    tx_float = float(tx) if tx.replace('.', '', 1).isdigit() else 0
-    
-    calculated_max_rx = int(rx_float * MAX_RATE_PERCENTAGE)
-    calculated_max_tx = int(tx_float * MAX_RATE_PERCENTAGE)
-    
-    max_rx = max(calculated_max_rx, 2)
-    max_tx = max(calculated_max_tx, 2)
-    
-    return str(max_rx), str(max_tx)
 
 def process_pppoe_users(api, router, existing_data, network_config):
     """Process PPPoE users from a router."""
@@ -365,13 +370,22 @@ def process_pppoe_users(api, router, existing_data, network_config):
         if code in existing_data:
             entry = existing_data[code]
         else:
+            ip_address = secret.get('address', '')
+            if ip_address and check_duplicate_ip(existing_data, ip_address, code):
+                logger.warning(f"Skipping creation of PPPoE entry with duplicate IP {ip_address} for {code}")
+                continue
+                
             entry = create_new_entry(
                 code, 
                 router_name, 
                 'PPP', 
                 secret.get('caller-id', ''), 
-                secret.get('address', '')
+                ip_address,
+                existing_data
             )
+            if entry is None:
+                continue
+                
             existing_data[code] = entry
             logger.info(f"Created new entry for PPPoE user: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
             updated = True
@@ -449,7 +463,14 @@ def process_hotspot_users(api, router, existing_data, network_config):
         if code in existing_data:
             entry = existing_data[code]
         else:
-            entry = create_new_entry(code, router_name, 'HS', mac, ip)
+            if ip and check_duplicate_ip(existing_data, ip, code):
+                logger.warning(f"Skipping creation of hotspot entry with duplicate IP {ip} for {code}")
+                continue
+                
+            entry = create_new_entry(code, router_name, 'HS', mac, ip, existing_data)
+            if entry is None:
+                continue
+                
             existing_data[code] = entry
             logger.info(f"Created new entry for hotspot user: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
             updated = True
@@ -511,7 +532,14 @@ def process_dhcp_leases(api, router, existing_data, network_config):
         if code in existing_data:
             entry = existing_data[code]
         else:
-            entry = create_new_entry(code, router_name, 'DHCP', mac, ip)
+            if ip and check_duplicate_ip(existing_data, ip, code):
+                logger.warning(f"Skipping creation of DHCP entry with duplicate IP {ip} for {code}")
+                continue
+                
+            entry = create_new_entry(code, router_name, 'DHCP', mac, ip, existing_data)
+            if entry is None:
+                continue
+                
             existing_data[code] = entry
             logger.info(f"Created new entry for DHCP lease: {code} with IDs: {entry['Circuit ID']}/{entry['Device ID']}")
             updated = True
@@ -575,10 +603,14 @@ def main():
                     logger.error(f"Error processing router {router['name']}: {e}")
                 
             for code in list(existing_data.keys()):
-                if code not in all_current_users:
+                entry = existing_data[code]
+                # Only remove if not current AND not marked as static
+                if code not in all_current_users and entry.get('Comment', '').lower() != 'static':
                     logger.info(f"Removing inactive user: {code}")
                     del existing_data[code]
                     any_updates = True
+                elif code not in all_current_users:
+                    logger.info(f"Preserving static entry: {code}")
             
             if any_updates:
                 logger.info("Updating CSV file with new data.")
