@@ -15,6 +15,7 @@ The script is designed to run as a background service using `systemd`, ensuring 
 2. **Rate Limit Calculation**:
    - Extracts rate limits from MikroTik PPP profiles.
    - Computes minimum rates as 50% of maximum values and 115% for the maximum.
+   - Rate limits can be defined in the **comment field of the PPP profile** (no need to set rate limits explicitly in the profile).
 
 3. **Logging**:
    - Logs all actions (additions, updates, deletions) for easy monitoring and debugging.
@@ -50,10 +51,14 @@ This script is ideal for network administrators using **LibreQoS** for traffic s
    - Adds new entries, updates modified entries, and removes deleted entries.
    - Preserves entries with the comment `"static"` in the `ShapedDevices.csv` file.
 
-3. **Writes to CSV**:
+3. **Extracts Rate Limits from PPP Profile Comments**:
+   - If rate limits are not explicitly set in the PPP profile, the script extracts them from the **comment field** of the PPP profile.
+   - The comment field should follow the format: `"download/upload"` (e.g., `"100/50"` for 100 Mbps download and 50 Mbps upload).
+
+4. **Writes to CSV**:
    - Updates the `ShapedDevices.csv` file with the latest data in the required format for LibreQoS.
 
-4. **Runs Continuously**:
+5. **Runs Continuously**:
    - The script runs in an infinite loop, checking for changes every 10 minutes.
 
 ---
@@ -282,6 +287,7 @@ In this example, the device with the comment `"static"` will remain unchanged ev
 - **Granular Control**: Fine-tune settings for each service type (DHCP, Hotspot, PPPoE) on a per-router basis.
 - **Flat Network Support**: Easily configure a flat network structure for simplified traffic shaping.
 - **Preserve Static Entries**: Manually added devices with the comment `"static"` are preserved during updates.
+- **Rate Limits in PPP Profile Comments**: Define rate limits directly in the PPP profile comments for simplicity.
 
 ---
 
@@ -321,3 +327,28 @@ Example:
 ```
 
 In this configuration, all devices will be listed under a single parent node, simplifying the traffic shaping process.
+
+---
+
+### **Defining Rate Limits in PPP Profile Comments**
+Instead of setting rate limits explicitly in the MikroTik PPP profile, you can define them in the **comment field** of the PPP profile. The script will extract the rate limits from the comment field and apply them to the corresponding PPP users.
+
+#### **Format for PPP Profile Comments**
+The comment field should follow the format:  
+`"download/upload"`  
+Where:
+- `download` is the download speed limit in Mbps.
+- `upload` is the upload speed limit in Mbps.
+
+Example:
+- Comment: `"100M/50M"`  
+  This sets the download limit to 100 Mbps and the upload limit to 50 Mbps.
+
+#### **Example PPP Profile Configuration**
+1. Go to **PPP > Profiles** in your MikroTik router.
+2. Edit or create a PPP profile.
+3. In the **Comment** field, enter the rate limits in the format `"download/upload"`.  
+   Example: `"100M/50M"` for 100 Mbps download and 50 Mbps upload.
+4. Save the profile.
+
+The script will automatically extract these values and apply them to the corresponding PPP users in the `ShapedDevices.csv` file.
