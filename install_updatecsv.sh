@@ -55,17 +55,19 @@ def read_config_json():
         with open(CONFIG_JSON, 'r') as f:
             config = json.load(f)
         routers = config.get('routers', [])
+        flat_network = config.get('flat_network', False)
         logger.info(f"Successfully read {len(routers)} routers from {CONFIG_JSON}")
-        return routers
+        logger.info(f"Flat network configuration: {flat_network}")
+        return routers, flat_network
     except FileNotFoundError:
         logger.error(f"Config JSON file not found: {CONFIG_JSON}")
-        return []
+        return [], False
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config file: {e}")
-        return []
+        return [], False
     except Exception as e:
         logger.error(f"Error reading config JSON: {e}")
-        return []
+        return [], False
 
 def read_network_json():
     """Read the network configuration from JSON file."""
@@ -89,47 +91,87 @@ def write_network_json(data):
     except Exception as e:
         logger.error(f"Error writing network JSON: {e}")
 
-def update_network_json(routers):
-    """Update network.json with any missing routers."""
+def update_network_json(routers, flat_network=False):
+    """Update network.json with any missing routers based on flat_network setting."""
     network_config = read_network_json()
     updated = False
     
     for router in routers:
         router_name = router['name']
-        if router_name not in network_config:
-            network_config[router_name] = {
-                "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                "type": "site",
-                "children": {}
-            }
         
+        if flat_network:
+            # Flat network: All nodes at root level
             if router.get('pppoe', {}).get('enabled', False):
-                network_config[router_name]["children"][f"PPP-{router_name}"] = {
-                    "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                    "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                    "type": "site",
-                    "children": {}
-                }
+                ppp_node = f"PPP-{router_name}"
+                if ppp_node not in network_config:
+                    network_config[ppp_node] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "site",
+                        "children": {}
+                    }
+                    logger.info(f"Added flat PPP node {ppp_node} to network configuration")
+                    updated = True
             
             if router.get('hotspot', {}).get('enabled', False):
-                network_config[router_name]["children"][f"HS-{router_name}"] = {
-                    "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                    "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                    "type": "site",
-                    "children": {}
-                }
+                hs_node = f"HS-{router_name}"
+                if hs_node not in network_config:
+                    network_config[hs_node] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "site",
+                        "children": {}
+                    }
+                    logger.info(f"Added flat Hotspot node {hs_node} to network configuration")
+                    updated = True
                 
             if router.get('dhcp', {}).get('enabled', False):
-                network_config[router_name]["children"][f"DHCP-{router_name}"] = {
+                dhcp_node = f"DHCP-{router_name}"
+                if dhcp_node not in network_config:
+                    network_config[dhcp_node] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "site",
+                        "children": {}
+                    }
+                    logger.info(f"Added flat DHCP node {dhcp_node} to network configuration")
+                    updated = True
+        else:
+            # Hierarchical network: Router is parent of service nodes
+            if router_name not in network_config:
+                network_config[router_name] = {
                     "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
                     "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
                     "type": "site",
                     "children": {}
                 }
                 
-            logger.info(f"Added router {router_name} to network configuration")
-            updated = True
+                if router.get('pppoe', {}).get('enabled', False):
+                    network_config[router_name]["children"][f"PPP-{router_name}"] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "site",
+                        "children": {}
+                    }
+                
+                if router.get('hotspot', {}).get('enabled', False):
+                    network_config[router_name]["children"][f"HS-{router_name}"] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "site",
+                        "children": {}
+                    }
+                    
+                if router.get('dhcp', {}).get('enabled', False):
+                    network_config[router_name]["children"][f"DHCP-{router_name}"] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "site",
+                        "children": {}
+                    }
+                    
+                logger.info(f"Added router {router_name} to network configuration")
+                updated = True
     
     if updated:
         write_network_json(network_config)
@@ -345,7 +387,7 @@ def update_entry_values(entry, new_values):
             changed = True
     return changed
 
-def process_pppoe_users(api, router, existing_data, network_config):
+def process_pppoe_users(api, router, existing_data, network_config, flat_network=False):
     """Process PPPoE users from a router."""
     if not router.get('pppoe', {}).get('enabled', False):
         logger.info(f"PPPoE processing disabled for router: {router['name']}")
@@ -401,19 +443,32 @@ def process_pppoe_users(api, router, existing_data, network_config):
             profile_node = f"PLAN-{profile_name}-{router_name}"
             parent_node = profile_node
             
-            if profile_node not in network_config.get(router_name, {}).get('children', {}):
-                if router_name in network_config:
-                    if 'children' not in network_config[router_name]:
-                        network_config[router_name]['children'] = {}
-                    
-                    if profile_node not in network_config[router_name]['children']:
-                        network_config[router_name]['children'][profile_node] = {
-                            "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                            "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                            "type": "plan",
-                            "children": {}
-                        }
-                        logger.info(f"Added PPPoE profile node {profile_node} to network configuration")
+            # Add profile node to network config
+            if flat_network:
+                # In flat network, add profile node directly to the root
+                if profile_node not in network_config:
+                    network_config[profile_node] = {
+                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                        "type": "plan",
+                        "children": {}
+                    }
+                    logger.info(f"Added flat PPPoE profile node {profile_node} to network configuration")
+            else:
+                # In hierarchical network, add profile node as child of router
+                if profile_node not in network_config.get(router_name, {}).get('children', {}):
+                    if router_name in network_config:
+                        if 'children' not in network_config[router_name]:
+                            network_config[router_name]['children'] = {}
+                        
+                        if profile_node not in network_config[router_name]['children']:
+                            network_config[router_name]['children'][profile_node] = {
+                                "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                                "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                                "type": "plan",
+                                "children": {}
+                            }
+                            logger.info(f"Added PPPoE profile node {profile_node} to network configuration")
                         
         new_values = {
             'Parent Node': parent_node,
@@ -430,7 +485,7 @@ def process_pppoe_users(api, router, existing_data, network_config):
     
     return current_users, updated
 
-def process_hotspot_users(api, router, existing_data, network_config):
+def process_hotspot_users(api, router, existing_data, network_config, flat_network=False):
     """Process hotspot users from a router."""
     if not router.get('hotspot', {}).get('enabled', False):
         logger.info(f"Hotspot processing disabled for router: {router['name']}")
@@ -493,7 +548,7 @@ def process_hotspot_users(api, router, existing_data, network_config):
     
     return current_users, updated
 
-def process_dhcp_leases(api, router, existing_data, network_config):
+def process_dhcp_leases(api, router, existing_data, network_config, flat_network=False):
     """Process DHCP leases from a router."""
     if not router.get('dhcp', {}).get('enabled', False):
         logger.info(f"DHCP processing disabled for router: {router['name']}")
@@ -571,9 +626,9 @@ def main():
         try:
             existing_data = read_shaped_devices_csv()
             
-            routers = read_config_json()
+            routers, flat_network = read_config_json()
             
-            network_config = update_network_json(routers)
+            network_config = update_network_json(routers, flat_network)
             
             all_current_users = set()
             any_updates = False
@@ -587,15 +642,15 @@ def main():
                     continue
                 
                 try:
-                    pppoe_users, pppoe_updated = process_pppoe_users(api, router, existing_data, network_config)
+                    pppoe_users, pppoe_updated = process_pppoe_users(api, router, existing_data, network_config, flat_network)
                     all_current_users.update(pppoe_users)
                     any_updates = any_updates or pppoe_updated
                     
-                    hotspot_users, hotspot_updated = process_hotspot_users(api, router, existing_data, network_config)
+                    hotspot_users, hotspot_updated = process_hotspot_users(api, router, existing_data, network_config, flat_network)
                     all_current_users.update(hotspot_users)
                     any_updates = any_updates or hotspot_updated
                     
-                    dhcp_users, dhcp_updated = process_dhcp_leases(api, router, existing_data, network_config)
+                    dhcp_users, dhcp_updated = process_dhcp_leases(api, router, existing_data, network_config, flat_network)
                     all_current_users.update(dhcp_users)
                     any_updates = any_updates or dhcp_updated
                     
@@ -652,6 +707,7 @@ if [ -f "$CONFIG_JSON" ]; then
         echo "Existing config.json is invalid. Creating new config.json..."
         cat << 'EOF' > "$CONFIG_JSON"
 {
+    "flat_network": false,
     "routers": [
         {
             "name": "Mikrotik 1",
@@ -689,6 +745,7 @@ else
     echo "Creating config.json..."
     cat << 'EOF' > "$CONFIG_JSON"
 {
+    "flat_network": false,
     "routers": [
         {
             "name": "Mikrotik 1",

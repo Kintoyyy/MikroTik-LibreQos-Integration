@@ -1,4 +1,5 @@
 {
+    "flat_network": false,
     "routers": [
         {
             "name": "Mikrotik AC",

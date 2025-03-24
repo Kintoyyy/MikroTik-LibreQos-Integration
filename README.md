@@ -83,6 +83,7 @@ The `config.json` file is the central configuration point for the script. It all
 
 ```json
 {
+    "flat_network": false,
     "routers": [
         {
             "name": "Router Name",
@@ -165,6 +166,7 @@ The `config.json` file is the central configuration point for the script. It all
 
 ```json
 {
+    "flat_network": false,
     "routers": [
         {
             "name": "Mikrotik AC",
