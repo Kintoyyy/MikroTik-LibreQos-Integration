@@ -27,10 +27,16 @@ The script is designed to run as a background service using `systemd`, ensuring 
    - Configure routers via the `config.json` file with detailed settings for DHCP, hotspot, and PPPoE.
    - Simple JSON structure allows for easy management of router credentials and service settings.
 
+6. **Flat Network Support**:
+   - Option to configure a flat network structure, where all devices are treated as part of a single network without hierarchical parent nodes.
+
+7. **Preserve Static Entries**:
+   - If a device in the `ShapedDevices.csv` file has the comment `"static"`, it will be preserved during updates and not overwritten or deleted by the script.
+
 ---
 
 ### **Use Case**
-This script is ideal for network administrators using **LibreQoS** for traffic shaping and **MikroTik** routers for managing PPPoE and hotspot users. It ensures that the `ShapedDevices.csv` file used by LibreQoS is always synchronized with the latest PPP secrets and active hotspot users from the MikroTik router.
+This script is ideal for network administrators using **LibreQoS** for traffic shaping and **MikroTik** routers for managing PPPoE and hotspot users. It ensures that the `ShapedDevices.csv` file used by LibreQoS is always synchronized with the latest PPP secrets and active hotspot users from the MikroTik router, while preserving manually added static entries.
 
 ---
 
@@ -42,6 +48,7 @@ This script is ideal for network administrators using **LibreQoS** for traffic s
 2. **Processes PPP Secrets and Active Hotspot Users**:
    - Compares the current PPP secrets and active hotspot users with the existing CSV data.
    - Adds new entries, updates modified entries, and removes deleted entries.
+   - Preserves entries with the comment `"static"` in the `ShapedDevices.csv` file.
 
 3. **Writes to CSV**:
    - Updates the `ShapedDevices.csv` file with the latest data in the required format for LibreQoS.
@@ -98,6 +105,12 @@ The `config.json` file is the central configuration point for the script. It all
     ]
 }
 ```
+
+#### **Flat Network Configuration**
+
+| Parameter | Description | Example |
+|-----------|-------------|---------|
+| `flat_network` | If set to `true`, all devices are treated as part of a single network without hierarchical parent nodes. | `true` or `false` |
 
 #### **Router Connection Settings**
 
@@ -243,7 +256,21 @@ Example CSV Entry:
 Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
 49A05TNK,VC1234,H6ZO7WEL,VC1234,HS-ROUTER,5C:1C:B9:CD:4B:D1,10.0.0.230,,3,3,8,8,Hotspot
 HI11R8ZV,USER1,DX29J8P8,USER1,PPP-ROUTER,,10.120.00.254,,5,5,11,111,PPPoE
+STATIC123,StaticDevice,STATIC456,StaticDevice,,00:1A:2B:3C:4D:5E,192.168.1.100,,10,10,20,20,static
 ```
+
+---
+
+### **Preserving Static Entries**
+If a device in the `ShapedDevices.csv` file has the comment `"static"`, the script will preserve that entry during updates. This is useful for manually added devices or custom configurations that should not be overwritten or deleted by the script.
+
+Example:
+```
+Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
+STATIC123,StaticDevice,STATIC456,StaticDevice,,00:1A:2B:3C:4D:5E,192.168.1.100,,10,10,20,20,static
+```
+
+In this example, the device with the comment `"static"` will remain unchanged even if the script updates the CSV file.
 
 ---
 
@@ -253,5 +280,44 @@ HI11R8ZV,USER1,DX29J8P8,USER1,PPP-ROUTER,,10.120.00.254,,5,5,11,111,PPPoE
 - **Efficiency**: Saves time and reduces errors in managing LibreQoS traffic shaping.
 - **Flexibility**: Configure multiple routers and their features through the centralized `config.json` file.
 - **Granular Control**: Fine-tune settings for each service type (DHCP, Hotspot, PPPoE) on a per-router basis.
+- **Flat Network Support**: Easily configure a flat network structure for simplified traffic shaping.
+- **Preserve Static Entries**: Manually added devices with the comment `"static"` are preserved during updates.
 
 ---
+
+### **Flat Network Configuration**
+If you set `flat_network` to `true` in the `config.json` file, the script will treat all devices as part of a single network without hierarchical parent nodes. This is useful for simpler network setups where you do not need to differentiate between different types of users or services.
+
+Example:
+```json
+{
+    "flat_network": true,
+    "routers": [
+        {
+            "name": "Mikrotik AC",
+            "address": "10.0.0.2",
+            "port": 8728,
+            "username": "LibreQos",
+            "password": "ABC11233",
+            "dhcp": {
+                "enabled": true,
+                "download_limit_mbps": 1000,
+                "upload_limit_mbps": 1000,
+                "dhcp_server": []
+            },
+            "hotspot": {
+                "enabled": true,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": true,
+                "per_plan_node": false
+            }
+        }
+    ]
+}
+```
+
+In this configuration, all devices will be listed under a single parent node, simplifying the traffic shaping process.
