@@ -56,18 +56,20 @@ def read_config_json():
             config = json.load(f)
         routers = config.get('routers', [])
         flat_network = config.get('flat_network', False)
+        no_parent = config.get('no_parent', False)
         logger.info(f"Successfully read {len(routers)} routers from {CONFIG_JSON}")
         logger.info(f"Flat network configuration: {flat_network}")
-        return routers, flat_network
+        logger.info(f"No parent node configuration: {no_parent}")
+        return routers, flat_network, no_parent
     except FileNotFoundError:
         logger.error(f"Config JSON file not found: {CONFIG_JSON}")
-        return [], False
+        return [], False, False
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config file: {e}")
-        return [], False
+        return [], False, False
     except Exception as e:
         logger.error(f"Error reading config JSON: {e}")
-        return [], False
+        return [], False, False
 
 def read_network_json():
     """Read the network configuration from JSON file."""
@@ -356,7 +358,7 @@ def check_duplicate_ip(existing_data, ip, code):
             return True
     return False
 
-def create_new_entry(code, router_name, entry_type, mac='', ipv4='', existing_data=None):
+def create_new_entry(code, router_name, entry_type, mac='', ipv4='', existing_data=None, no_parent=False):
     """Create a new device entry."""
     if existing_data and ipv4 and check_duplicate_ip(existing_data, ipv4, code):
         logger.warning(f"Not creating entry with duplicate IP {ipv4} for {code}")
@@ -370,7 +372,7 @@ def create_new_entry(code, router_name, entry_type, mac='', ipv4='', existing_da
         'MAC': mac,
         'IPv4': ipv4,
         'IPv6': '',
-        'Parent Node': f"{entry_type}-{router_name}",
+        'Parent Node': '' if no_parent else f"{entry_type}-{router_name}",
         'Comment': entry_type,
         'Download Max Mbps': '0',
         'Upload Max Mbps': '0',
@@ -387,7 +389,7 @@ def update_entry_values(entry, new_values):
             changed = True
     return changed
 
-def process_pppoe_users(api, router, existing_data, network_config, flat_network=False):
+def process_pppoe_users(api, router, existing_data, network_config, flat_network=False, no_parent=False):
     """Process PPPoE users from a router."""
     if not router.get('pppoe', {}).get('enabled', False):
         logger.info(f"PPPoE processing disabled for router: {router['name']}")
@@ -423,7 +425,8 @@ def process_pppoe_users(api, router, existing_data, network_config, flat_network
                 'PPP', 
                 secret.get('caller-id', ''), 
                 ip_address,
-                existing_data
+                existing_data,
+                no_parent
             )
             if entry is None:
                 continue
@@ -438,37 +441,38 @@ def process_pppoe_users(api, router, existing_data, network_config, flat_network
         rx_max, tx_max = calculate_max_rates(rx, tx)
         rx_min, tx_min = calculate_min_rates(rx_max, tx_max)
         
-        parent_node = f"PPP-{router_name}"
-        if per_plan_node:
+        parent_node = "" if no_parent else f"PPP-{router_name}"
+        if per_plan_node and not no_parent:
             profile_node = f"PLAN-{profile_name}-{router_name}"
             parent_node = profile_node
             
-            # Add profile node to network config
-            if flat_network:
-                # In flat network, add profile node directly to the root
-                if profile_node not in network_config:
-                    network_config[profile_node] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "plan",
-                        "children": {}
-                    }
-                    logger.info(f"Added flat PPPoE profile node {profile_node} to network configuration")
-            else:
-                # In hierarchical network, add profile node as child of router
-                if profile_node not in network_config.get(router_name, {}).get('children', {}):
-                    if router_name in network_config:
-                        if 'children' not in network_config[router_name]:
-                            network_config[router_name]['children'] = {}
-                        
-                        if profile_node not in network_config[router_name]['children']:
-                            network_config[router_name]['children'][profile_node] = {
-                                "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                                "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                                "type": "plan",
-                                "children": {}
-                            }
-                            logger.info(f"Added PPPoE profile node {profile_node} to network configuration")
+            # Add profile node to network config if not using no_parent
+            if not no_parent:
+                if flat_network:
+                    # In flat network, add profile node directly to the root
+                    if profile_node not in network_config:
+                        network_config[profile_node] = {
+                            "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                            "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                            "type": "plan",
+                            "children": {}
+                        }
+                        logger.info(f"Added flat PPPoE profile node {profile_node} to network configuration")
+                else:
+                    # In hierarchical network, add profile node as child of router
+                    if profile_node not in network_config.get(router_name, {}).get('children', {}):
+                        if router_name in network_config:
+                            if 'children' not in network_config[router_name]:
+                                network_config[router_name]['children'] = {}
+                            
+                            if profile_node not in network_config[router_name]['children']:
+                                network_config[router_name]['children'][profile_node] = {
+                                    "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                                    "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                                    "type": "plan",
+                                    "children": {}
+                                }
+                                logger.info(f"Added PPPoE profile node {profile_node} to network configuration")
                         
         new_values = {
             'Parent Node': parent_node,
@@ -485,7 +489,7 @@ def process_pppoe_users(api, router, existing_data, network_config, flat_network
     
     return current_users, updated
 
-def process_hotspot_users(api, router, existing_data, network_config, flat_network=False):
+def process_hotspot_users(api, router, existing_data, network_config, flat_network=False, no_parent=False):
     """Process hotspot users from a router."""
     if not router.get('hotspot', {}).get('enabled', False):
         logger.info(f"Hotspot processing disabled for router: {router['name']}")
@@ -522,7 +526,7 @@ def process_hotspot_users(api, router, existing_data, network_config, flat_netwo
                 logger.warning(f"Skipping creation of hotspot entry with duplicate IP {ip} for {code}")
                 continue
                 
-            entry = create_new_entry(code, router_name, 'HS', mac, ip, existing_data)
+            entry = create_new_entry(code, router_name, 'HS', mac, ip, existing_data, no_parent)
             if entry is None:
                 continue
                 
@@ -534,7 +538,7 @@ def process_hotspot_users(api, router, existing_data, network_config, flat_netwo
         rx_min, tx_min = calculate_min_rates(rx_max, tx_max)
         
         new_values = {
-            'Parent Node': f"HS-{router_name}",
+            'Parent Node': "" if no_parent else f"HS-{router_name}",
             'MAC': mac,
             'IPv4': ip,
             'Download Max Mbps': rx_max,
@@ -548,7 +552,7 @@ def process_hotspot_users(api, router, existing_data, network_config, flat_netwo
     
     return current_users, updated
 
-def process_dhcp_leases(api, router, existing_data, network_config, flat_network=False):
+def process_dhcp_leases(api, router, existing_data, network_config, flat_network=False, no_parent=False):
     """Process DHCP leases from a router."""
     if not router.get('dhcp', {}).get('enabled', False):
         logger.info(f"DHCP processing disabled for router: {router['name']}")
@@ -591,7 +595,7 @@ def process_dhcp_leases(api, router, existing_data, network_config, flat_network
                 logger.warning(f"Skipping creation of DHCP entry with duplicate IP {ip} for {code}")
                 continue
                 
-            entry = create_new_entry(code, router_name, 'DHCP', mac, ip, existing_data)
+            entry = create_new_entry(code, router_name, 'DHCP', mac, ip, existing_data, no_parent)
             if entry is None:
                 continue
                 
@@ -603,7 +607,7 @@ def process_dhcp_leases(api, router, existing_data, network_config, flat_network
         rx_min, tx_min = calculate_min_rates(rx_max, tx_max)
         
         new_values = {
-            'Parent Node': f"DHCP-{router_name}",
+            'Parent Node': "" if no_parent else f"DHCP-{router_name}",
             'MAC': mac,
             'IPv4': ip,
             'Comment': f"{hostname}" if hostname else "DHCP",
@@ -626,7 +630,7 @@ def main():
         try:
             existing_data = read_shaped_devices_csv()
             
-            routers, flat_network = read_config_json()
+            routers, flat_network, no_parent = read_config_json()
             
             network_config = update_network_json(routers, flat_network)
             
@@ -642,15 +646,15 @@ def main():
                     continue
                 
                 try:
-                    pppoe_users, pppoe_updated = process_pppoe_users(api, router, existing_data, network_config, flat_network)
+                    pppoe_users, pppoe_updated = process_pppoe_users(api, router, existing_data, network_config, flat_network, no_parent)
                     all_current_users.update(pppoe_users)
                     any_updates = any_updates or pppoe_updated
                     
-                    hotspot_users, hotspot_updated = process_hotspot_users(api, router, existing_data, network_config, flat_network)
+                    hotspot_users, hotspot_updated = process_hotspot_users(api, router, existing_data, network_config, flat_network, no_parent)
                     all_current_users.update(hotspot_users)
                     any_updates = any_updates or hotspot_updated
                     
-                    dhcp_users, dhcp_updated = process_dhcp_leases(api, router, existing_data, network_config, flat_network)
+                    dhcp_users, dhcp_updated = process_dhcp_leases(api, router, existing_data, network_config, flat_network, no_parent)
                     all_current_users.update(dhcp_users)
                     any_updates = any_updates or dhcp_updated
                     
@@ -708,6 +712,7 @@ if [ -f "$CONFIG_JSON" ]; then
         cat << 'EOF' > "$CONFIG_JSON"
 {
     "flat_network": false,
+    "no_parent": false,
     "routers": [
         {
             "name": "Mikrotik 1",
@@ -746,6 +751,7 @@ else
     cat << 'EOF' > "$CONFIG_JSON"
 {
     "flat_network": false,
+    "no_parent": false,
     "routers": [
         {
             "name": "Mikrotik 1",

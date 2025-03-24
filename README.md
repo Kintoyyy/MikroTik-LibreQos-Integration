@@ -96,6 +96,7 @@ The `config.json` file is the central configuration point for the script. It all
 ```json
 {
     "flat_network": false,
+    "no_parent": false,
     "routers": [
         {
             "name": "Router Name",
@@ -111,11 +112,12 @@ The `config.json` file is the central configuration point for the script. It all
 }
 ```
 
-#### **Flat Network Configuration**
+#### **Global Configuration Options**
 
 | Parameter | Description | Example |
 |-----------|-------------|---------|
 | `flat_network` | If set to `true`, all devices are treated as part of a single network without hierarchical parent nodes. | `true` or `false` |
+| `no_parent` | If set to `true`, devices from all routers will not have a parent node in the `ShapedDevices.csv` file. This overrides individual router settings. | `true` or `false` |
 
 #### **Router Connection Settings**
 
@@ -185,6 +187,7 @@ The `config.json` file is the central configuration point for the script. It all
 ```json
 {
     "flat_network": false,
+    "no_parent": false,
     "routers": [
         {
             "name": "Mikrotik AC",
@@ -240,6 +243,54 @@ The `config.json` file is the central configuration point for the script. It all
 
 ---
 
+### **Explanation of `no_parent` Option**
+- The `no_parent` option is a **global setting** that applies to all routers defined in the `config.json` file.
+- When set to `true`, devices from all routers will **not have a parent node** in the `ShapedDevices.csv` file.
+- This is useful if you want to simplify the CSV structure and avoid hierarchical parent nodes for all devices.
+- If `no_parent` is set to `false`, the script will respect the `per_plan_node` setting for PPPoE users and other configurations.
+
+---
+
+### **Flat Network Configuration**
+If you set `flat_network` to `true` in the `config.json` file, the script will treat all devices as part of a single network without hierarchical parent nodes. This is useful for simpler network setups where you do not need to differentiate between different types of users or services.
+
+Example:
+```json
+{
+    "flat_network": true,
+    "no_parent": false,
+    "routers": [
+        {
+            "name": "Mikrotik AC",
+            "address": "10.0.0.2",
+            "port": 8728,
+            "username": "LibreQos",
+            "password": "ABC11233",
+            "dhcp": {
+                "enabled": true,
+                "download_limit_mbps": 1000,
+                "upload_limit_mbps": 1000,
+                "dhcp_server": []
+            },
+            "hotspot": {
+                "enabled": true,
+                "include_mac": true,
+                "download_limit_mbps": 10,
+                "upload_limit_mbps": 10
+            },
+            "pppoe": {
+                "enabled": true,
+                "per_plan_node": false
+            }
+        }
+    ]
+}
+```
+
+In this configuration, all devices will be listed under a single parent node, simplifying the traffic shaping process.
+
+---
+
 ### **MikroTik Configuration**
 To ensure proper access, create a dedicated user group and user on the MikroTik router:
 
@@ -288,45 +339,6 @@ In this example, the device with the comment `"static"` will remain unchanged ev
 - **Flat Network Support**: Easily configure a flat network structure for simplified traffic shaping.
 - **Preserve Static Entries**: Manually added devices with the comment `"static"` are preserved during updates.
 - **Rate Limits in PPP Profile Comments**: Define rate limits directly in the PPP profile comments for simplicity.
-
----
-
-### **Flat Network Configuration**
-If you set `flat_network` to `true` in the `config.json` file, the script will treat all devices as part of a single network without hierarchical parent nodes. This is useful for simpler network setups where you do not need to differentiate between different types of users or services.
-
-Example:
-```json
-{
-    "flat_network": true,
-    "routers": [
-        {
-            "name": "Mikrotik AC",
-            "address": "10.0.0.2",
-            "port": 8728,
-            "username": "LibreQos",
-            "password": "ABC11233",
-            "dhcp": {
-                "enabled": true,
-                "download_limit_mbps": 1000,
-                "upload_limit_mbps": 1000,
-                "dhcp_server": []
-            },
-            "hotspot": {
-                "enabled": true,
-                "include_mac": true,
-                "download_limit_mbps": 10,
-                "upload_limit_mbps": 10
-            },
-            "pppoe": {
-                "enabled": true,
-                "per_plan_node": false
-            }
-        }
-    ]
-}
-```
-
-In this configuration, all devices will be listed under a single parent node, simplifying the traffic shaping process.
 
 ---
 
