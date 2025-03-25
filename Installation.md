@@ -95,6 +95,9 @@ If you need to customize the script settings (e.g., change the MikroTik router I
 2. **Modify the configuration**:
    ```json
    {
+      "flat_network": false,
+      "no_parent": false,
+      "preserve_network_config": false,
        "routers": [
            {
                "name": "MikroTik-XYZ",
@@ -164,6 +167,14 @@ sudo systemctl enable updatecsv.service
 ### **Configuration File (config.json) Details**
 
 The `config.json` file allows you to configure one or multiple MikroTik routers and their services:
+
+#### **Global Configuration Options**
+
+| Parameter | Description | Required |
+|-----------|-------------|----------|
+| `flat_network` | single network without hierarchical parent nodes | Yes |
+| `no_parent` | devices from all routers will not have a parent node | Yes |
+| `preserve_network_config` | nodes with  `static: true` will be preserved | Yes |
 
 #### **Router Connection Settings**
 
@@ -260,3 +271,27 @@ The `config.json` file allows you to configure one or multiple MikroTik routers 
 ---
 
 This guide ensures smooth installation and operation of the **LibreQoS MikroTik PPP and Active Hotspot User Sync** script. If you encounter issues, refer to the troubleshooting section or check the logs for detailed error messages.
+
+---
+
+### **Donations**
+
+If this script has helped you streamline your network management, synchronize MikroTik PPP and hotspot users with LibreQoS, or saved you time and effort, please consider supporting the development and maintenance of this project. Your donations help ensure that the script remains up-to-date, reliable, and free for everyone to use.
+
+#### **How to Donate**
+You can support this project by donating via the following methods:
+
+- **PayPal**: [Donate via PayPal](https://paypal.me/Kintoyyyy?country.x=PH)  
+- **Buy Me a Coffee**: [Buy Me a Coffee](https://www.buymeacoffee.com/kintoyyy)  
+
+
+<img src="https://i.imgur.com/nfxbhOv.jpeg" alt="LibreQoS MikroTik Sync" width="500" />
+
+Every contribution, no matter how small, is greatly appreciated and helps keep this project alive. Thank you for your support!
+
+---
+
+### **Thank You!**
+Your support motivates further development and improvements to this script. If you have any feedback, feature requests, or issues, feel free to open an issue on the project's GitHub repository. Together, we can make network management easier and more efficient for everyone.
+
+Happy networking! 🚀

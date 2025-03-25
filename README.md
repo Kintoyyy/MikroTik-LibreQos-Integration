@@ -97,6 +97,7 @@ The `config.json` file is the central configuration point for the script. It all
 {
     "flat_network": false,
     "no_parent": false,
+    "preserve_network_config": false,
     "routers": [
         {
             "name": "Router Name",
@@ -118,6 +119,36 @@ The `config.json` file is the central configuration point for the script. It all
 |-----------|-------------|---------|
 | `flat_network` | If set to `true`, all devices are treated as part of a single network without hierarchical parent nodes. | `true` or `false` |
 | `no_parent` | If set to `true`, devices from all routers will not have a parent node in the `ShapedDevices.csv` file. This overrides individual router settings. | `true` or `false` |
+| `preserve_network_config` | If set to `true`, nodes with  `static: true` will be preserved in `network.json`. | `true` or `false` |
+
+
+#### **Preserve_network_config flag (`network.json`)**
+
+```json
+{
+    "Node 1": {
+        "downloadBandwidthMbps": 1000,
+        "uploadBandwidthMbps": 1000,
+        "static": true,       // Add this and the node will not be dynamically updated
+        "type": "site",
+        "children": {}
+    },
+    "Node 2": {
+        "downloadBandwidthMbps": 1000,
+        "uploadBandwidthMbps": 1000,
+        "type": "site",
+        "children": {}
+    },
+    "Node 3": {
+        "downloadBandwidthMbps": 1000,
+        "uploadBandwidthMbps": 1000,
+        "type": "site",
+        "children": {}
+    }
+}
+```
+
+---
 
 #### **Router Connection Settings**
 
@@ -188,6 +219,7 @@ The `config.json` file is the central configuration point for the script. It all
 {
     "flat_network": false,
     "no_parent": false,
+    "preserve_network_config": false,
     "routers": [
         {
             "name": "Mikrotik AC",
@@ -259,6 +291,7 @@ Example:
 {
     "flat_network": true,
     "no_parent": false,
+    "preserve_network_config": false,
     "routers": [
         {
             "name": "Mikrotik AC",
