@@ -79,8 +79,14 @@ def write_network_json(data):
     except Exception as e:
         logger.error(f"Error writing network JSON: {e}")
 
-def update_network_json(routers, flat_network=False):
-    """Update network.json with any missing routers based on flat_network setting."""
+def update_network_json(routers, flat_network=False, no_parent=False):
+    """Update network.json with any missing routers based on flat_network and no_parent settings."""
+    if no_parent:
+        logger.info("No parent configuration enabled. Setting network configuration to empty.")
+        network_config = {}
+        write_network_json(network_config)
+        return network_config
+
     network_config = read_network_json()
     updated = False
     
