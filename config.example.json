@@ -1,6 +1,7 @@
 {
     "flat_network": false,
     "no_parent": false,
+    "preserve_network_config": true,
     "routers": [
         {
             "name": "Mikrotik AC",

@@ -57,19 +57,21 @@ def read_config_json():
         routers = config.get('routers', [])
         flat_network = config.get('flat_network', False)
         no_parent = config.get('no_parent', False)
+        preserve_network_config = config.get('preserve_network_config', False)  # New flag
         logger.info(f"Successfully read {len(routers)} routers from {CONFIG_JSON}")
         logger.info(f"Flat network configuration: {flat_network}")
         logger.info(f"No parent node configuration: {no_parent}")
-        return routers, flat_network, no_parent
+        logger.info(f"Preserve network configuration: {preserve_network_config}")
+        return routers, flat_network, no_parent, preserve_network_config
     except FileNotFoundError:
         logger.error(f"Config JSON file not found: {CONFIG_JSON}")
-        return [], False, False
+        return [], False, False, False
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config file: {e}")
-        return [], False, False
+        return [], False, False, False
     except Exception as e:
         logger.error(f"Error reading config JSON: {e}")
-        return [], False, False
+        return [], False, False, False
 
 def read_network_json():
     """Read the network configuration from JSON file."""
@@ -93,8 +95,14 @@ def write_network_json(data):
     except Exception as e:
         logger.error(f"Error writing network JSON: {e}")
 
-def update_network_json(routers, flat_network=False, no_parent=False):
-    """Update network.json with any missing routers based on flat_network and no_parent settings."""
+def update_network_json(routers, flat_network=False, no_parent=False, preserve_network_config=False):
+    """Update network.json with any missing routers based on configuration settings."""
+    # If preserve_network_config is True, read existing configuration and return without modifications
+    if preserve_network_config:
+        logger.info("Preserve network configuration flag is set. Keeping existing network.json unchanged.")
+        return read_network_json()
+
+    # If no_parent is True, return an empty network configuration
     if no_parent:
         logger.info("No parent configuration enabled. Setting network configuration to empty.")
         network_config = {}
@@ -187,6 +195,7 @@ def update_network_json(routers, flat_network=False, no_parent=False):
         logger.info("No new routers needed to be added to network configuration")
     
     return network_config
+
 
 def connect_to_router(router, retries=3):
     """
@@ -636,9 +645,9 @@ def main():
         try:
             existing_data = read_shaped_devices_csv()
             
-            routers, flat_network, no_parent = read_config_json()
+            routers, flat_network, no_parent, preserve_network_config = read_config_json()
             
-            network_config = update_network_json(routers, flat_network)
+            network_config = update_network_json(routers, flat_network, no_parent, preserve_network_config)
             
             all_current_users = set()
             any_updates = False
