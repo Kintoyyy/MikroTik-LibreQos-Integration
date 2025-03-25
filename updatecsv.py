@@ -82,7 +82,10 @@ def write_network_json(data):
         logger.error(f"Error writing network JSON: {e}")
 
 def update_network_json(routers, flat_network=False, no_parent=False, preserve_network_config=False):
-    """Update network.json with any missing routers based on configuration settings."""
+    """
+    Update network.json with any missing routers based on configuration settings.
+    Remove root-level nodes that are duplicates of child nodes.
+    """
     # If preserve_network_config is True, read existing configuration and return without modifications
     if preserve_network_config:
         logger.info("Preserve network configuration flag is set. Keeping existing network.json unchanged.")
@@ -95,52 +98,49 @@ def update_network_json(routers, flat_network=False, no_parent=False, preserve_n
         write_network_json(network_config)
         return network_config
 
+    # Read existing network configuration
     network_config = read_network_json()
     updated = False
     
+    # Collect all child nodes across all parent nodes
+    child_nodes = set()
+    for parent, config in network_config.items():
+        if 'children' in config:
+            child_nodes.update(config['children'].keys())
+    
+    # Remove root-level nodes that exist as child nodes
+    nodes_to_remove = [node for node in list(network_config.keys()) if node in child_nodes]
+    
+    for node in nodes_to_remove:
+        del network_config[node]
+        updated = True
+        logger.info(f"Removed root-level node {node} that exists as a child node")
+    
+    # Rest of the existing function remains the same (router processing logic)
     for router in routers:
         router_name = router['name']
         
         if flat_network:
-            # Flat network: All nodes at root level
-            if router.get('pppoe', {}).get('enabled', False):
-                ppp_node = f"PPP-{router_name}"
-                if ppp_node not in network_config:
-                    network_config[ppp_node] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "site",
-                        "children": {}
-                    }
-                    logger.info(f"Added flat PPP node {ppp_node} to network configuration")
-                    updated = True
+            services = [
+                ('pppoe', 'PPP'),
+                ('hotspot', 'HS'),
+                ('dhcp', 'DHCP')
+            ]
             
-            if router.get('hotspot', {}).get('enabled', False):
-                hs_node = f"HS-{router_name}"
-                if hs_node not in network_config:
-                    network_config[hs_node] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "site",
-                        "children": {}
-                    }
-                    logger.info(f"Added flat Hotspot node {hs_node} to network configuration")
-                    updated = True
-                
-            if router.get('dhcp', {}).get('enabled', False):
-                dhcp_node = f"DHCP-{router_name}"
-                if dhcp_node not in network_config:
-                    network_config[dhcp_node] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "site",
-                        "children": {}
-                    }
-                    logger.info(f"Added flat DHCP node {dhcp_node} to network configuration")
-                    updated = True
+            for service_key, prefix in services:
+                if router.get(service_key, {}).get('enabled', False):
+                    node = f"{prefix}-{router_name}"
+                    if node not in network_config or not network_config.get(node, {}).get('static', False):
+                        network_config[node] = {
+                            "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                            "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                            "type": "site",
+                            "children": {}
+                        }
+                        logger.info(f"Added flat {prefix} node {node} to network configuration")
+                        updated = True
         else:
-            # Hierarchical network: Router is parent of service nodes
-            if router_name not in network_config:
+            if router_name not in network_config or not network_config.get(router_name, {}).get('static', False):
                 network_config[router_name] = {
                     "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
                     "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
@@ -148,32 +148,54 @@ def update_network_json(routers, flat_network=False, no_parent=False, preserve_n
                     "children": {}
                 }
                 
-                if router.get('pppoe', {}).get('enabled', False):
-                    network_config[router_name]["children"][f"PPP-{router_name}"] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "site",
-                        "children": {}
-                    }
+                services = [
+                    ('pppoe', 'PPP'),
+                    ('hotspot', 'HS'),
+                    ('dhcp', 'DHCP')
+                ]
                 
-                if router.get('hotspot', {}).get('enabled', False):
-                    network_config[router_name]["children"][f"HS-{router_name}"] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "site",
-                        "children": {}
-                    }
-                    
-                if router.get('dhcp', {}).get('enabled', False):
-                    network_config[router_name]["children"][f"DHCP-{router_name}"] = {
-                        "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                        "type": "site",
-                        "children": {}
-                    }
-                    
+                for service_key, prefix in services:
+                    if router.get(service_key, {}).get('enabled', False):
+                        service_node = f"{prefix}-{router_name}"
+                        if service_node not in network_config[router_name]['children'] or \
+                           not network_config[router_name]['children'].get(service_node, {}).get('static', False):
+                            network_config[router_name]["children"][service_node] = {
+                                "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
+                                "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
+                                "type": "site",
+                                "children": {}
+                            }
+                
                 logger.info(f"Added router {router_name} to network configuration")
                 updated = True
+    
+    # Preserve static nodes while removing others
+    if flat_network:
+        keep_nodes = set()
+        
+        for router in routers:
+            services = [
+                ('pppoe', 'PPP'),
+                ('hotspot', 'HS'),
+                ('dhcp', 'DHCP')
+            ]
+            
+            for service_key, prefix in services:
+                if router.get(service_key, {}).get('enabled', False):
+                    keep_nodes.add(f"{prefix}-{router['name']}")
+        
+        # Remove nodes not in active services and not marked as static
+        nodes_to_remove = [
+            node for node in list(network_config.keys()) 
+            if not node.startswith(('PPP-', 'HS-', 'DHCP-', 'PLAN-')) 
+            and node not in keep_nodes 
+            and not network_config.get(node, {}).get('static', False)
+        ]
+        
+        for node in nodes_to_remove:
+            del network_config[node]
+            logger.info(f"Removed unused node: {node}")
+            updated = True
     
     if updated:
         write_network_json(network_config)
