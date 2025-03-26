@@ -113,41 +113,33 @@ The `config.json` file is the central configuration point for the script. It all
 }
 ```
 
-#### **Global Configuration Options**
+#### **Network Structure Options**
+| Parameter        | Description | Default | Example |
+|------------------|-------------|---------|---------|
+| `flat_network`   | When `true`, treats all devices as part of a single flat network (no hierarchical parent-child relationships). | `false` | `"flat_network": true` |
+| `no_parent`      | When `true`, devices from all routers will exclude parent nodes in `ShapedDevices.csv`. Overrides per-router settings. | `false` | `"no_parent": true` |
+| `preserve_network_config` | When `false`, allows dynamic updates to nodes unless they are explicitly marked as static. | `false` | `"preserve_network_config": false` |
 
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `flat_network` | If set to `true`, all devices are treated as part of a single network without hierarchical parent nodes. | `true` or `false` |
-| `no_parent` | If set to `true`, devices from all routers will not have a parent node in the `ShapedDevices.csv` file. This overrides individual router settings. | `true` or `false` |
-| `preserve_network_config` | If set to `true`, nodes with  `static: true` will be preserved in `network.json`. | `true` or `false` |
-
-
-#### **Preserve_network_config flag (`network.json`)**
+#### **Node-Level Overrides**
+To exclude individual nodes from dynamic updates (when `preserve_network_config` is `false`), add the `static` flag in `network.json`
 
 ```json
 {
     "Node 1": {
         "downloadBandwidthMbps": 1000,
         "uploadBandwidthMbps": 1000,
-        "static": true,       // Add this and the node will not be dynamically updated
+        "static": true,       // Node will retain fixed bandwidth and hierarchy
         "type": "site",
         "children": {}
     },
     "Node 2": {
         "downloadBandwidthMbps": 1000,
         "uploadBandwidthMbps": 1000,
-        "type": "site",
-        "children": {}
-    },
-    "Node 3": {
-        "downloadBandwidthMbps": 1000,
-        "uploadBandwidthMbps": 1000,
-        "type": "site",
+        "type": "site",      // Node can be updated dynamically
         "children": {}
     }
 }
 ```
-
 ---
 
 #### **Router Connection Settings**
@@ -289,7 +281,7 @@ If you set `flat_network` to `true` in the `config.json` file, the script will t
 Example:
 ```json
 {
-    "flat_network": true,
+    "flat_network": false,
     "no_parent": false,
     "preserve_network_config": false,
     "routers": [

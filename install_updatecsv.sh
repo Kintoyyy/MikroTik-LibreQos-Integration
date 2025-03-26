@@ -789,6 +789,7 @@ else
 {
     "flat_network": false,
     "no_parent": false,
+    "preserve_network_config": false,
     "routers": [
         {
             "name": "Mikrotik 1",
