@@ -174,7 +174,7 @@ The `config.json` file allows you to configure one or multiple MikroTik routers 
 |-----------|-------------|----------|
 | `flat_network` | single network without hierarchical parent nodes | Yes |
 | `no_parent` | devices from all routers will not have a parent node | Yes |
-| `preserve_network_config` | nodes with  `static: true` will be preserved | Yes |
+| `preserve_network_config` | allows dynamic updates to nodes | Yes |
 
 #### **Router Connection Settings**
 
