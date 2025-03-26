@@ -46,6 +46,9 @@ cd MikroTik-LibreQos-Integration
 ### 3. Run the Installation Script
 
 ```bash
+# Make the installation script executable
+chmod +x install_updatecsv.sh
+
 # Run the installation script with sudo
 sudo ./install_updatecsv.sh
 ```
@@ -174,6 +177,9 @@ journalctl -u updatecsv.service --no-pager --since "1 hour ago"
 ## Uninstallation
 
 ```bash
+# Make the uninstallation script executable
+chmod +x uninstall.sh
+
 # Run uninstallation script
 sudo ./uninstall.sh
 ```
