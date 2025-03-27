@@ -700,10 +700,13 @@ def main():
                 write_network_json(network_config)
                 try:
                     logger.info("Running LibreQoS update command...")
-                    subprocess.run(["sudo", "./LibreQoS.py", "--updateonly"], check=True)
+                    result = subprocess.run(["/usr/bin/sudo", "/opt/libreqos/src/LibreQoS.py", "--updateonly"], 
+                                            capture_output=True, text=True, check=True)
+                    logger.info("LibreQoS update command output: " + result.stdout)
                     logger.info("LibreQoS update command executed successfully.")
                 except subprocess.CalledProcessError as e:
                     logger.error(f"Failed to execute LibreQoS update command: {e}")
+                    logger.error(f"Error output: {e.stderr}")
                 except Exception as e:
                     logger.error(f"Unexpected error while executing LibreQoS update command: {e}")
             else:
