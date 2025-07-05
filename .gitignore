@@ -1,2 +1,5 @@
 network/
 *.csv
+.vscode/
+*.ipynb_checkpoints/
+*.py
