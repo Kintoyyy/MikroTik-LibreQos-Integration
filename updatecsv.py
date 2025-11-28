@@ -432,14 +432,14 @@ def process_pppoe_users(api, router, existing_data, network_config, flat_network
             active_secrets[name] = {**data, 'address': active[name]['address']}
     
     for name, secret in active_secrets.items():
-    caller = secret.get('caller-id', '').replace(":", "").upper()
+        caller = secret.get('caller-id', '').replace(":", "").upper()
 
-    if caller:
-        code = f"PPP-{caller}"
-    else:
-        code = f"PPPUSER-{name}"
+        if caller:
+            code = f"PPP-{caller}"
+        else:
+            code = f"PPPUSER-{name}"
 
-    current_users.add(code)
+        current_users.add(code)
         
         if code in existing_data:
             entry = existing_data[code]
