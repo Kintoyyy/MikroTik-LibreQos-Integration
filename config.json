@@ -1,7 +1,6 @@
 {
-    "flat_network": false,
-    "no_parent": true,
-    "preserve_network_config": false,
+    "no_parent": false,
+    "queues": true,
     "routers": [
         {
             "name": "Mikrotik 1",

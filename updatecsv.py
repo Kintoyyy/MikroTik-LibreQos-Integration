@@ -9,6 +9,7 @@ import sqlite3
 import routeros_api
 import os
 import re
+import heapq
 from datetime import datetime
 
 # --- Constants ---
@@ -136,20 +137,36 @@ def read_config_json():
         with open(CONFIG_JSON, 'r') as f:
             config = json.load(f)
         routers = config.get('routers', [])
-        flat_network = config.get('flat_network', False)
         no_parent = config.get('no_parent', False)
-        preserve_network_config = config.get('preserve_network_config', False)
+        queues_raw = config.get('queues', True)
+        if queues_raw is True:
+            queues = os.cpu_count() or 4
+        elif queues_raw is False:
+            queues = None  # skip network.json entirely
+        else:
+            queues = int(queues_raw)
+
+        # Auto-increment duplicate router names
+        seen_names = {}
+        for router in routers:
+            base = router['name']
+            if base in seen_names:
+                seen_names[base] += 1
+                router['name'] = f"{base} {seen_names[base]}"
+            else:
+                seen_names[base] = 1
+
         logger.info(f"Read {len(routers)} routers from {CONFIG_JSON}")
-        return routers, flat_network, no_parent, preserve_network_config
+        return routers, no_parent, queues
     except FileNotFoundError:
         logger.error(f"Config file not found: {CONFIG_JSON}")
-        return [], False, False, False
+        return [], False, None
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config: {e}")
-        return [], False, False, False
+        return [], False, None
     except Exception as e:
         logger.error(f"Error reading config: {e}")
-        return [], False, False, False
+        return [], False, None
 
 
 # ── Network JSON ─────────────────────────────────────────────────────────────
@@ -175,41 +192,49 @@ def write_network_json(data):
         logger.error(f"Error writing network JSON: {e}")
 
 
-def update_network_json(routers, flat_network=False, no_parent=False, preserve_network_config=False):
-    if preserve_network_config:
-        logger.info("Preserving existing network.json.")
-        return read_network_json()
-    if no_parent:
-        logger.info("No parent mode — clearing network config.")
-        write_network_json({})
-        return {}
+def assign_cpu_nodes(conn, cpu_count):
+    """
+    Distribute all devices across CPU0..CPU{n-1} parent nodes using greedy
+    bin-packing: sort by weight descending, assign each device to the
+    least-loaded CPU. Updates parent_node in DB.
+    Returns {cpu_name: (total_dl_mbps, total_ul_mbps)}.
+    """
+    devices = conn.execute(
+        "SELECT code, download_max_mbps, upload_max_mbps FROM devices ORDER BY weight DESC"
+    ).fetchall()
 
-    network_config = read_network_json()
-    updated = False
+    # Min-heap: (current_total_load, cpu_index)
+    heap = [(0, i) for i in range(cpu_count)]
+    heapq.heapify(heap)
 
-    child_nodes = set()
-    for cfg in network_config.values():
-        if 'children' in cfg:
-            child_nodes.update(cfg['children'].keys())
-    for node in [n for n in list(network_config.keys()) if n in child_nodes]:
-        del network_config[node]
-        updated = True
-        logger.info(f"Removed duplicate root node: {node}")
+    cpu_totals = {f"CPU{i}": [0, 0] for i in range(cpu_count)}
+    assignments = []
 
-    for router in routers:
-        node = f"ADDR-{router['name']}" if flat_network else router['name']
-        if node not in network_config or not network_config[node].get('static', False):
-            network_config[node] = {
-                "downloadBandwidthMbps": DEFAULT_BANDWIDTH,
-                "uploadBandwidthMbps": DEFAULT_BANDWIDTH,
-                "type": "site",
-                "children": {}
-            }
-            logger.info(f"Added node {node} to network config")
-            updated = True
+    for code, dl, ul in devices:
+        load, cpu_idx = heapq.heappop(heap)
+        cpu_name = f"CPU{cpu_idx}"
+        assignments.append((cpu_name, code))
+        cpu_totals[cpu_name][0] += dl
+        cpu_totals[cpu_name][1] += ul
+        heapq.heappush(heap, (load + dl + ul, cpu_idx))
 
-    if updated:
-        write_network_json(network_config)
+    conn.executemany("UPDATE devices SET parent_node = ? WHERE code = ?", assignments)
+    conn.commit()
+    logger.info(f"Assigned {len(devices)} devices across {cpu_count} CPUs")
+    return {k: tuple(v) for k, v in cpu_totals.items()}
+
+
+def update_network_json(cpu_totals):
+    network_config = {
+        cpu: {
+            "downloadBandwidthMbps": max(int(dl * 1.1), 1),
+            "uploadBandwidthMbps": max(int(ul * 1.1), 1),
+            "type": "site",
+            "children": {}
+        }
+        for cpu, (dl, ul) in cpu_totals.items()
+    }
+    write_network_json(network_config)
     return network_config
 
 
@@ -262,7 +287,8 @@ _CREATE_DEVICES_SQL = """
         source          TEXT DEFAULT '',
         router          TEXT DEFAULT '',
         last_seen       REAL DEFAULT 0,
-        is_static       INTEGER DEFAULT 0
+        is_static       INTEGER DEFAULT 0,
+        weight          INT NOT NULL DEFAULT 0
     )
 """
 
@@ -298,6 +324,13 @@ def open_db():
         logger.info("Migration complete.")
     else:
         conn.execute(_CREATE_DEVICES_SQL)
+
+    # Add weight column if missing (non-destructive ALTER TABLE)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+    if 'weight' not in cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN weight INT NOT NULL DEFAULT 0")
+        conn.execute("UPDATE devices SET weight = download_max_mbps + upload_max_mbps")
+        logger.info("Added weight column to devices table")
 
     conn.commit()
     return conn
@@ -356,10 +389,11 @@ def upsert_device(conn, code, parent_node, mac, ipv4, comment, source, router_na
             conn.execute("""
                 UPDATE devices
                 SET parent_node=?, mac=?, ipv4=?, comment=?, source=?, router=?,
-                    download_max_mbps=?, upload_max_mbps=?, download_min_mbps=?, upload_min_mbps=?
+                    download_max_mbps=?, upload_max_mbps=?, download_min_mbps=?, upload_min_mbps=?,
+                    weight=?
                 WHERE code = ?
             """, (parent_node, mac, ipv4, comment, source, router_name,
-                  rx_max, tx_max, rx_min, tx_min, code))
+                  rx_max, tx_max, rx_min, tx_min, rx_max + tx_max, code))
             logger.debug(f"Updated {code}")
             return True
         return False
@@ -367,11 +401,12 @@ def upsert_device(conn, code, parent_node, mac, ipv4, comment, source, router_na
         conn.execute("""
             INSERT INTO devices (code, circuit_id, device_id, parent_node, mac, ipv4, ipv6,
                 comment, source, router, download_max_mbps, upload_max_mbps,
-                download_min_mbps, upload_min_mbps, last_seen, is_static)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                download_min_mbps, upload_min_mbps, last_seen, is_static, weight)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         """, (code, generate_short_id(), generate_short_id(), parent_node, mac,
               ipv4 or None,  # NULL instead of '' so UNIQUE allows multiple "no IP" rows
-              comment, source, router_name, rx_max, tx_max, rx_min, tx_min, scan_time))
+              comment, source, router_name, rx_max, tx_max, rx_min, tx_min, scan_time,
+              rx_max + tx_max))
         logger.info(f"New device: {code} (source={source}, IP={ipv4})")
         return True
 
@@ -594,8 +629,7 @@ def main():
 
     while True:
         try:
-            routers, flat_network, no_parent, preserve_network_config = read_config_json()
-            network_config = update_network_json(routers, flat_network, no_parent, preserve_network_config)
+            routers, no_parent, queues = read_config_json()
 
             scan_time   = time.time()
             any_changes = False
@@ -609,9 +643,6 @@ def main():
                     continue
 
                 try:
-                    router_name = router['name']
-                    parent_node = '' if no_parent else (f"ADDR-{router_name}" if flat_network else router_name)
-
                     # ── Fetch all data at once ──────────────────────────────
                     addr_list_entries = get_resource_data(api, '/ip/firewall/address-list')
 
@@ -623,13 +654,13 @@ def main():
                     }
 
                     # ── Aggregate into SQLite ───────────────────────────────
-                    if process_pppoe_users(api, conn, router, ip_to_list, parent_node, scan_time):
+                    if process_pppoe_users(api, conn, router, ip_to_list, '', scan_time):
                         any_changes = True
-                    if process_hotspot_users(api, conn, router, ip_to_list, parent_node, scan_time):
+                    if process_hotspot_users(api, conn, router, ip_to_list, '', scan_time):
                         any_changes = True
-                    if process_dhcp_leases(api, conn, router, ip_to_list, parent_node, scan_time):
+                    if process_dhcp_leases(api, conn, router, ip_to_list, '', scan_time):
                         any_changes = True
-                    if process_address_list(conn, router, addr_list_entries, parent_node, scan_time):
+                    if process_address_list(conn, router, addr_list_entries, '', scan_time):
                         any_changes = True
 
                     conn.commit()
@@ -643,9 +674,13 @@ def main():
                 any_changes = True
 
             if any_changes:
-                # ── Export CSV → reload LibreQoS ────────────────────────────
+                # ── Distribute devices across CPUs, then export ─────────────
+                if no_parent:
+                    write_network_json({})
+                elif queues is not None:
+                    cpu_totals = assign_cpu_nodes(conn, queues)
+                    update_network_json(cpu_totals)
                 export_to_csv(conn)
-                write_network_json(network_config)
                 try:
                     result = subprocess.run(
                         ["/usr/bin/sudo", "/opt/libreqos/src/LibreQoS.py", "--updateonly"],
