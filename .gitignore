@@ -1,5 +1,10 @@
-network/
+venv/
 *.csv
 .vscode/
 *.ipynb_checkpoints/
-*.py
+50-cloud-init.yaml
+libreqos.yaml
+lqos.conf
+venv/lib64
+network.json
+__pycache__/database.cpython-312.pyc

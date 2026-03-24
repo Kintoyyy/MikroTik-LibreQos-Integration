@@ -1,6 +1,6 @@
 {
     "flat_network": false,
-    "no_parent": false,
+    "no_parent": true,
     "preserve_network_config": false,
     "routers": [
         {
@@ -8,25 +8,25 @@
             "address": "192.168.88.1",
             "port": 8728,
             "username": "admin",
-            "password": "password",
-            "dhcp": {
+            "password": "",
+            "pppoe": {
                 "enabled": true,
-                "download_limit_mbps": 1000,
-                "upload_limit_mbps": 1000,
-                "dhcp_server": [
-                    "dhcp1",
-                    "dhcp2"
-                ]
+                "default_download_limit": 1000,
+                "default_upload_limit": 1000
             },
             "hotspot": {
                 "enabled": true,
-                "include_mac": true,
-                "download_limit_mbps": 10,
-                "upload_limit_mbps": 10
+                "default_download_limit": 1000,
+                "default_upload_limit": 1000
             },
-            "pppoe": {
+            "dhcp": {
                 "enabled": true,
-                "per_plan_node": true
+                "default_download_limit": 1000,
+                "default_upload_limit": 1000
+            },
+            "address_list": {
+                "default_download_limit": 100,
+                "default_upload_limit": 100
             }
         }
     ]
