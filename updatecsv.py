@@ -31,6 +31,15 @@ MAX_RATE_PERCENTAGE = 1.15
 ID_LENGTH = 8
 DEFAULT_BANDWIDTH = 1000
 
+# Integration strategies (LibreQoS Scale Planning)
+STRATEGY_FLAT    = 'flat'     # No parent hierarchy; empty network.json (max perf, min visibility)
+STRATEGY_AP_ONLY = 'ap_only'  # Devices grouped under their router as parent node
+STRATEGY_AP_SITE = 'ap_site'  # Devices grouped under site → router hierarchy
+STRATEGY_FULL    = 'full'     # Full path shaping; pair with promote_to_root if single-core saturates
+STRATEGY_CPU     = 'cpu'      # Greedy bin-pack across CPU nodes (current default)
+
+TC_U16_WARN_THRESHOLD = 60_000  # Warn before approaching TC classifier u16 overflow (~65535)
+
 # Compiled once at module level
 RE_LIST_RATE = re.compile(r'(\d+(?:\.\d+)?[kmgKMG])/(\d+(?:\.\d+)?[kmgKMG])')
 RE_BANDWIDTH = re.compile(r'(\d+(?:\.\d+)?)([kmgKMG])?')
@@ -133,16 +142,39 @@ def resolve_rates(rate_str, default_dl, default_ul):
 # ── Config ───────────────────────────────────────────────────────────────────
 
 def read_config_json():
+    """
+    Returns (routers, strategy, queues, promote_to_root).
+
+    Strategy resolution order:
+      1. Explicit 'strategy' key in config.json
+      2. Legacy 'no_parent: true'  → STRATEGY_FLAT
+      3. Legacy 'queues: false'    → no network.json (queues=None, strategy=STRATEGY_FLAT)
+      4. Default                   → STRATEGY_CPU with auto cpu_count
+    """
     try:
         with open(CONFIG_JSON, 'r') as f:
             config = json.load(f)
         routers = config.get('routers', [])
-        no_parent = config.get('no_parent', False)
+        promote_to_root = config.get('promote_to_root', False)
+
+        # Strategy resolution
+        if 'strategy' in config:
+            strategy = config['strategy']
+            valid = {STRATEGY_FLAT, STRATEGY_AP_ONLY, STRATEGY_AP_SITE, STRATEGY_FULL, STRATEGY_CPU}
+            if strategy not in valid:
+                logger.warning(f"Unknown strategy '{strategy}', falling back to '{STRATEGY_CPU}'")
+                strategy = STRATEGY_CPU
+        elif config.get('no_parent', False):
+            strategy = STRATEGY_FLAT
+        else:
+            strategy = STRATEGY_CPU
+
+        # Queue count (only relevant for STRATEGY_CPU / promote_to_root)
         queues_raw = config.get('queues', True)
-        if queues_raw is True:
-            queues = os.cpu_count() or 4
-        elif queues_raw is False:
+        if queues_raw is False:
             queues = None  # skip network.json entirely
+        elif queues_raw is True:
+            queues = os.cpu_count() or 4
         else:
             queues = int(queues_raw)
 
@@ -156,17 +188,17 @@ def read_config_json():
             else:
                 seen_names[base] = 1
 
-        logger.info(f"Read {len(routers)} routers from {CONFIG_JSON}")
-        return routers, no_parent, queues
+        logger.info(f"Read {len(routers)} routers from {CONFIG_JSON} (strategy={strategy})")
+        return routers, strategy, queues, promote_to_root
     except FileNotFoundError:
         logger.error(f"Config file not found: {CONFIG_JSON}")
-        return [], False, None
+        return [], STRATEGY_CPU, None, False
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config: {e}")
-        return [], False, None
+        return [], STRATEGY_CPU, None, False
     except Exception as e:
         logger.error(f"Error reading config: {e}")
-        return [], False, None
+        return [], STRATEGY_CPU, None, False
 
 
 # ── Network JSON ─────────────────────────────────────────────────────────────
@@ -222,6 +254,156 @@ def assign_cpu_nodes(conn, cpu_count):
     conn.commit()
     logger.info(f"Assigned {len(devices)} devices across {cpu_count} CPUs")
     return {k: tuple(v) for k, v in cpu_totals.items()}
+
+
+def backup_files():
+    """
+    Rollout checklist: back up network.json and ShapedDevices.csv before any write.
+    Backups are named *.bak and overwritten each cycle.
+    """
+    for path in (NETWORK_JSON, SHAPED_DEVICES_CSV):
+        if os.path.exists(path):
+            try:
+                import shutil
+                shutil.copy2(path, path + '.bak')
+                logger.debug(f"Backed up {path} → {path}.bak")
+            except Exception as e:
+                logger.warning(f"Could not back up {path}: {e}")
+
+
+def check_tc_u16_overflow(conn):
+    """
+    Warn when total device count approaches the TC u16 classifier limit (~65535).
+    See: LibreQoS Troubleshooting — TC_U16_OVERFLOW urgent code.
+    """
+    total = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+    if total >= TC_U16_WARN_THRESHOLD:
+        logger.warning(
+            f"TC_U16_OVERFLOW RISK: {total} devices in DB (threshold={TC_U16_WARN_THRESHOLD}). "
+            "Consider reducing topology depth (full → ap_site/ap_only) or increasing queue parallelism."
+        )
+    return total
+
+
+def check_distribution_skew(totals: dict, label: str = "node"):
+    """
+    Warn if the max/min load ratio across nodes is greater than 2:1.
+    Skewed distribution is a sign that one core will saturate while others stay idle.
+    """
+    loads = {k: dl + ul for k, (dl, ul) in totals.items()}
+    if not loads:
+        return
+    max_load = max(loads.values())
+    min_load = min(loads.values())
+    if min_load > 0 and max_load / min_load > 2.0:
+        worst = max(loads, key=loads.get)
+        logger.warning(
+            f"Load skew detected across {label}s: {worst} has {max_load:.0f} Mbps vs "
+            f"min {min_load:.0f} Mbps (ratio {max_load/min_load:.1f}x). "
+            "Review topology or use promote_to_root."
+        )
+
+
+def assign_router_nodes(conn, routers):
+    """
+    ap_only strategy: assign parent_node = router name for all devices from that router.
+    Returns {router_name: (total_dl_mbps, total_ul_mbps)}.
+    """
+    router_totals = {}
+    for router in routers:
+        name = router['name']
+        row = conn.execute(
+            "SELECT SUM(download_max_mbps), SUM(upload_max_mbps) FROM devices WHERE router = ?",
+            (name,)
+        ).fetchone()
+        dl, ul = (row[0] or 0), (row[1] or 0)
+        router_totals[name] = (dl, ul)
+        conn.execute(
+            "UPDATE devices SET parent_node = ? WHERE router = ?", (name, name)
+        )
+    conn.commit()
+    logger.info(f"Assigned router-level parent nodes for {len(routers)} routers")
+    return router_totals
+
+
+def assign_site_nodes(conn, routers):
+    """
+    ap_site / full strategy: assign parent_node = router name, with an optional
+    site node above. Routers may have a 'site' key in config.json.
+    Returns {node_name: (total_dl_mbps, total_ul_mbps)} for every site and router node.
+    """
+    node_totals = {}
+    for router in routers:
+        name = router['name']
+        row = conn.execute(
+            "SELECT SUM(download_max_mbps), SUM(upload_max_mbps) FROM devices WHERE router = ?",
+            (name,)
+        ).fetchone()
+        dl, ul = (row[0] or 0), (row[1] or 0)
+
+        conn.execute("UPDATE devices SET parent_node = ? WHERE router = ?", (name, name))
+
+        site = router.get('site', '')
+        if site:
+            # Router node is under the site
+            node_totals[name] = (dl, ul, site)  # (dl, ul, parent_site)
+            if site not in node_totals:
+                node_totals[site] = (0, 0, '')
+            # Accumulate into site totals
+            s_dl, s_ul, _ = node_totals[site]
+            node_totals[site] = (s_dl + dl, s_ul + ul, '')
+        else:
+            node_totals[name] = (dl, ul, '')
+
+    conn.commit()
+    logger.info(f"Assigned site/router-level parent nodes for {len(routers)} routers")
+    return node_totals
+
+
+def update_network_json_by_router(router_totals):
+    """Build network.json with each router as a top-level node (ap_only strategy)."""
+    network_config = {
+        name: {
+            "downloadBandwidthMbps": max(int(dl * 1.1), 1),
+            "uploadBandwidthMbps":   max(int(ul * 1.1), 1),
+            "type": "ap",
+            "children": {}
+        }
+        for name, (dl, ul) in router_totals.items()
+    }
+    write_network_json(network_config)
+    return network_config
+
+
+def update_network_json_by_site(node_totals):
+    """
+    Build network.json with site → router hierarchy (ap_site / full strategy).
+    node_totals values: (dl, ul, parent_site_name_or_empty).
+    """
+    network_config = {}
+
+    # First pass: create all site nodes
+    for name, (dl, ul, parent) in node_totals.items():
+        if not parent:  # top-level (site or router without a site)
+            network_config[name] = {
+                "downloadBandwidthMbps": max(int(dl * 1.1), 1),
+                "uploadBandwidthMbps":   max(int(ul * 1.1), 1),
+                "type": "site",
+                "children": {}
+            }
+
+    # Second pass: nest routers under their site
+    for name, (dl, ul, parent) in node_totals.items():
+        if parent and parent in network_config:
+            network_config[parent]["children"][name] = {
+                "downloadBandwidthMbps": max(int(dl * 1.1), 1),
+                "uploadBandwidthMbps":   max(int(ul * 1.1), 1),
+                "type": "ap",
+                "children": {}
+            }
+
+    write_network_json(network_config)
+    return network_config
 
 
 def update_network_json(cpu_totals):
@@ -629,7 +811,7 @@ def main():
 
     while True:
         try:
-            routers, no_parent, queues = read_config_json()
+            routers, strategy, queues, promote_to_root = read_config_json()
 
             scan_time   = time.time()
             any_changes = False
@@ -653,14 +835,19 @@ def main():
                         if e.get('address') and e.get('disabled', 'false') != 'true'
                     }
 
+                    # For cpu strategy, parent_node is set later by assign_cpu_nodes.
+                    # For ap_only/ap_site/full, we tag by router name so assign_*_nodes
+                    # can group them correctly.
+                    parent_node = '' if strategy == STRATEGY_CPU else ''
+
                     # ── Aggregate into SQLite ───────────────────────────────
-                    if process_pppoe_users(api, conn, router, ip_to_list, '', scan_time):
+                    if process_pppoe_users(api, conn, router, ip_to_list, parent_node, scan_time):
                         any_changes = True
-                    if process_hotspot_users(api, conn, router, ip_to_list, '', scan_time):
+                    if process_hotspot_users(api, conn, router, ip_to_list, parent_node, scan_time):
                         any_changes = True
-                    if process_dhcp_leases(api, conn, router, ip_to_list, '', scan_time):
+                    if process_dhcp_leases(api, conn, router, ip_to_list, parent_node, scan_time):
                         any_changes = True
-                    if process_address_list(conn, router, addr_list_entries, '', scan_time):
+                    if process_address_list(conn, router, addr_list_entries, parent_node, scan_time):
                         any_changes = True
 
                     conn.commit()
@@ -674,12 +861,44 @@ def main():
                 any_changes = True
 
             if any_changes:
-                # ── Distribute devices across CPUs, then export ─────────────
-                if no_parent:
+                # Rollout checklist: back up before any write
+                backup_files()
+
+                # TC_U16_OVERFLOW guard
+                check_tc_u16_overflow(conn)
+
+                # ── Build network.json and assign parent nodes by strategy ──
+                if strategy == STRATEGY_FLAT:
                     write_network_json({})
-                elif queues is not None:
-                    cpu_totals = assign_cpu_nodes(conn, queues)
-                    update_network_json(cpu_totals)
+
+                elif strategy == STRATEGY_AP_ONLY:
+                    router_totals = assign_router_nodes(conn, routers)
+                    check_distribution_skew(router_totals, label="router")
+                    update_network_json_by_router(router_totals)
+
+                elif strategy in (STRATEGY_AP_SITE, STRATEGY_FULL):
+                    node_totals = assign_site_nodes(conn, routers)
+                    # Build a (dl, ul) dict for skew check (ignore parent field)
+                    flat_totals = {k: (dl, ul) for k, (dl, ul, *_) in node_totals.items()}
+                    check_distribution_skew(flat_totals, label="site/router")
+                    update_network_json_by_site(node_totals)
+                    if promote_to_root and strategy == STRATEGY_FULL:
+                        # promote_to_root: additionally distribute across CPU nodes
+                        # to avoid single-core saturation on full-strategy networks
+                        effective_queues = queues or (os.cpu_count() or 4)
+                        cpu_totals = assign_cpu_nodes(conn, effective_queues)
+                        check_distribution_skew(cpu_totals, label="CPU")
+                        update_network_json(cpu_totals)
+
+                elif strategy == STRATEGY_CPU:
+                    if queues is not None:
+                        cpu_totals = assign_cpu_nodes(conn, queues)
+                        check_distribution_skew(cpu_totals, label="CPU")
+                        update_network_json(cpu_totals)
+                    else:
+                        # queues: false — skip network.json
+                        logger.info("Skipping network.json (queues=false)")
+
                 export_to_csv(conn)
                 try:
                     result = subprocess.run(

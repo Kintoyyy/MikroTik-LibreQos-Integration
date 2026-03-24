@@ -1,5 +1,6 @@
 {
-    "no_parent": false,
+    "strategy": "cpu",
+    "promote_to_root": false,
     "queues": true,
     "routers": [
         {
