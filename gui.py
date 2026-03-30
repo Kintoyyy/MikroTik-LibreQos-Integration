@@ -18,6 +18,12 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
+try:
+    import routeros_api
+    HAS_ROUTEROS_API = True
+except ImportError:
+    HAS_ROUTEROS_API = False
+
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
@@ -90,6 +96,14 @@ YAML_FILES = {
     "network":       NETPLAN_DIR / "50-cloud-init.yaml",
 }
 
+EXPECTED_MT_GROUP = "API_READ"
+EXPECTED_MT_USER = "libreQos_API"
+EXPECTED_MT_POLICY = (
+    "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,"
+    "!winbox,!password,!web,!sniff,!romon"
+)
+EXPECTED_MT_POLICY_SET = {p.strip() for p in EXPECTED_MT_POLICY.split(",") if p.strip()}
+
 # ---------------------------------------------------------------------------
 # SSE metrics broadcaster
 # ---------------------------------------------------------------------------
@@ -117,6 +131,43 @@ def _net_throughput():
             result[iface] = {"rx_mbps": round(rx, 2), "tx_mbps": round(tx, 2)}
         _prev_net[iface] = (c.bytes_recv, c.bytes_sent, now)
     return result
+
+
+def _load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        return {}
+    try:
+        return json.loads(CONFIG_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def _router_from_config(index: int = 0) -> dict:
+    cfg = _load_config()
+    routers = cfg.get("routers") or []
+    if not routers:
+        raise ValueError("No routers found in config.json")
+    if index < 0 or index >= len(routers):
+        raise ValueError("Router index out of range")
+    router = dict(routers[index])
+    router["port"] = int(router.get("port", 8728) or 8728)
+    return router
+
+
+def _to_bool(value) -> bool:
+    return str(value).strip().lower() in {"true", "yes", "1", "on"}
+
+
+def _connect_router_api(router: dict):
+    if not HAS_ROUTEROS_API:
+        raise RuntimeError("routeros-api module is not installed")
+    return routeros_api.RouterOsApiPool(
+        router.get("address", ""),
+        username=router.get("username", ""),
+        password=router.get("password", ""),
+        port=int(router.get("port", 8728) or 8728),
+        plaintext_login=True,
+    )
 
 def _broadcast_loop():
     while True:
@@ -584,6 +635,225 @@ def lqusers_reset():
         return jsonify({"ok": True, "removed": removed})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/troubleshoot/routers")
+@require_auth
+def troubleshoot_routers():
+    try:
+        cfg = _load_config()
+        routers = cfg.get("routers") or []
+        result = []
+        for idx, router in enumerate(routers):
+            result.append({
+                "index": idx,
+                "name": router.get("name") or f"Router {idx + 1}",
+                "address": router.get("address", ""),
+                "port": int(router.get("port", 8728) or 8728),
+            })
+        return jsonify({"ok": True, "routers": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/troubleshoot/mt/ping", methods=["POST"])
+@require_auth
+def troubleshoot_mt_ping():
+    try:
+        data = request.get_json(silent=True) or {}
+        idx = int(data.get("router_index", 0))
+        router = _router_from_config(idx)
+        host = (data.get("host") or router.get("address") or "").strip()
+        if not host:
+            return jsonify({"ok": False, "error": "Router address is empty"}), 400
+        result = subprocess.run(
+            ["ping", "-c", "3", "-W", "2", host],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+        return jsonify({
+            "ok": True,
+            "success": result.returncode == 0,
+            "host": host,
+            "output": output.strip(),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/troubleshoot/mt/connect", methods=["POST"])
+@require_auth
+def troubleshoot_mt_connect():
+    pool = None
+    try:
+        data = request.get_json(silent=True) or {}
+        idx = int(data.get("router_index", 0))
+        router = _router_from_config(idx)
+        pool = _connect_router_api(router)
+        api = pool.get_api()
+        identity_rows = api.get_resource("/system/identity").get()
+        identity = identity_rows[0].get("name", "unknown") if identity_rows else "unknown"
+        return jsonify({
+            "ok": True,
+            "connected": True,
+            "router": router.get("name") or router.get("address"),
+            "identity": identity,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "connected": False, "error": str(e)}), 500
+    finally:
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
+
+
+@app.route("/api/troubleshoot/mt/permissions", methods=["POST"])
+@require_auth
+def troubleshoot_mt_permissions():
+    pool = None
+    try:
+        data = request.get_json(silent=True) or {}
+        idx = int(data.get("router_index", 0))
+        router = _router_from_config(idx)
+        pool = _connect_router_api(router)
+        api = pool.get_api()
+
+        group_rows = api.get_resource("/user/group").get()
+        user_rows = api.get_resource("/user").get()
+
+        group = next((g for g in group_rows if g.get("name") == EXPECTED_MT_GROUP), None)
+        user = next((u for u in user_rows if u.get("name") == EXPECTED_MT_USER), None)
+
+        found_policy = (group or {}).get("policy", "")
+        found_policy_set = {p.strip() for p in found_policy.split(",") if p.strip()}
+        missing = sorted(EXPECTED_MT_POLICY_SET - found_policy_set)
+        extra = sorted(found_policy_set - EXPECTED_MT_POLICY_SET)
+
+        group_ok = bool(group) and found_policy_set == EXPECTED_MT_POLICY_SET
+        user_group = (user or {}).get("group", "")
+        user_disabled = _to_bool((user or {}).get("disabled", False))
+        user_ok = bool(user) and user_group == EXPECTED_MT_GROUP and not user_disabled
+
+        return jsonify({
+            "ok": True,
+            "permissions_ok": group_ok and user_ok,
+            "group_ok": group_ok,
+            "user_ok": user_ok,
+            "group_found": bool(group),
+            "user_found": bool(user),
+            "user_group": user_group,
+            "user_disabled": user_disabled,
+            "expected_group": EXPECTED_MT_GROUP,
+            "expected_user": EXPECTED_MT_USER,
+            "expected_policy": EXPECTED_MT_POLICY,
+            "found_policy": found_policy,
+            "missing_policy_items": missing,
+            "extra_policy_items": extra,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# LibreQoS install / status
+# ---------------------------------------------------------------------------
+
+LIBREQOS_DEB_URL = "https://download.libreqos.com/libreqos_2.0.202603200330-1_amd64.deb"
+LIBREQOS_DEB_FILE = "/tmp/libreqos_latest.deb"
+
+LIBREQOS_INDICATORS = [
+    Path("/opt/libreqos"),
+    Path("/opt/libreqos/src"),
+    Path("/opt/libreqos/src/LibreQoS.py"),
+]
+
+def _libreqos_installed() -> bool:
+    return any(p.exists() for p in LIBREQOS_INDICATORS)
+
+def _libreqos_services_present() -> bool:
+    """Return True if at least one core LibreQoS service unit is loaded."""
+    for svc in ("lqosd", "lqos_node_manager", "lqos_scheduler"):
+        info = _get_service_info(svc)
+        if info.get("loaded") != "not-found":
+            return True
+    return False
+
+@app.route("/api/libreqos/status")
+@require_auth
+def libreqos_status():
+    installed = _libreqos_installed()
+    svc_present = _libreqos_services_present()
+    return jsonify({
+        "ok": True,
+        "installed": installed,
+        "services_present": svc_present,
+        "opt_dir": str(OPT_DIR),
+    })
+
+@app.route("/api/libreqos/install", methods=["POST"])
+@require_auth
+def libreqos_install():
+    """Stream live install output as SSE."""
+    def generate():
+        def emit(line):
+            # SSE data lines cannot contain bare newlines — escape them
+            for part in line.splitlines():
+                yield f"data: {part}\n"
+            yield "\n"
+
+        yield from emit("➜ Downloading LibreQoS package…")
+        try:
+            dl = subprocess.run(
+                ["wget", "-q", "--show-progress", "--progress=dot:mega",
+                 "-O", LIBREQOS_DEB_FILE, LIBREQOS_DEB_URL],
+                capture_output=True, text=True, timeout=300
+            )
+            if dl.returncode != 0:
+                yield from emit(f"✘ Download failed:\n{dl.stderr.strip()}")
+                yield "event: done\ndata: error\n\n"
+                return
+        except Exception as e:
+            yield from emit(f"✘ Download error: {e}")
+            yield "event: done\ndata: error\n\n"
+            return
+
+        yield from emit("✔ Download complete.")
+        yield from emit("➜ Installing package (apt install)…")
+
+        try:
+            proc = subprocess.Popen(
+                ["apt-get", "install", "-y", LIBREQOS_DEB_FILE],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1
+            )
+            for line in proc.stdout:
+                yield from emit(line.rstrip())
+            proc.wait(timeout=300)
+            if proc.returncode != 0:
+                yield from emit(f"✘ Installation failed (exit {proc.returncode})")
+                yield "event: done\ndata: error\n\n"
+                return
+        except Exception as e:
+            yield from emit(f"✘ Install error: {e}")
+            yield "event: done\ndata: error\n\n"
+            return
+
+        yield from emit("✔ LibreQoS installed successfully.")
+        yield "event: done\ndata: ok\n\n"
+
+    return Response(stream_with_context(generate()),
+                    mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 if __name__ == "__main__":

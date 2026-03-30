@@ -412,6 +412,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <button class="tab-btn active" onclick="switchTab('dashboard')"><i class="bi bi-speedometer2"></i>Dashboard</button>
   <button class="tab-btn"        onclick="switchTab('config')">   <i class="bi bi-sliders"></i>Settings</button>
   <button class="tab-btn"        onclick="switchTab('services')"> <i class="bi bi-grid-3x2-gap-fill"></i>Services</button>
+  <button class="tab-btn"        onclick="switchTab('troubleshoot')"> <i class="bi bi-tools"></i>Troubleshooting</button>
   <button class="tab-btn"        onclick="switchTab('network')">  <i class="bi bi-hdd-network"></i>Network</button>
   <button class="tab-btn"        onclick="switchTab('mgmt')">     <i class="bi bi-ethernet"></i>Management Port</button>
   <button class="tab-btn"        onclick="switchTab('yaml')">     <i class="bi bi-file-code"></i>Files</button>
@@ -577,6 +578,17 @@ code { font-size: .8rem; color: #94a3b8; }
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-services">
 
+  <!-- LibreQoS not-installed banner -->
+  <div id="svc-lq-banner" style="display:none;background:#1a0e00;border:1px solid #f59e0b44;border-radius:12px;padding:.9rem 1.1rem;margin-bottom:1rem;display:none;align-items:center;gap:.85rem;flex-wrap:wrap">
+    <i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow);font-size:1.3rem;flex-shrink:0"></i>
+    <div style="flex:1;min-width:200px">
+      <div style="font-weight:600;font-size:.9rem;color:var(--yellow)">LibreQoS not detected</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-top:.2rem">Core LibreQoS services are not found. Install LibreQoS first before using this integration.</div>
+    </div>
+    <button class="btn-ghost" style="border-color:#f59e0b44;color:var(--yellow)" onclick="switchTab('troubleshoot');setTimeout(openInstallPanel,200)"><i class="bi bi-download"></i> Install LibreQoS</button>
+  </div>
+
+
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
     <div>
       <h2 style="font-size:1.1rem;font-weight:700;margin:0">Services</h2>
@@ -603,83 +615,162 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
   </div>
+</div>
 
-  <!-- ── Troubleshooting ── -->
-  <div style="margin-top:.5rem">
-    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.65rem">
-      <i class="bi bi-tools" style="color:var(--yellow)"></i> Troubleshooting
+<!-- ══════════════════════════════════════════════════════════════════════
+     TROUBLESHOOTING
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-troubleshoot">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Troubleshooting</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Diagnostics for MikroTik API connectivity and LibreQoS authentication</p>
     </div>
+    <button class="btn-ghost" onclick="loadTroubleshooting()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+  </div>
 
-    <!-- Password not working -->
-    <div class="card" style="border-color:#f59e0b22">
-      <div class="card-hd" style="background:#1a1500">
-        <span style="display:flex;align-items:center;gap:.6rem">
-          <i class="bi bi-shield-exclamation" style="color:var(--yellow);font-size:1rem"></i>
-          <span>User Password Not Working</span>
-        </span>
-        <button class="btn-ghost" onclick="toggleTrouble()" id="trouble-toggle" style="font-size:.75rem">
-          <i class="bi bi-chevron-down"></i> Show
-        </button>
-      </div>
-      <div id="trouble-body" style="display:none">
-        <div class="card-bd" style="padding:1.1rem">
+  <!-- ── Install LibreQoS ── -->
+  <div id="install-lq-card" class="card" style="margin-bottom:1rem;border-color:#3b82f633">
+    <div class="card-hd" style="background:#0d1a2e;cursor:pointer" onclick="openInstallPanel()">
+      <span style="display:flex;align-items:center;gap:.6rem">
+        <i class="bi bi-download" style="color:var(--blue)"></i>
+        <span>Install LibreQoS</span>
+        <span id="lq-install-badge" style="font-size:.7rem;padding:.15em .6em;border-radius:20px;background:#14532d33;color:#4ade80;border:1px solid #22c55e33;display:none">Installed</span>
+      </span>
+      <i class="bi bi-chevron-down" id="install-lq-chevron" style="color:var(--muted);transition:transform .2s"></i>
+    </div>
+    <div id="install-lq-body" style="display:none">
+      <div class="card-bd">
+        <p style="font-size:.82rem;color:var(--muted);margin:0 0 1rem;line-height:1.6">
+          Downloads and installs the latest LibreQoS <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">.deb</code> package from the official release.
+          Requires root privileges and an internet connection.
+        </p>
 
-          <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 1rem">
-            Current builds automatically migrate older auth files and redirect
-            <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/login.html</code>
-            to
-            <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/first-run.html</code>
-            when no users exist. If the correct username/password still fails, try restarting <strong>lqosd</strong> first.
-          </p>
-
-          <!-- Step 1 -->
-          <div class="trouble-step">
-            <div class="trouble-step-num">1</div>
-            <div style="flex:1">
-              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Restart lqosd</div>
-              <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem">This is the first thing to try — it re-reads the auth files and often resolves login failures.</div>
-              <button class="btn-primary" onclick="restartLqosd()" id="btn-restart-lqosd">
-                <i class="bi bi-arrow-clockwise"></i> Restart lqosd Now
-              </button>
-              <span id="lqosd-restart-result" style="font-size:.78rem;margin-left:.75rem"></span>
-            </div>
+        <div style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.6rem .85rem;margin-bottom:1rem;font-size:.78rem;color:var(--muted)">
+          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+            <span style="font-family:monospace;color:#60a5fa">wget https://download.libreqos.com/libreqos_2.0.202603200330-1_amd64.deb</span>
           </div>
-
-          <!-- Step 2 -->
-          <div class="trouble-step" style="margin-top:1rem">
-            <div class="trouble-step-num" style="background:#ef444422;color:var(--red);border-color:#ef444433">2</div>
-            <div style="flex:1">
-              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Reset user database <span style="font-size:.72rem;font-weight:400;color:var(--red)">(destructive)</span></div>
-              <div style="font-size:.78rem;color:var(--muted);line-height:1.6;margin-bottom:.5rem">
-                Only do this if the correct credentials still fail after restarting lqosd, or if
-                <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code>
-                is corrupt. This will <strong style="color:#f87171">delete all users</strong> — you will need to create a new admin account via first-run setup.
-              </div>
-
-              <!-- lqusers.toml status -->
-              <div id="lqusers-status" style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem">
-                <i class="bi bi-hourglass-split" style="color:var(--muted)"></i> Checking…
-              </div>
-
-              <button class="btn-danger-ghost" onclick="confirmResetUsers()" id="btn-reset-users" style="padding:.45rem 1rem">
-                <i class="bi bi-trash3"></i> Remove lqusers.toml &amp; Restart lqosd
-              </button>
-            </div>
+          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:.3rem">
+            <span style="font-family:monospace;color:#60a5fa">apt install ./libreqos_2.0.202603200330-1_amd64.deb</span>
           </div>
-
-          <!-- Step 3 info -->
-          <div class="trouble-step" style="margin-top:1rem">
-            <div class="trouble-step-num" style="background:#1d3fbb22;color:var(--blue);border-color:#3b82f633">3</div>
-            <div style="flex:1">
-              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Complete first-run setup</div>
-              <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
-                After removing <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code> and restarting lqosd,
-                open <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">BOX_IP:9123/login.html</code> — the WebUI will automatically redirect to first-run setup.
-              </div>
-            </div>
-          </div>
-
         </div>
+
+        <div id="lq-status-row" style="margin-bottom:1rem;font-size:.82rem;display:flex;align-items:center;gap:.6rem">
+          <i class="bi bi-hourglass-split" style="color:var(--muted)"></i>
+          <span id="lq-status-text" style="color:var(--muted)">Checking…</span>
+        </div>
+
+        <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem">
+          <button class="btn-primary" id="btn-install-lq" onclick="startInstallLibreqos()">
+            <i class="bi bi-download"></i> Install Now
+          </button>
+          <button class="btn-ghost" onclick="checkLqStatus()">
+            <i class="bi bi-arrow-clockwise"></i> Check Status
+          </button>
+        </div>
+
+        <pre id="install-lq-log" style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;height:300px;overflow-y:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.45;display:none"></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-router-fill"></i> MikroTik Connection Tools</div>
+    <div class="card-bd">
+      <div class="form-row form-row-3" style="margin-bottom:.9rem">
+        <div>
+          <label class="form-label">Router from config.json</label>
+          <select class="form-input" id="trouble-router-select"></select>
+        </div>
+        <div style="display:flex;align-items:flex-end;gap:.45rem;flex-wrap:wrap">
+          <button class="btn-primary" onclick="runMtPing()"><i class="bi bi-broadcast-pin"></i> Ping Router</button>
+          <button class="btn-ghost" onclick="runMtConnect()"><i class="bi bi-plug-fill"></i> Connect to MT API</button>
+          <button class="btn-ghost" onclick="runMtPermissionCheck()"><i class="bi bi-shield-check"></i> Check MT Permissions</button>
+        </div>
+      </div>
+
+      <div id="trouble-mt-summary" style="font-size:.8rem;color:var(--muted);margin-bottom:.75rem">Select a router and run a check.</div>
+      <pre id="trouble-mt-output" style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;max-height:330px;overflow-y:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.45">No output yet.</pre>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem;border-color:#1d3fbb33">
+    <div class="card-hd" style="background:#111931">
+      <span><i class="bi bi-clipboard-check"></i> Expected MikroTik API Permissions</span>
+    </div>
+    <div class="card-bd" style="padding:.85rem">
+      <p style="font-size:.8rem;color:var(--muted);margin:.2rem 0 .7rem">The permission check validates this exact group policy and user assignment:</p>
+      <pre style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;overflow-x:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.5">/user group add name=API_READ policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon"
+
+/user add name="libreQos_API" group=API_READ password="&lt;Strong Password&gt;" address="&lt;LibreQos IP Address&gt;" disabled=no;</pre>
+    </div>
+  </div>
+
+  <div class="card" style="border-color:#f59e0b22">
+    <div class="card-hd" style="background:#1a1500">
+      <span style="display:flex;align-items:center;gap:.6rem">
+        <i class="bi bi-shield-exclamation" style="color:var(--yellow);font-size:1rem"></i>
+        <span>User Password Not Working</span>
+      </span>
+      <button class="btn-ghost" onclick="toggleTrouble()" id="trouble-toggle" style="font-size:.75rem">
+        <i class="bi bi-chevron-down"></i> Show
+      </button>
+    </div>
+    <div id="trouble-body" style="display:none">
+      <div class="card-bd" style="padding:1.1rem">
+
+        <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 1rem">
+          Current builds automatically migrate older auth files and redirect
+          <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/login.html</code>
+          to
+          <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/first-run.html</code>
+          when no users exist. If the correct username/password still fails, try restarting <strong>lqosd</strong> first.
+        </p>
+
+        <div class="trouble-step">
+          <div class="trouble-step-num">1</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Restart lqosd</div>
+            <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem">This is the first thing to try - it re-reads the auth files and often resolves login failures.</div>
+            <button class="btn-primary" onclick="restartLqosd()" id="btn-restart-lqosd">
+              <i class="bi bi-arrow-clockwise"></i> Restart lqosd Now
+            </button>
+            <span id="lqosd-restart-result" style="font-size:.78rem;margin-left:.75rem"></span>
+          </div>
+        </div>
+
+        <div class="trouble-step" style="margin-top:1rem">
+          <div class="trouble-step-num" style="background:#ef444422;color:var(--red);border-color:#ef444433">2</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Reset user database <span style="font-size:.72rem;font-weight:400;color:var(--red)">(destructive)</span></div>
+            <div style="font-size:.78rem;color:var(--muted);line-height:1.6;margin-bottom:.5rem">
+              Only do this if the correct credentials still fail after restarting lqosd, or if
+              <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code>
+              is corrupt. This will <strong style="color:#f87171">delete all users</strong> - you will need to create a new admin account via first-run setup.
+            </div>
+
+            <div id="lqusers-status" style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem">
+              <i class="bi bi-hourglass-split" style="color:var(--muted)"></i> Checking…
+            </div>
+
+            <button class="btn-danger-ghost" onclick="confirmResetUsers()" id="btn-reset-users" style="padding:.45rem 1rem">
+              <i class="bi bi-trash3"></i> Remove lqusers.toml &amp; Restart lqosd
+            </button>
+          </div>
+        </div>
+
+        <div class="trouble-step" style="margin-top:1rem">
+          <div class="trouble-step-num" style="background:#1d3fbb22;color:var(--blue);border-color:#3b82f633">3</div>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Complete first-run setup</div>
+            <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
+              After removing <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code> and restarting lqosd,
+              open <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">BOX_IP:9123/login.html</code> - the WebUI will automatically redirect to first-run setup.
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
@@ -1156,7 +1247,7 @@ code { font-size: .8rem; color: #94a3b8; }
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const names = ['dashboard','config','services','network','mgmt','yaml','topology','devices'];
+    const names = ['dashboard','config','services','troubleshoot','network','mgmt','yaml','topology','devices'];
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1164,7 +1255,8 @@ function switchTab(name) {
   if (name === 'config')   renderConfig();
   if (name === 'network')  loadInterfaces();
   if (name === 'mgmt')     loadMgmt();
-  if (name === 'services') loadServices();
+  if (name === 'services') { loadServices(); checkLqStatus(); }
+  if (name === 'troubleshoot') loadTroubleshooting();
   if (name === 'topology') loadTopology();
 }
 
@@ -1979,7 +2071,6 @@ async function loadServices() {
   if (!d.ok) { toast(d.error, false); return; }
   renderServiceCards(d.services);
   if (logDrawerService) refreshDrawerLogs();
-  loadLqusersStatus();
 }
 
 function renderServiceCards(services) {
@@ -2058,7 +2149,208 @@ function closeLogDrawer() {
   document.getElementById('log-drawer').style.display = 'none';
 }
 
+// ── LibreQoS install ──────────────────────────────────────────────────────
+async function checkLqStatus() {
+  const statusText = document.getElementById('lq-status-text');
+  const statusRow  = document.getElementById('lq-status-row');
+  const badge      = document.getElementById('lq-install-badge');
+  const btn        = document.getElementById('btn-install-lq');
+  if (!statusText) return;
+  statusText.textContent = 'Checking…';
+  const r = await fetch('/api/libreqos/status');
+  const d = await r.json();
+  if (!d.ok) { statusText.textContent = 'Error: ' + d.error; return; }
+
+  const icon = statusRow.querySelector('i');
+  if (d.installed && d.services_present) {
+    icon.className = 'bi bi-check-circle-fill'; icon.style.color = 'var(--green)';
+    statusText.style.color = 'var(--green)';
+    statusText.textContent = 'LibreQoS is installed and services are present.';
+    badge.style.display = 'inline';
+    btn.disabled = true; btn.style.opacity = '.5';
+    const banner = document.getElementById('svc-lq-banner');
+    if (banner) banner.style.display = 'none';
+  } else if (d.installed) {
+    icon.className = 'bi bi-check-circle'; icon.style.color = 'var(--yellow)';
+    statusText.style.color = 'var(--yellow)';
+    statusText.textContent = 'LibreQoS files found but services not detected.';
+    badge.style.display = 'inline';
+    btn.disabled = false; btn.style.opacity = '';
+  } else {
+    icon.className = 'bi bi-x-circle-fill'; icon.style.color = 'var(--red)';
+    statusText.style.color = 'var(--red)';
+    statusText.textContent = 'LibreQoS is not installed.';
+    badge.style.display = 'none';
+    btn.disabled = false; btn.style.opacity = '';
+    const banner = document.getElementById('svc-lq-banner');
+    if (banner) banner.style.display = 'flex';
+  }
+}
+
+function openInstallPanel() {
+  const body    = document.getElementById('install-lq-body');
+  const chevron = document.getElementById('install-lq-chevron');
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
+  if (!isOpen) checkLqStatus();
+}
+
+async function startInstallLibreqos() {
+  const btn = document.getElementById('btn-install-lq');
+  const log = document.getElementById('install-lq-log');
+  if (!btn || !log) return;
+  if (!confirm('This will download and install LibreQoS via apt. Continue?')) return;
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Installing…';
+  log.style.display = 'block';
+  log.textContent = '';
+
+  try {
+    const resp = await fetch('/api/libreqos/install', { method: 'POST' });
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          log.textContent += line.slice(6) + '\n';
+          log.scrollTop = log.scrollHeight;
+        }
+      }
+    }
+  } catch(e) {
+    log.textContent += '\n✘ Connection error: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-download"></i> Install Now';
+  await checkLqStatus();
+}
+
 // ── Troubleshooting ───────────────────────────────────────────────────────
+async function loadTroubleshooting() {
+  await loadTroubleRouters();
+  await loadLqusersStatus();
+  await checkLqStatus();
+}
+
+async function loadTroubleRouters() {
+  const sel = document.getElementById('trouble-router-select');
+  const summary = document.getElementById('trouble-mt-summary');
+  if (!sel) return;
+  const r = await fetch('/api/troubleshoot/routers');
+  const d = await r.json();
+  if (!d.ok) {
+    sel.innerHTML = '';
+    summary.textContent = d.error || 'Unable to load routers';
+    return;
+  }
+  if (!d.routers.length) {
+    sel.innerHTML = '';
+    summary.textContent = 'No routers found in config.json';
+    return;
+  }
+  const prev = sel.value;
+  sel.innerHTML = d.routers.map(rt => {
+    const label = `${rt.name} (${rt.address}:${rt.port})`;
+    return `<option value="${rt.index}">${label}</option>`;
+  }).join('');
+  if (prev && [...sel.options].some(o => o.value === prev)) {
+    sel.value = prev;
+  }
+  const active = d.routers.find(rt => String(rt.index) === sel.value) || d.routers[0];
+  summary.textContent = `Selected router: ${active.name} (${active.address}:${active.port})`;
+}
+
+function _troubleRouterIndex() {
+  const sel = document.getElementById('trouble-router-select');
+  return sel && sel.value !== '' ? Number(sel.value) : 0;
+}
+
+function _setTroubleOutput(text, ok=true) {
+  const out = document.getElementById('trouble-mt-output');
+  if (!out) return;
+  out.style.color = ok ? '#94a3b8' : '#f87171';
+  out.textContent = text;
+}
+
+async function runMtPing() {
+  _setTroubleOutput('Running ping...', true);
+  const r = await fetch('/api/troubleshoot/mt/ping', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ router_index: _troubleRouterIndex() })
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    _setTroubleOutput(d.error || 'Ping failed', false);
+    return;
+  }
+  const header = d.success ? `Ping successful: ${d.host}` : `Ping failed: ${d.host}`;
+  _setTroubleOutput(`${header}\n\n${d.output || '(no output)'}`, d.success);
+}
+
+async function runMtConnect() {
+  _setTroubleOutput('Testing MikroTik API connection...', true);
+  const r = await fetch('/api/troubleshoot/mt/connect', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ router_index: _troubleRouterIndex() })
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    _setTroubleOutput(d.error || 'Connection failed', false);
+    return;
+  }
+  _setTroubleOutput(
+    `Connected successfully\nRouter: ${d.router || 'unknown'}\nIdentity: ${d.identity || 'unknown'}`,
+    true
+  );
+}
+
+async function runMtPermissionCheck() {
+  _setTroubleOutput('Checking MikroTik permissions...', true);
+  const r = await fetch('/api/troubleshoot/mt/permissions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ router_index: _troubleRouterIndex() })
+  });
+  const d = await r.json();
+  if (!d.ok) {
+    _setTroubleOutput(d.error || 'Permission check failed', false);
+    return;
+  }
+  const lines = [
+    `Overall status: ${d.permissions_ok ? 'PASS' : 'FAIL'}`,
+    `Group ${d.expected_group}: ${d.group_ok ? 'OK' : 'NOT OK'}`,
+    `User ${d.expected_user}: ${d.user_ok ? 'OK' : 'NOT OK'}`,
+    `User group: ${d.user_group || '(missing)'}`,
+    `User disabled: ${d.user_disabled ? 'yes' : 'no'}`,
+    '',
+    'Expected policy:',
+    d.expected_policy || '',
+    '',
+    'Found policy:',
+    d.found_policy || '(missing)',
+  ];
+  if (d.missing_policy_items && d.missing_policy_items.length) {
+    lines.push('', 'Missing policy items:', d.missing_policy_items.join(', '));
+  }
+  if (d.extra_policy_items && d.extra_policy_items.length) {
+    lines.push('', 'Extra policy items:', d.extra_policy_items.join(', '));
+  }
+  _setTroubleOutput(lines.join('\n'), d.permissions_ok);
+}
+
 function toggleTrouble() {
   const body = document.getElementById('trouble-body');
   const btn  = document.getElementById('trouble-toggle');
@@ -2641,6 +2933,7 @@ async function doChangePassword() {
 function initApp() {
   loadConfig().then(renderConfig);
   loadYaml('libreqos');
+  loadTroubleshooting();
   loadDevices();
   setInterval(loadDevices, 30000);
   checkService();
