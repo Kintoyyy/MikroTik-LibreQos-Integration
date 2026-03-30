@@ -10,6 +10,7 @@ import threading
 import hashlib
 import secrets
 import functools
+import socket
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 
@@ -109,19 +110,26 @@ EXPECTED_MT_POLICY = (
 )
 EXPECTED_MT_POLICY_SET = {p.strip() for p in EXPECTED_MT_POLICY.split(",") if p.strip()}
 
+SYSTEMCTL  = "/bin/systemctl"
+JOURNALCTL = "/bin/journalctl"
+
 def _which(cmd):
-    """Return full path of a binary, or None if not found."""
-    return shutil.which(cmd)
+    """Return full path of a binary, checking PATH then common locations."""
+    found = shutil.which(cmd)
+    if found:
+        return found
+    for d in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]:
+        p = os.path.join(d, cmd)
+        if os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
 
 def _systemctl(*args, **kwargs):
-    """Run systemctl with the given args. Returns CompletedProcess or raises RuntimeError."""
-    bin_ = _which("systemctl")
-    if not bin_:
-        raise RuntimeError("systemctl not available on this system")
+    """Run /bin/systemctl directly."""
     try:
-        return subprocess.run([bin_] + list(args), **kwargs)
+        return subprocess.run([SYSTEMCTL] + list(args), **kwargs)
     except (FileNotFoundError, OSError) as e:
-        raise RuntimeError(f"systemctl not available on this system: {e}")
+        raise RuntimeError(f"systemctl not available: {e}")
 
 # ---------------------------------------------------------------------------
 # SSE metrics broadcaster
@@ -618,15 +626,14 @@ def service_logs(name):
     if name not in MANAGED_SERVICES:
         return jsonify({"ok": False, "error": "unknown service"}), 400
     try:
-        jctl = _which("journalctl")
-        if not jctl:
-            return jsonify({"ok": False, "error": "journalctl not available on this system"}), 500
         result = subprocess.run(
-            [jctl, "-u", _svc_name(name), "-n", "80",
+            [JOURNALCTL, "-u", _svc_name(name), "-n", "80",
              "--no-pager", "--output=short-iso"],
             capture_output=True, text=True
         )
         return jsonify({"ok": True, "logs": result.stdout})
+    except (FileNotFoundError, OSError) as e:
+        return jsonify({"ok": False, "error": f"journalctl not available: {e}"}), 500
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -727,19 +734,35 @@ def troubleshoot_mt_ping():
         if not host:
             return jsonify({"ok": False, "error": "Router address is empty"}), 400
         ping_bin = _which("ping")
-        if not ping_bin:
-            return jsonify({"ok": False, "error": "ping not available on this system"}), 500
-        result = subprocess.run(
-            [ping_bin, "-c", "3", "-W", "2", host],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+        if ping_bin:
+            result = subprocess.run(
+                [ping_bin, "-c", "3", "-W", "2", host],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            output = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+            success = result.returncode == 0
+            method = "ping"
+        else:
+            # Minimal Ubuntu images may not include iputils-ping; fallback to TCP connect.
+            port = int(data.get("port") or router.get("port", 8728) or 8728)
+            start = time.time()
+            try:
+                with socket.create_connection((host, port), timeout=3):
+                    pass
+                latency_ms = int((time.time() - start) * 1000)
+                output = f"tcp connect to {host}:{port} succeeded in {latency_ms}ms"
+                success = True
+            except Exception as ce:
+                output = f"tcp connect to {host}:{port} failed: {ce}"
+                success = False
+            method = "tcp_connect"
         return jsonify({
             "ok": True,
-            "success": result.returncode == 0,
+            "success": success,
             "host": host,
+            "method": method,
             "output": output.strip(),
         })
     except Exception as e:
