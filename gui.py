@@ -25,6 +25,7 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
 OPT_DIR = Path("/opt/libreqos/src")
+NETPLAN_DIR = Path("/etc/netplan")
 
 def find_file(name):
     """Return path to file, preferring the installed location."""
@@ -34,7 +35,7 @@ def find_file(name):
         return opt_path
     return local_path
 
-CONFIG_PATH = find_file("config.json")
+CONFIG_PATH = OPT_DIR / "config.json"
 DB_PATH     = find_file("devices.db")
 AUTH_PATH   = find_file("gui_auth.json")
 
@@ -80,12 +81,13 @@ def require_auth(f):
     return wrapper
 
 YAML_FILES = {
-    "libreqos":    find_file("libreqos.yaml"),
-    "lqos":        find_file("lqos.conf"),
-    "network":     find_file("50-cloud-init.yaml"),
-    "config_json": find_file("config.json"),
-    "network_json": find_file("network.json"),
-    "updatecsv":   find_file("updatecsv.py"),
+    "libreqos":      NETPLAN_DIR / "libreqos.yaml",
+    "lqos":          OPT_DIR / "lqos.conf",
+    "network_json":  OPT_DIR / "network.json",
+    "config_json":   OPT_DIR / "config.json",
+    "shaped_devices": OPT_DIR / "ShapedDevices.csv",
+    "updatecsv":     OPT_DIR / "updatecsv.py",
+    "network":       NETPLAN_DIR / "50-cloud-init.yaml",
 }
 
 # ---------------------------------------------------------------------------

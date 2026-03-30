@@ -942,6 +942,7 @@ code { font-size: .8rem; color: #94a3b8; }
         <button class="btn-ghost"   onclick="loadYaml('network')">50-cloud-init.yaml</button>
         <button class="btn-ghost"   onclick="loadYaml('config_json')">config.json</button>
         <button class="btn-ghost"   onclick="loadYaml('network_json')">network.json</button>
+        <button class="btn-ghost"   onclick="loadYaml('shaped_devices')">ShapedDevices.csv</button>
         <button class="btn-ghost"   onclick="loadYaml('updatecsv')">updatecsv.py</button>
       </div>
       <div style="display:flex;align-items:center;gap:.75rem">
@@ -1795,9 +1796,10 @@ const YAML_MODES = {
   network:     'yaml',
   config_json: 'application/json',
   network_json:'application/json',
+  shaped_devices:'text/plain',
   updatecsv:   'text/x-python',
 };
-const YAML_NAMES = ['libreqos','lqos','network','config_json','network_json','updatecsv'];
+const YAML_NAMES = ['libreqos','lqos','network','config_json','network_json','shaped_devices','updatecsv'];
 
 async function loadYaml(name) {
   currentYaml = name;
