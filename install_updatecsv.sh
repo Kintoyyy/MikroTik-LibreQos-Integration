@@ -63,9 +63,9 @@ fi
 if [ ! -s "$CONFIG_JSON" ]; then
     cat << 'EOF' > "$CONFIG_JSON"
 {
-    "flat_network": false,
-    "no_parent": false,
-    "preserve_network_config": false,
+    "strategy": "cpu",
+    "promote_to_root": false,
+    "queues": true,
     "routers": [
         {
             "name": "Mikrotik 1",
@@ -73,24 +73,24 @@ if [ ! -s "$CONFIG_JSON" ]; then
             "port": 8728,
             "username": "admin",
             "password": "password",
-            "dhcp": {
-                "enabled": true,
-                "download_limit_mbps": 1000,
-                "upload_limit_mbps": 1000,
-                "dhcp_server": [
-                    "dhcp1",
-                    "dhcp2"
-                ]
-            },
-            "hotspot": {
-                "enabled": true,
-                "include_mac": true,
-                "download_limit_mbps": 10,
-                "upload_limit_mbps": 10
-            },
             "pppoe": {
                 "enabled": true,
-                "per_plan_node": true
+                "default_download_limit": 100,
+                "default_upload_limit": 100
+            },
+            "hotspot": {
+                "enabled": false,
+                "default_download_limit": 10,
+                "default_upload_limit": 10
+            },
+            "dhcp": {
+                "enabled": false,
+                "default_download_limit": 50,
+                "default_upload_limit": 50
+            },
+            "address_list": {
+                "default_download_limit": 100,
+                "default_upload_limit": 100
             }
         }
     ]

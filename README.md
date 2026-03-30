@@ -1,415 +1,209 @@
-# **LibreQoS MikroTik PPP and Active Hotspot User Sync**
+# LibreQoS MikroTik Integration
 
-This script automates the synchronization of MikroTik PPP secrets (e.g., PPPoE users) and active hotspot users with a LibreQoS-compatible CSV file (`ShapedDevices.csv`). It continuously monitors the MikroTik router for changes to PPP secrets and active hotspot users, such as additions, updates, or deletions, and updates the CSV file accordingly. The script also calculates rate limits (download/upload speeds) based on the assigned PPP profile and ensures the CSV file is always up-to-date.
-
-The script is designed to run as a background service using `systemd`, ensuring it starts automatically on boot and restarts in case of failures.
+This script automates synchronization of active MikroTik users (PPPoE, Hotspot, IPoE/DHCP, and Address List) with LibreQoS's `ShapedDevices.csv` and `network.json`. It supports RADIUS and User Manager authentication. It runs continuously as a systemd service, polling your routers on a fixed interval and triggering a LibreQoS update whenever anything changes.
 
 ---
 
-### **Key Features**
-1. **Automatic Synchronization**:
-   - Regularly checks for changes in MikroTik PPP secrets and active hotspot users.
-   - Updates the `ShapedDevices.csv` file with new, modified, or deleted entries.
-   - Updates occur every 10 minutes.
+## Key Features
 
-2. **Rate Limit Calculation**:
-   - Extracts rate limits from MikroTik PPP profiles.
-   - Computes minimum rates as 50% of maximum values and 115% for the maximum.
-   - Rate limits can be defined in the **comment field of the PPP profile** (no need to set rate limits explicitly in the profile).
+1. **Multi-source device tracking**
+   - PPPoE active sessions (`/ppp/active`)
+   - Hotspot active sessions (`/ip/hotspot/active`)
+   - IPoE/DHCP leases (`/ip/dhcp-server/lease`)
+   - Firewall address list entries (`/ip/firewall/address-list`)
+   - RADIUS and User Manager authentication supported
+   - Each source can be enabled/disabled per router
 
-3. **Logging**:
-   - Logs all actions (additions, updates, deletions) for easy monitoring and debugging.
+2. **Automatic rate resolution**
+   - Rates are read from MikroTik **firewall address list names** in `X/X` format (e.g., `50M/50M`)
+   - For PPPoE/Hotspot: session IP is matched against address list to find the rate
+   - For IPoE/DHCP: rate is read from the static lease's `address-list` field
+   - For RADIUS/User Manager: set `Mikrotik-Address-List` attribute — no `Mikrotik-Rate-Limit` needed
+   - Falls back to configurable per-source defaults when no rate is found
+   - Min rate = 50% of max; applied max = parsed rate × 1.15
 
-4. **Systemd Integration**:
-   - Runs as a background service with automatic restarts.
-   - Ensures the script starts on system boot.
+3. **Flexible topology strategies**
+   - `cpu` — greedy bin-pack across CPU queue nodes (best performance at scale)
+   - `flat` — no hierarchy, empty `network.json`
+   - `ap_only` — group devices under their router as parent
+   - `ap_site` — group devices under site → router hierarchy
+   - `full` — full path/backhaul shaping with optional `promote_to_root`
 
-5. **Customizable Configuration**:
-   - Configure routers via the `config.json` file with detailed settings for DHCP, hotspot, and PPPoE.
-   - Simple JSON structure allows for easy management of router credentials and service settings.
+4. **Multi-router support**
+   - Poll any number of MikroTik routers in a single scan cycle
+   - Per-router service settings (PPPoE, Hotspot, IPoE/DHCP, Address List)
+   - Duplicate IP conflict resolution by source priority
 
-6. **Flat Network Support**:
-   - Option to configure a flat network structure, where all devices are treated as part of a single network without hierarchical parent nodes.
+5. **Source priority deduplication**
+   - When the same IP appears in multiple sources, the highest-priority source wins
+   - Priority order: PPPoE > Hotspot > IPoE/DHCP > Address List
 
-7. **Preserve Static Entries**:
-   - If a device in the `ShapedDevices.csv` file has the comment `"static"`, it will be preserved during updates and not overwritten or deleted by the script.
-
----
-
-### **Use Case**
-This script is ideal for network administrators using **LibreQoS** for traffic shaping and **MikroTik** routers for managing PPPoE and hotspot users. It ensures that the `ShapedDevices.csv` file used by LibreQoS is always synchronized with the latest PPP secrets and active hotspot users from the MikroTik router, while preserving manually added static entries.
-
----
-
-### **How It Works**
-1. **Connects to MikroTik Router**:
-   - Uses the `routeros_api` Python library to connect to the MikroTik router and fetch PPP secrets and active hotspot users.
-   - Reads connection parameters from the `config.json` file.
-
-2. **Processes PPP Secrets and Active Hotspot Users**:
-   - Compares the current PPP secrets and active hotspot users with the existing CSV data.
-   - Adds new entries, updates modified entries, and removes deleted entries.
-   - Preserves entries with the comment `"static"` in the `ShapedDevices.csv` file.
-
-3. **Extracts Rate Limits from PPP Profile Comments**:
-   - If rate limits are not explicitly set in the PPP profile, the script extracts them from the **comment field** of the PPP profile.
-   - The comment field should follow the format: `"download/upload"` (e.g., `"100/50"` for 100 Mbps download and 50 Mbps upload).
-
-4. **Writes to CSV**:
-   - Updates the `ShapedDevices.csv` file with the latest data in the required format for LibreQoS.
-
-5. **Runs Continuously**:
-   - The script runs in an infinite loop, checking for changes every 10 minutes.
+6. **Logging and systemd integration**
+   - Structured logging for all additions, updates, and removals
+   - Runs as a `systemd` service with automatic restart on failure
 
 ---
 
-### **Prerequisites**
-- Python 3 installed on the system.
-- `routeros_api` Python library installed (`pip install routeros_api`).
-- MikroTik router with configured PPP secrets and active hotspot users.
-- LibreQoS setup requiring the `ShapedDevices.csv` file.
+## How It Works
+
+1. **Reads `config.json`** — loads router credentials, enabled sources, default rates, and topology strategy.
+
+2. **Connects to each router** — using the RouterOS API (`routeros_api` library).
+
+3. **Fetches active sessions** — PPPoE, Hotspot, IPoE/DHCP leases, and firewall address list entries.
+
+4. **Resolves rates** — looks up each device's IP in the firewall address list. The list name (e.g., `50M/50M`) becomes the rate. See [MIKROTIK_RATE_SETUP.md](MIKROTIK_RATE_SETUP.md) for how to configure this on the router.
+
+5. **Upserts to SQLite** (`devices.db`) — adds new devices, updates changed ones, and removes devices not seen in the current scan.
+
+6. **Builds `network.json`** — based on the configured `strategy`, distributes devices into queue nodes or a hierarchy.
+
+7. **Exports `ShapedDevices.csv`** — writes all active devices in LibreQoS CSV format.
+
+8. **Triggers LibreQoS** — runs `LibreQoS.py --updateonly` to apply the new configuration.
 
 ---
 
-### **Installation and Usage**
-1. **Run the Installation Script**:
-   - Execute the provided `.sh` script to install the Python script and systemd service.
-   - The script automatically creates a `config.json` file if it doesn't exist.
+## Prerequisites
 
-2. **Configure the Settings**:
-   - Edit the `config.json` file to match your MikroTik router details and feature settings.
-
-3. **Start the Service**:
-   - The script will automatically start the service and enable it to run on boot.
-
-4. **Monitor the Service**:
-   - Use `systemctl status updatecsv.service` to check the status and logs.
+- Linux (Debian/Ubuntu) with Python 3.7+
+- `routeros_api` Python library
+- MikroTik router with API access enabled
+- LibreQoS installed at `/opt/libreqos`
 
 ---
 
-### **Configuration File (config.json) Details**
+## Installation
 
-The `config.json` file is the central configuration point for the script. It allows you to configure one or multiple MikroTik routers and their associated services (DHCP, Hotspot, PPPoE). Below is a detailed explanation of each configuration option:
+```bash
+git clone https://github.com/Kintoyyy/MikroTik-LibreQos-Integration
+cd MikroTik-LibreQos-Integration
+chmod +x install_updatecsv.sh
+sudo ./install_updatecsv.sh
+```
 
-#### **Basic Structure**
+See [Installation.md](Installation.md) for the full step-by-step guide.
+
+---
+
+## Configuration
+
+Edit `/opt/libreqos/src/config.json` after installation:
 
 ```json
 {
-    "flat_network": false,
-    "no_parent": false,
-    "preserve_network_config": false,
+    "strategy": "cpu",
+    "promote_to_root": false,
+    "queues": true,
     "routers": [
         {
-            "name": "Router Name",
-            "address": "Router IP Address",
-            "port": Port Number,
-            "username": "API Username",
-            "password": "API Password",
-            "dhcp": { /* DHCP Configuration */ },
-            "hotspot": { /* Hotspot Configuration */ },
-            "pppoe": { /* PPPoE Configuration */ }
-        }
-    ]
-}
-```
-
-#### **Network Structure Options**
-| Parameter        | Description | Default | Example |
-|------------------|-------------|---------|---------|
-| `flat_network`   | When `true`, treats all devices as part of a single flat network (no hierarchical parent-child relationships). | `false` | `"flat_network": true` |
-| `no_parent`      | When `true`, devices from all routers will exclude parent nodes in `ShapedDevices.csv`. Overrides per-router settings. | `false` | `"no_parent": true` |
-| `preserve_network_config` | When `false`, allows dynamic updates to nodes unless they are explicitly marked as static. | `false` | `"preserve_network_config": false` |
-
-#### **Node-Level Overrides**
-To exclude individual nodes from dynamic updates (when `preserve_network_config` is `false`), add the `static` flag in `network.json`
-
-```json
-{
-    "Node 1": {
-        "downloadBandwidthMbps": 1000,
-        "uploadBandwidthMbps": 1000,
-        "static": true,       // Node will retain fixed bandwidth and hierarchy
-        "type": "site",
-        "children": {}
-    },
-    "Node 2": {
-        "downloadBandwidthMbps": 1000,
-        "uploadBandwidthMbps": 1000,
-        "type": "site",      // Node can be updated dynamically
-        "children": {}
-    }
-}
-```
----
-
-#### **Router Connection Settings**
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `name` | Friendly name for the router | `"Mikrotik 1"` |
-| `address` | IP address of the router | `"192.168.88.1"` |
-| `port` | API port number (default: 8728) | `8728` |
-| `username` | API username | `"admin"` |
-| `password` | API password | `"password"` |
-
-#### **DHCP Configuration**
-
-```json
-"dhcp": {
-    "enabled": true,
-    "download_limit_mbps": 1000,
-    "upload_limit_mbps": 1000,
-    "dhcp_server": [
-        "dhcp1",
-        "dhcp2"
-    ]
-}
-```
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `enabled` | Enable DHCP client tracking | `true` or `false` |
-| `download_limit_mbps` | Default download speed limit for DHCP clients (Mbps) | `1000` |
-| `upload_limit_mbps` | Default upload speed limit for DHCP clients (Mbps) | `1000` |
-| `dhcp_server` | Array of DHCP server names to monitor | `["dhcp1", "dhcp2"]` |
-
-#### **Hotspot Configuration**
-
-```json
-"hotspot": {
-    "enabled": true,
-    "include_mac": true,
-    "download_limit_mbps": 10,
-    "upload_limit_mbps": 10
-}
-```
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `enabled` | Enable hotspot user tracking | `true` or `false` |
-| `include_mac` | Include MAC addresses for hotspot users | `true` or `false` |
-| `download_limit_mbps` | Default download speed limit for hotspot users (Mbps) | `10` |
-| `upload_limit_mbps` | Default upload speed limit for hotspot users (Mbps) | `10` |
-
-#### **PPPoE Configuration**
-
-```json
-"pppoe": {
-    "enabled": true,
-    "per_plan_node": true
-}
-```
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `enabled` | Enable PPPoE user tracking | `true` or `false` |
-| `per_plan_node` | Create separate parent nodes for each PPP profile | `true` or `false` |
-
-#### **Multiple Router Example**
-
-```json
-{
-    "flat_network": false,
-    "no_parent": false,
-    "preserve_network_config": false,
-    "routers": [
-        {
-            "name": "Mikrotik AC",
-            "address": "10.0.0.2",
+            "name": "Core Router",
+            "address": "192.168.88.1",
             "port": 8728,
-            "username": "LibreQos",
-            "password": "ABC11233",
-            "dhcp": {
-                "enabled": false,
-                "download_limit_mbps": 1000,
-                "upload_limit_mbps": 1000,
-                "dhcp_server": []
+            "username": "libreqos",
+            "password": "your-password",
+            "pppoe": {
+                "enabled": true,
+                "default_download_limit": 100,
+                "default_upload_limit": 100
             },
             "hotspot": {
                 "enabled": false,
-                "include_mac": true,
-                "download_limit_mbps": 10,
-                "upload_limit_mbps": 10
+                "default_download_limit": 10,
+                "default_upload_limit": 10
             },
-            "pppoe": {
-                "enabled": true,
-                "per_plan_node": true
-            }
-        },
-        {
-            "name": "Mikrotik AC",
-            "address": "10.0.0.3",
-            "port": 8728,
-            "username": "LibreQos",
-            "password": "1234ABC",
             "dhcp": {
                 "enabled": true,
-                "download_limit_mbps": 100,
-                "upload_limit_mbps": 100,
-                "dhcp_server": [
-                    "DHCP_LAN"
-                ]
+                "default_download_limit": 50,
+                "default_upload_limit": 50
             },
-            "hotspot": {
-                "enabled": true,
-                "include_mac": true,
-                "download_limit_mbps": 10,
-                "upload_limit_mbps": 10
-            },
-            "pppoe": {
-                "enabled": false,
-                "per_plan_node": true
+            "address_list": {
+                "default_download_limit": 100,
+                "default_upload_limit": 100
             }
         }
     ]
 }
 ```
 
----
-
-### **Explanation of `no_parent` Option**
-- The `no_parent` option is a **global setting** that applies to all routers defined in the `config.json` file.
-- When set to `true`, devices from all routers will **not have a parent node** in the `ShapedDevices.csv` file.
-- This is useful if you want to simplify the CSV structure and avoid hierarchical parent nodes for all devices.
-- If `no_parent` is set to `false`, the script will respect the `per_plan_node` setting for PPPoE users and other configurations.
+For the full configuration reference, see [CONFIG.md](CONFIG.md).
 
 ---
 
-### **Flat Network Configuration**
-If you set `flat_network` to `true` in the `config.json` file, the script will treat all devices as part of a single network without hierarchical parent nodes. This is useful for simpler network setups where you do not need to differentiate between different types of users or services.
+## Setting Up Rates on MikroTik
 
-Example:
-```json
-{
-    "flat_network": false,
-    "no_parent": false,
-    "preserve_network_config": false,
-    "routers": [
-        {
-            "name": "Mikrotik AC",
-            "address": "10.0.0.2",
-            "port": 8728,
-            "username": "LibreQos",
-            "password": "ABC11233",
-            "dhcp": {
-                "enabled": true,
-                "download_limit_mbps": 1000,
-                "upload_limit_mbps": 1000,
-                "dhcp_server": []
-            },
-            "hotspot": {
-                "enabled": true,
-                "include_mac": true,
-                "download_limit_mbps": 10,
-                "upload_limit_mbps": 10
-            },
-            "pppoe": {
-                "enabled": true,
-                "per_plan_node": false
-            }
-        }
-    ]
-}
+Rates are driven by **firewall address list names** on the MikroTik side. See [MIKROTIK_RATE_SETUP.md](MIKROTIK_RATE_SETUP.md) for step-by-step instructions covering:
+
+- How to create address list entries with rate names
+- PPPoE and Hotspot rate lookup flow
+- DHCP lease rate configuration
+- Rate format reference (`50M/50M`, `1G/1G`, `512k/256k`)
+
+> **Using User Manager?**
+> Assign rates via user groups with the `Mikrotik-Address-List` attribute (e.g., `attributes=Mikrotik-Address-List:50M/50M`) instead of `Mikrotik-Rate-Limit`. The integration reads rates from the firewall address list name — see [MIKROTIK_RATE_SETUP.md](MIKROTIK_RATE_SETUP.md) for setup details.
+
+---
+
+## Output Files
+
+| File | Description |
+|------|-------------|
+| `ShapedDevices.csv` | LibreQoS device shaping table |
+| `network.json` | LibreQoS topology/queue node tree |
+| `devices.db` | SQLite state database |
+
+**CSV columns:**
+`Circuit ID`, `Circuit Name`, `Device ID`, `Device Name`, `Parent Node`, `MAC`, `IPv4`, `IPv6`, `Download Min Mbps`, `Upload Min Mbps`, `Download Max Mbps`, `Upload Max Mbps`, `Comment`
+
+**Example rows:**
+```
+Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
+A1B2C3D4,PPP-john,E5F6G7H8,PPP-john,CPU0,AA:BB:CC:DD:EE:FF,10.0.0.5,,46,46,92,92,pppoe | 80M/80M | 2026-03-25 10:00:00
+X9Y8Z7W6,HS-AABBCCDD,Q1R2S3T4,HS-AABBCCDD,CPU1,AA:BB:CC:11:22:33,10.0.0.6,,6,6,12,12,hotspot | 10M/10M | 2026-03-25 10:00:00
 ```
 
-In this configuration, all devices will be listed under a single parent node, simplifying the traffic shaping process.
-
 ---
 
-### **MikroTik Configuration**
-To ensure proper access, create a dedicated user group and user on the MikroTik router:
+## MikroTik API User Setup
+
+Create a minimal read-only API user on each router:
 
 ```shell
-/user group add name=API_READ policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon"
-/user add name="libreQos_API" group=API_READ password="<Strong Password>" address="<LibreQos IP Address>" disabled=no;
-```
+/user group add name=LibreQoS_API \
+    policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon"
 
-This ensures the API user has the necessary permissions while restricting unnecessary access.
-
----
-
-### **Example Output**
-The script will generate a `ShapedDevices.csv` file with the following columns:
-- `Circuit ID`, `Circuit Name`, `Device ID`, `Device Name`, `Parent Node`, `MAC`, `IPv4`, `IPv6`, `Download Min Mbps`, `Upload Min Mbps`, `Download Max Mbps`, `Upload Max Mbps`, `Comment`
-
-Example CSV Entry:
-```
-Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
-49A05TNK,VC1234,H6ZO7WEL,VC1234,HS-ROUTER,5C:1C:B9:CD:4B:D1,10.0.0.230,,3,3,8,8,Hotspot
-HI11R8ZV,USER1,DX29J8P8,USER1,PPP-ROUTER,,10.120.00.254,,5,5,11,111,PPPoE
-STATIC123,StaticDevice,STATIC456,StaticDevice,,00:1A:2B:3C:4D:5E,192.168.1.100,,10,10,20,20,static
+/user add name="libreqos" group=LibreQoS_API \
+    password="<strong-password>" \
+    address="<LibreQoS-server-IP>" \
+    disabled=no
 ```
 
 ---
 
-### **Preserving Static Entries**
-If a device in the `ShapedDevices.csv` file has the comment `"static"`, the script will preserve that entry during updates. This is useful for manually added devices or custom configurations that should not be overwritten or deleted by the script.
+## Service Management
 
-Example:
+```bash
+# Check status
+sudo systemctl status updatecsv.service
+
+# View logs
+journalctl -u updatecsv.service -f
+
+# Restart after config change
+sudo systemctl restart updatecsv.service
 ```
-Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
-STATIC123,StaticDevice,STATIC456,StaticDevice,,00:1A:2B:3C:4D:5E,192.168.1.100,,10,10,20,20,static
-```
-
-In this example, the device with the comment `"static"` will remain unchanged even if the script updates the CSV file.
 
 ---
 
-### **Why Use This Script?**
-- **Automation**: Eliminates manual updates to the `ShapedDevices.csv` file.
-- **Accuracy**: Ensures rate limits and PPP secret data are always in sync with the MikroTik router.
-- **Efficiency**: Saves time and reduces errors in managing LibreQoS traffic shaping.
-- **Flexibility**: Configure multiple routers and their features through the centralized `config.json` file.
-- **Granular Control**: Fine-tune settings for each service type (DHCP, Hotspot, PPPoE) on a per-router basis.
-- **Flat Network Support**: Easily configure a flat network structure for simplified traffic shaping.
-- **Preserve Static Entries**: Manually added devices with the comment `"static"` are preserved during updates.
-- **Rate Limits in PPP Profile Comments**: Define rate limits directly in the PPP profile comments for simplicity.
+## Donations
 
----
+If this project has helped you, consider supporting it:
 
-### **Defining Rate Limits in PPP Profile Comments**
-Instead of setting rate limits explicitly in the MikroTik PPP profile, you can define them in the **comment field** of the PPP profile. The script will extract the rate limits from the comment field and apply them to the corresponding PPP users.
+- **PayPal**: [Donate via PayPal](https://paypal.me/Kintoyyyy?country.x=PH)
+- **Buy Me a Coffee**: [Buy Me a Coffee](https://www.buymeacoffee.com/kintoyyy)
 
-#### **Format for PPP Profile Comments**
-The comment field should follow the format:  
-`"download/upload"`  
-Where:
-- `download` is the download speed limit in Mbps.
-- `upload` is the upload speed limit in Mbps.
+<img src="https://i.imgur.com/nfxbhOv.jpeg" alt="LibreQoS MikroTik Integration" width="500" />
 
-Example:
-- Comment: `"100M/50M"`  
-  This sets the download limit to 100 Mbps and the upload limit to 50 Mbps.
+For issues or feature requests, [open an issue on GitHub](https://github.com/Kintoyyy/MikroTik-LibreQos-Integration/issues).
 
-#### **Example PPP Profile Configuration**
-1. Go to **PPP > Profiles** in your MikroTik router.
-2. Edit or create a PPP profile.
-3. In the **Comment** field, enter the rate limits in the format `"download/upload"`.  
-   Example: `"100M/50M"` for 100 Mbps download and 50 Mbps upload.
-4. Save the profile.
-
-The script will automatically extract these values and apply them to the corresponding PPP users in the `ShapedDevices.csv` file.
-
----
-
-### **Donations**
-
-If this script has helped you streamline your network management, synchronize MikroTik PPP and hotspot users with LibreQoS, or saved you time and effort, please consider supporting the development and maintenance of this project. Your donations help ensure that the script remains up-to-date, reliable, and free for everyone to use.
-
-#### **How to Donate**
-You can support this project by donating via the following methods:
-
-- **PayPal**: [Donate via PayPal](https://paypal.me/Kintoyyyy?country.x=PH)  
-- **Buy Me a Coffee**: [Buy Me a Coffee](https://www.buymeacoffee.com/kintoyyy)  
-
-
-<img src="https://i.imgur.com/nfxbhOv.jpeg" alt="LibreQoS MikroTik Sync" width="500" />
-
-Every contribution, no matter how small, is greatly appreciated and helps keep this project alive. Thank you for your support!
-
----
-
-### **Thank You!**
-Your support motivates further development and improvements to this script. If you have any feedback, feature requests, or issues, feel free to open an issue on the project's GitHub repository. Together, we can make network management easier and more efficient for everyone.
-
-Happy networking! 🚀
+Happy networking!
