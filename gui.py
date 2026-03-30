@@ -1,6 +1,7 @@
 import os
 import json
 import random
+import shutil
 import sqlite3
 import string
 import subprocess
@@ -86,15 +87,10 @@ def require_auth(f):
         return f(*args, **kwargs)
     return wrapper
 
-LQOS_CONF_PATHS = [
-    OPT_DIR / "lqos.conf",
-]
+LQOS_CONF_PATH = Path("/etc/lqos.conf")
 
 def _find_lqos_conf():
-    for p in LQOS_CONF_PATHS:
-        if p.exists():
-            return p
-    return LQOS_CONF_PATHS[1]  # default write target
+    return LQOS_CONF_PATH
 
 YAML_FILES = {
     "libreqos":      NETPLAN_DIR / "libreqos.yaml",
@@ -107,12 +103,22 @@ YAML_FILES = {
 }
 
 EXPECTED_MT_GROUP = "API_READ"
-EXPECTED_MT_USER = "libreQos_API"
 EXPECTED_MT_POLICY = (
     "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,"
     "!winbox,!password,!web,!sniff,!romon"
 )
 EXPECTED_MT_POLICY_SET = {p.strip() for p in EXPECTED_MT_POLICY.split(",") if p.strip()}
+
+def _which(cmd):
+    """Return full path of a binary, or None if not found."""
+    return shutil.which(cmd)
+
+def _systemctl(*args, **kwargs):
+    """Run systemctl with the given args. Returns CompletedProcess or raises RuntimeError."""
+    bin_ = _which("systemctl")
+    if not bin_:
+        raise RuntimeError("systemctl not found — is this a systemd system?")
+    return subprocess.run([bin_] + list(args), **kwargs)
 
 # ---------------------------------------------------------------------------
 # SSE metrics broadcaster
@@ -509,14 +515,11 @@ def delete_device(code):
 @require_auth
 def service_status():
     try:
-        result = subprocess.run(
-            ["systemctl", "is-active", "updatecsv.service"],
-            capture_output=True, text=True
-        )
+        result = _systemctl("is-active", "updatecsv.service", capture_output=True, text=True)
         active = result.stdout.strip()
-        info = subprocess.run(
-            ["systemctl", "show", "updatecsv.service",
-             "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp"],
+        info = _systemctl(
+            "show", "updatecsv.service",
+            "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp",
             capture_output=True, text=True
         )
         props = dict(line.split("=", 1) for line in info.stdout.strip().splitlines() if "=" in line)
@@ -531,10 +534,7 @@ def service_action(action):
     if action not in ("start", "stop", "restart"):
         return jsonify({"ok": False, "error": "invalid action"}), 400
     try:
-        result = subprocess.run(
-            ["systemctl", action, "updatecsv.service"],
-            capture_output=True, text=True
-        )
+        result = _systemctl(action, "updatecsv.service", capture_output=True, text=True)
         if result.returncode != 0:
             return jsonify({"ok": False, "error": result.stderr.strip()}), 500
         return jsonify({"ok": True})
@@ -559,16 +559,19 @@ def _svc_name(name):
 
 def _get_service_info(name):
     svc = _svc_name(name)
-    info = subprocess.run(
-        ["systemctl", "show", svc,
-         "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp,LoadState"],
-        capture_output=True, text=True
-    )
-    props = {}
-    for line in info.stdout.strip().splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            props[k] = v
+    try:
+        info = _systemctl(
+            "show", svc,
+            "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp,LoadState",
+            capture_output=True, text=True
+        )
+        props = {}
+        for line in info.stdout.strip().splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                props[k] = v
+    except RuntimeError:
+        props = {}
     return {
         "name":      name,
         "active":    props.get("ActiveState", "unknown"),
@@ -595,10 +598,7 @@ def manage_service(name, action):
     if action not in ("start", "stop", "restart"):
         return jsonify({"ok": False, "error": "invalid action"}), 400
     try:
-        result = subprocess.run(
-            ["systemctl", action, _svc_name(name)],
-            capture_output=True, text=True
-        )
+        result = _systemctl(action, _svc_name(name), capture_output=True, text=True)
         if result.returncode != 0:
             return jsonify({"ok": False, "error": result.stderr.strip()}), 500
         time.sleep(1)
@@ -612,8 +612,11 @@ def service_logs(name):
     if name not in MANAGED_SERVICES:
         return jsonify({"ok": False, "error": "unknown service"}), 400
     try:
+        jctl = _which("journalctl")
+        if not jctl:
+            return jsonify({"ok": False, "error": "journalctl not available on this system"}), 500
         result = subprocess.run(
-            ["journalctl", "-u", _svc_name(name), "-n", "80",
+            [jctl, "-u", _svc_name(name), "-n", "80",
              "--no-pager", "--output=short-iso"],
             capture_output=True, text=True
         )
@@ -640,8 +643,10 @@ def lqusers_reset():
                 removed = str(p)
                 break
         # restart lqosd after removal
-        subprocess.run(["systemctl", "restart", "lqosd.service"],
-                       capture_output=True, text=True)
+        try:
+            _systemctl("restart", "lqosd.service", capture_output=True, text=True)
+        except RuntimeError:
+            pass
         return jsonify({"ok": True, "removed": removed})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -676,8 +681,11 @@ def troubleshoot_mt_ping():
         host = (data.get("host") or router.get("address") or "").strip()
         if not host:
             return jsonify({"ok": False, "error": "Router address is empty"}), 400
+        ping_bin = _which("ping")
+        if not ping_bin:
+            return jsonify({"ok": False, "error": "ping not available on this system"}), 500
         result = subprocess.run(
-            ["ping", "-c", "3", "-W", "2", host],
+            [ping_bin, "-c", "3", "-W", "2", host],
             capture_output=True,
             text=True,
             timeout=15,
@@ -732,18 +740,25 @@ def troubleshoot_mt_permissions():
         pool = _connect_router_api(router)
         api = pool.get_api()
 
+        # Use the configured username for this router
+        configured_user = router.get("username", "")
+
         group_rows = api.get_resource("/user/group").get()
         user_rows = api.get_resource("/user").get()
 
         group = next((g for g in group_rows if g.get("name") == EXPECTED_MT_GROUP), None)
-        user = next((u for u in user_rows if u.get("name") == EXPECTED_MT_USER), None)
+        user = next((u for u in user_rows if u.get("name") == configured_user), None)
 
         found_policy = (group or {}).get("policy", "")
         found_policy_set = {p.strip() for p in found_policy.split(",") if p.strip()}
         missing = sorted(EXPECTED_MT_POLICY_SET - found_policy_set)
-        extra = sorted(found_policy_set - EXPECTED_MT_POLICY_SET)
+        # Extra deny items (starting with !) are acceptable — they only add more restrictions
+        extra = sorted(
+            i for i in (found_policy_set - EXPECTED_MT_POLICY_SET)
+            if not i.startswith("!")
+        )
 
-        group_ok = bool(group) and found_policy_set == EXPECTED_MT_POLICY_SET
+        group_ok = bool(group) and not missing and not extra
         user_group = (user or {}).get("group", "")
         user_disabled = _to_bool((user or {}).get("disabled", False))
         user_ok = bool(user) and user_group == EXPECTED_MT_GROUP and not user_disabled
@@ -758,11 +773,11 @@ def troubleshoot_mt_permissions():
             "user_group": user_group,
             "user_disabled": user_disabled,
             "expected_group": EXPECTED_MT_GROUP,
-            "expected_user": EXPECTED_MT_USER,
+            "expected_user": configured_user,
             "expected_policy": EXPECTED_MT_POLICY,
             "found_policy": found_policy,
             "missing_policy_items": missing,
-            "extra_policy_items": extra,
+            "extra_policy_items": sorted(found_policy_set - EXPECTED_MT_POLICY_SET),
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

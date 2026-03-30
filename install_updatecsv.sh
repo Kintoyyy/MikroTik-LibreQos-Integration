@@ -34,7 +34,8 @@ if command -v apt-get &> /dev/null; then
         python3-pip \
         python3-venv \
         jq \
-        git || {
+        git \
+        iputils-ping || {
         printf "${RED}✘ Failed to install system dependencies.${NC}\n"
         exit 1
     }
