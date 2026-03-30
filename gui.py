@@ -1,6 +1,8 @@
 import os
 import json
+import random
 import sqlite3
+import string
 import subprocess
 import time
 import threading
@@ -46,19 +48,43 @@ YAML_FILES = {
 # ---------------------------------------------------------------------------
 _metric_listeners: list = []
 _metric_lock = threading.Lock()
+_prev_net: dict = {}          # {iface: (bytes_recv, bytes_sent, ts)}
+_BRIDGE_EXCLUDE = {"lo"}      # interfaces to skip from the bridge graph
+
+def _net_throughput():
+    """Return {iface: {rx_mbps, tx_mbps}} using delta from previous sample."""
+    global _prev_net
+    if not HAS_PSUTIL:
+        return {}
+    counters = psutil.net_io_counters(pernic=True)
+    now      = time.time()
+    result   = {}
+    for iface, c in counters.items():
+        if iface in _BRIDGE_EXCLUDE:
+            continue
+        prev = _prev_net.get(iface)
+        if prev:
+            dt = max(now - prev[2], 0.001)
+            rx = max((c.bytes_recv - prev[0]) * 8 / 1_000_000 / dt, 0)
+            tx = max((c.bytes_sent - prev[1]) * 8 / 1_000_000 / dt, 0)
+            result[iface] = {"rx_mbps": round(rx, 2), "tx_mbps": round(tx, 2)}
+        _prev_net[iface] = (c.bytes_recv, c.bytes_sent, now)
+    return result
 
 def _broadcast_loop():
     while True:
         if HAS_PSUTIL:
-            cpu_per = psutil.cpu_percent(interval=1, percpu=True)
-            cpu_avg = sum(cpu_per) / len(cpu_per)
-            mem     = psutil.virtual_memory()
-            payload = json.dumps({
-                "cpu_per": cpu_per,
-                "cpu_avg": round(cpu_avg, 1),
-                "mem_used": mem.used,
-                "mem_total": mem.total,
+            cpu_per  = psutil.cpu_percent(interval=1, percpu=True)
+            cpu_avg  = sum(cpu_per) / len(cpu_per)
+            mem      = psutil.virtual_memory()
+            net      = _net_throughput()
+            payload  = json.dumps({
+                "cpu_per":    cpu_per,
+                "cpu_avg":    round(cpu_avg, 1),
+                "mem_used":   mem.used,
+                "mem_total":  mem.total,
                 "mem_percent": mem.percent,
+                "net":        net,
             })
         else:
             payload = json.dumps({"error": "psutil not installed"})
@@ -195,6 +221,15 @@ def get_interfaces():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _random_id(length=8):
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+
+def _db_con():
+    con = sqlite3.connect(str(DB_PATH))
+    con.row_factory = sqlite3.Row
+    return con
+
+
 @app.route("/api/devices")
 def get_devices():
     try:
@@ -212,6 +247,103 @@ def get_devices():
         rows = [dict(r) for r in cur.fetchall()]
         con.close()
         return jsonify({"ok": True, "count": len(rows), "rows": rows})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/devices", methods=["POST"])
+def add_device():
+    try:
+        d   = request.get_json(force=True)
+        dl  = int(d.get("download_max_mbps", 100))
+        ul  = int(d.get("upload_max_mbps",   100))
+        dl_min = max(1, int(dl * 0.5))
+        ul_min = max(1, int(ul * 0.5))
+        code   = d.get("code", "").strip()
+        if not code:
+            return jsonify({"ok": False, "error": "Code is required"}), 400
+        ipv4 = d.get("ipv4", "").strip() or None
+        ipv6 = d.get("ipv6", "").strip() or None
+        con  = _db_con()
+        # generate unique IDs
+        while True:
+            cid = _random_id(); did = _random_id()
+            row = con.execute("SELECT 1 FROM devices WHERE circuit_id=? OR device_id=?", (cid, did)).fetchone()
+            if not row:
+                break
+        con.execute("""
+            INSERT INTO devices
+              (code, circuit_id, device_id, parent_node, mac, ipv4, ipv6,
+               download_min_mbps, upload_min_mbps, download_max_mbps, upload_max_mbps,
+               comment, source, router, last_seen, is_static, weight)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+        """, (
+            code, cid, did,
+            d.get("parent_node", ""),
+            d.get("mac", "").strip().upper(),
+            ipv4, ipv6,
+            dl_min, ul_min, dl, ul,
+            d.get("comment", ""),
+            d.get("source", "address_list"),
+            d.get("router", ""),
+            time.time(),
+            dl + ul,
+        ))
+        con.commit()
+        con.close()
+        return jsonify({"ok": True})
+    except sqlite3.IntegrityError as e:
+        return jsonify({"ok": False, "error": "Duplicate code or IP: " + str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/devices/<path:code>", methods=["PUT"])
+def update_device(code):
+    try:
+        d   = request.get_json(force=True)
+        dl  = int(d.get("download_max_mbps", 100))
+        ul  = int(d.get("upload_max_mbps",   100))
+        dl_min = max(1, int(dl * 0.5))
+        ul_min = max(1, int(ul * 0.5))
+        ipv4 = d.get("ipv4", "").strip() or None
+        ipv6 = d.get("ipv6", "").strip() or None
+        con  = _db_con()
+        con.execute("""
+            UPDATE devices SET
+              parent_node=?, mac=?, ipv4=?, ipv6=?,
+              download_min_mbps=?, upload_min_mbps=?,
+              download_max_mbps=?, upload_max_mbps=?,
+              comment=?, source=?, router=?, weight=?
+            WHERE code=?
+        """, (
+            d.get("parent_node", ""),
+            d.get("mac", "").strip().upper(),
+            ipv4, ipv6,
+            dl_min, ul_min, dl, ul,
+            d.get("comment", ""),
+            d.get("source", "address_list"),
+            d.get("router", ""),
+            dl + ul,
+            code,
+        ))
+        con.commit()
+        con.close()
+        return jsonify({"ok": True})
+    except sqlite3.IntegrityError as e:
+        return jsonify({"ok": False, "error": "Duplicate IP: " + str(e)}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/devices/<path:code>", methods=["DELETE"])
+def delete_device(code):
+    try:
+        con = _db_con()
+        con.execute("DELETE FROM devices WHERE code=?", (code,))
+        con.commit()
+        con.close()
+        return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

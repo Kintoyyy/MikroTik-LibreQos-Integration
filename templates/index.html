@@ -152,7 +152,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .src-addrlist .source-hd { border-left: 3px solid var(--purple); }
 
 /* ── Devices table ── */
-.devices-wrap { overflow-x: auto; max-height: 580px; overflow-y: auto; }
+.devices-wrap { overflow-x: auto; max-height: 80vh; overflow-y: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .8rem; }
 thead th { background: #1e2740; padding: .55rem .75rem; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; white-space: nowrap; }
 tbody td { padding: .5rem .75rem; border-bottom: 1px solid #1a2035; white-space: nowrap; }
@@ -165,7 +165,7 @@ code { font-size: .8rem; color: #94a3b8; }
 .search-input:focus { outline: none; border-color: var(--blue); }
 
 /* ── CodeMirror ── */
-.CodeMirror { height: 500px; border-radius: 8px; font-size: 13px; }
+.CodeMirror { height: 80vh; border-radius: 8px; font-size: 13px; }
 
 /* ── Toast ── */
 .toast-stack { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: .5rem; }
@@ -221,6 +221,18 @@ code { font-size: .8rem; color: #94a3b8; }
 .btn-copy { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: .2rem .5rem; cursor: pointer; font-size: .75rem; transition: all .15s; }
 .btn-copy:hover { border-color: var(--blue); color: var(--text); }
 
+/* ── Topology ── */
+.topo-mode-btn { background:none;border:none;color:var(--muted);padding:.4rem .85rem;font-size:.8rem;cursor:pointer;transition:all .15s; }
+.topo-mode-btn.active { background:var(--blue);color:#fff; }
+.topo-pill { font-size:.72rem;font-weight:600;padding:.25em .7em;border-radius:20px;display:inline-flex;align-items:center;gap:.35rem; }
+
+/* ── Modal ── */
+#device-modal-overlay.open { display: flex !important; }
+.btn-row-edit   { background:none;border:none;color:var(--blue);cursor:pointer;padding:.2rem .35rem;border-radius:5px;font-size:.78rem; }
+.btn-row-edit:hover   { background:#1d3fbb22; }
+.btn-row-delete { background:none;border:none;color:var(--red);cursor:pointer;padding:.2rem .35rem;border-radius:5px;font-size:.78rem; }
+.btn-row-delete:hover { background:#450a0a44; }
+
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -253,6 +265,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <button class="tab-btn"        onclick="switchTab('network')">  <i class="bi bi-hdd-network"></i>Network</button>
   <button class="tab-btn"        onclick="switchTab('mgmt')">     <i class="bi bi-ethernet"></i>Management Port</button>
   <button class="tab-btn"        onclick="switchTab('yaml')">     <i class="bi bi-file-code"></i>Files</button>
+  <button class="tab-btn"        onclick="switchTab('topology')"> <i class="bi bi-diagram-3"></i>Topology</button>
   <button class="tab-btn"        onclick="switchTab('devices')">  <i class="bi bi-table"></i>Devices</button>
 </div>
 
@@ -299,6 +312,30 @@ code { font-size: .8rem; color: #94a3b8; }
         </table>
       </div>
     </div>
+
+    <!-- Bridge / interface throughput — full width -->
+    <div class="card" style="grid-column:1/-1">
+      <div class="card-hd">
+        <span><i class="bi bi-activity" style="color:#f472b6"></i> Interface Throughput</span>
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <select id="bridge-iface-select" class="search-input" style="font-size:.75rem;padding:.25rem .6rem" onchange="onBridgeIfaceChange()">
+            <option value="">Loading…</option>
+          </select>
+          <div style="display:flex;gap:.4rem;font-size:.72rem;color:var(--muted);align-items:center">
+            <span style="width:18px;height:3px;background:#3b82f6;border-radius:2px;display:inline-block"></span>RX
+            <span style="width:18px;height:3px;background:#22c55e;border-radius:2px;display:inline-block;margin-left:.4rem"></span>TX
+          </div>
+          <div style="font-size:.75rem">
+            RX <strong id="bridge-rx-val" style="color:#3b82f6">— Mbps</strong>
+            &nbsp; TX <strong id="bridge-tx-val" style="color:#22c55e">— Mbps</strong>
+          </div>
+        </div>
+      </div>
+      <div class="card-bd">
+        <div style="position:relative;height:200px"><canvas id="bridge-chart"></canvas></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -767,6 +804,60 @@ code { font-size: .8rem; color: #94a3b8; }
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
+     TOPOLOGY
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-topology">
+
+  <!-- Header + controls -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Topology</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Sankey diagram — bandwidth flow from parent nodes to devices</p>
+    </div>
+    <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+      <!-- View mode -->
+      <div style="display:flex;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+        <button id="topo-btn-overview" class="topo-mode-btn active" onclick="setTopoMode('overview')">Overview</button>
+        <button id="topo-btn-detail"   class="topo-mode-btn"        onclick="setTopoMode('detail')">Detail</button>
+      </div>
+      <!-- Source filter -->
+      <select class="search-input" id="topo-src-filter" onchange="renderTopology()" style="font-size:.78rem">
+        <option value="">All sources</option>
+        <option value="pppoe">PPPoE</option>
+        <option value="hotspot">Hotspot</option>
+        <option value="dhcp">DHCP / IPoE</option>
+        <option value="address_list">Address List</option>
+      </select>
+      <!-- Router filter -->
+      <select class="search-input" id="topo-router-filter" onchange="renderTopology()" style="font-size:.78rem">
+        <option value="">All routers</option>
+      </select>
+      <!-- Detail limit -->
+      <select class="search-input" id="topo-limit" onchange="renderTopology()" style="font-size:.78rem;display:none">
+        <option value="50">Top 50</option>
+        <option value="100">Top 100</option>
+        <option value="200">Top 200</option>
+        <option value="0">All devices</option>
+      </select>
+      <button class="btn-ghost" onclick="loadTopology()"><i class="bi bi-arrow-clockwise"></i></button>
+    </div>
+  </div>
+
+  <!-- Summary pills -->
+  <div id="topo-summary" style="display:flex;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem"></div>
+
+  <!-- Chart -->
+  <div class="card" style="padding:0">
+    <div id="topo-chart" style="width:100%;height:75vh"></div>
+    <div id="topo-empty" style="display:none;height:300px;align-items:center;justify-content:center;flex-direction:column;gap:.5rem;color:var(--muted)">
+      <i class="bi bi-diagram-3" style="font-size:2.5rem"></i>
+      <span>No devices to display</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
      DEVICES
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-devices">
@@ -783,6 +874,7 @@ code { font-size: .8rem; color: #94a3b8; }
           <option value="address_list">Address List</option>
         </select>
         <button class="btn-ghost" onclick="loadDevices()"><i class="bi bi-arrow-clockwise"></i></button>
+        <button class="btn-primary" onclick="openDeviceModal()"><i class="bi bi-plus-lg"></i> Add Device</button>
       </div>
     </div>
     <div class="devices-wrap">
@@ -793,6 +885,7 @@ code { font-size: .8rem; color: #94a3b8; }
             <th>Source</th><th>Router</th><th>Parent</th>
             <th style="text-align:right">DL Max</th><th style="text-align:right">UL Max</th>
             <th>Comment</th><th style="text-align:center">Static</th>
+            <th style="text-align:center">Actions</th>
           </tr>
         </thead>
         <tbody id="devices-body"></tbody>
@@ -801,10 +894,105 @@ code { font-size: .8rem; color: #94a3b8; }
   </div>
 </div>
 
+<!-- ── Device modal ── -->
+<div id="device-modal-overlay" style="display:none;position:fixed;inset:0;background:#000a;z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#161b27;border:1px solid var(--border);border-radius:16px;width:100%;max-width:560px;max-height:90vh;overflow-y:auto;margin:1rem">
+    <div style="padding:1.1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div style="font-weight:700;font-size:1rem" id="device-modal-title">Add Device</div>
+        <div style="font-size:.75rem;color:var(--muted);margin-top:.15rem" id="device-modal-sub">Manually added devices are marked static and won't be overwritten by sync</div>
+      </div>
+      <button class="btn-icon" onclick="closeDeviceModal()" style="font-size:1.1rem"><i class="bi bi-x-lg"></i></button>
+    </div>
+    <div style="padding:1.25rem;display:flex;flex-direction:column;gap:.9rem">
+
+      <div class="form-row form-row-2">
+        <div>
+          <label class="form-label">Code / Name <span style="color:var(--red)">*</span></label>
+          <input class="form-input" id="dev-code" placeholder="e.g. PPP-john or 10.0.0.5">
+          <div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">Unique identifier for this device</div>
+        </div>
+        <div>
+          <label class="form-label">IPv4 Address</label>
+          <input class="form-input" id="dev-ipv4" placeholder="10.0.0.5">
+        </div>
+      </div>
+
+      <div class="form-row form-row-2">
+        <div>
+          <label class="form-label">MAC Address</label>
+          <input class="form-input" id="dev-mac" placeholder="AA:BB:CC:DD:EE:FF">
+        </div>
+        <div>
+          <label class="form-label">IPv6 Address</label>
+          <input class="form-input" id="dev-ipv6" placeholder="optional">
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);padding-top:.9rem">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.65rem">Bandwidth</div>
+        <div class="form-row form-row-2">
+          <div>
+            <label class="form-label">Download Max</label>
+            <div class="form-input-group">
+              <input class="form-input" type="number" id="dev-dl" value="100" min="1">
+              <span class="input-suffix">Mbps</span>
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Upload Max</label>
+            <div class="form-input-group">
+              <input class="form-input" type="number" id="dev-ul" value="100" min="1">
+              <span class="input-suffix">Mbps</span>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-top:.4rem">Min rates are auto-set to 50% of max. Applied max = value × 1.15</div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);padding-top:.9rem">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.65rem">Classification</div>
+        <div class="form-row form-row-3">
+          <div>
+            <label class="form-label">Source</label>
+            <select class="form-input" id="dev-source">
+              <option value="address_list">Address List</option>
+              <option value="pppoe">PPPoE</option>
+              <option value="hotspot">Hotspot</option>
+              <option value="dhcp">DHCP / IPoE</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label">Router</label>
+            <input class="form-input" id="dev-router" placeholder="optional">
+          </div>
+          <div>
+            <label class="form-label">Parent Node</label>
+            <input class="form-input" id="dev-parent" placeholder="e.g. CPU0">
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="form-label">Comment</label>
+        <input class="form-input" id="dev-comment" placeholder="optional note">
+      </div>
+
+      <div id="device-modal-error" style="display:none;background:#450a0a;border:1px solid #ef444433;color:#f87171;border-radius:8px;padding:.6rem .85rem;font-size:.8rem"></div>
+
+      <div style="display:flex;gap:.6rem;justify-content:flex-end;padding-top:.25rem">
+        <button class="btn-ghost" onclick="closeDeviceModal()">Cancel</button>
+        <button class="btn-primary" id="device-modal-save-btn" onclick="saveDevice()"><i class="bi bi-floppy-fill"></i> Save Device</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Toasts ── -->
 <div class="toast-stack" id="toast-stack"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/yaml/yaml.js"></script>
@@ -817,7 +1005,7 @@ code { font-size: .8rem; color: #94a3b8; }
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const names = ['dashboard','config','services','network','mgmt','yaml','devices'];
+    const names = ['dashboard','config','services','network','mgmt','yaml','topology','devices'];
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -826,6 +1014,7 @@ function switchTab(name) {
   if (name === 'network')  loadInterfaces();
   if (name === 'mgmt')     loadMgmt();
   if (name === 'services') loadServices();
+  if (name === 'topology') loadTopology();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -866,8 +1055,29 @@ function makeChart(id, color) {
     }
   });
 }
-const cpuChart = makeChart('cpu-chart','#3b82f6');
-const memChart = makeChart('mem-chart','#06b6d4');
+const cpuChart    = makeChart('cpu-chart','#3b82f6');
+const memChart    = makeChart('mem-chart','#06b6d4');
+const bridgeChart = new Chart(document.getElementById('bridge-chart'), {
+  type: 'line',
+  data: {
+    labels: Array(MAX_PTS).fill(''),
+    datasets: [
+      { label:'RX', data: Array(MAX_PTS).fill(null), borderColor:'#3b82f6', backgroundColor:'#3b82f611',
+        borderWidth:2, pointRadius:0, fill:true, tension:0.4 },
+      { label:'TX', data: Array(MAX_PTS).fill(null), borderColor:'#22c55e', backgroundColor:'#22c55e11',
+        borderWidth:2, pointRadius:0, fill:true, tension:0.4 },
+    ]
+  },
+  options: {
+    animation: false, responsive: true, maintainAspectRatio: false,
+    scales: {
+      x: { display: false },
+      y: { min: 0, grid: { color:'#2a334855' },
+           ticks: { color:'#64748b', callback: v => v >= 1000 ? (v/1000).toFixed(1)+'G' : v+'M' } }
+    },
+    plugins: { legend: { display: false } }
+  }
+});
 function pushPt(chart, v) {
   chart.data.datasets[0].data.push(v);
   if (chart.data.datasets[0].data.length > MAX_PTS) chart.data.datasets[0].data.shift();
@@ -900,6 +1110,35 @@ function buildBars(n) {
   document.getElementById('cpu-cores-label').textContent = n + ' cores';
 }
 
+// ── Bridge / interface throughput ─────────────────────────────────────────
+let bridgeIface  = '';          // selected interface
+let bridgeIfaceList = [];       // known interfaces from SSE
+
+function onBridgeIfaceChange() {
+  bridgeIface = document.getElementById('bridge-iface-select').value;
+  // reset chart data when switching
+  bridgeChart.data.datasets.forEach(ds => ds.data = Array(MAX_PTS).fill(null));
+  bridgeChart.update('none');
+}
+
+function _updateBridgeSelect(netData) {
+  const ifaces = Object.keys(netData).sort();
+  if (JSON.stringify(ifaces) === JSON.stringify(bridgeIfaceList)) return;
+  bridgeIfaceList = ifaces;
+  const sel  = document.getElementById('bridge-iface-select');
+  const prev = bridgeIface || sel.value;
+  sel.innerHTML = ifaces.map(n => `<option value="${n}" ${n===prev?'selected':''}>${n}</option>`).join('');
+  // auto-select br0 if present, else first
+  if (!bridgeIface) {
+    bridgeIface = ifaces.includes('br0') ? 'br0' : ifaces[0] || '';
+    sel.value   = bridgeIface;
+  }
+}
+
+function fmtMbps(v) {
+  return v >= 1000 ? (v/1000).toFixed(2)+' Gbps' : v.toFixed(1)+' Mbps';
+}
+
 // ── SSE ───────────────────────────────────────────────────────────────────
 const es = new EventSource('/api/metrics/stream');
 es.onmessage = e => {
@@ -914,6 +1153,20 @@ es.onmessage = e => {
   document.getElementById('mem-used-label').textContent  = fmtBytes(d.mem_used);
   document.getElementById('mem-free-label').textContent  = fmtBytes(d.mem_total - d.mem_used);
   document.getElementById('mem-total-label').textContent = fmtBytes(d.mem_total);
+
+  // Bridge throughput
+  if (d.net && Object.keys(d.net).length) {
+    _updateBridgeSelect(d.net);
+    const stats = d.net[bridgeIface];
+    if (stats) {
+      bridgeChart.data.datasets[0].data.push(stats.rx_mbps);
+      bridgeChart.data.datasets[1].data.push(stats.tx_mbps);
+      bridgeChart.data.datasets.forEach(ds => { if (ds.data.length > MAX_PTS) ds.data.shift(); });
+      bridgeChart.update('none');
+      document.getElementById('bridge-rx-val').textContent = fmtMbps(stats.rx_mbps);
+      document.getElementById('bridge-tx-val').textContent = fmtMbps(stats.tx_mbps);
+    }
+  }
 };
 
 // ── Service ───────────────────────────────────────────────────────────────
@@ -964,7 +1217,7 @@ function filterDevices() {
     (!src || r.source===src) && (!q || JSON.stringify(r).toLowerCase().includes(q)));
   document.getElementById('devices-body').innerHTML = rows.map(r=>`
     <tr>
-      <td>${r.code}</td>
+      <td style="font-weight:500">${r.code}</td>
       <td><code>${r.ipv4||''}</code></td>
       <td><code>${r.mac||''}</code></td>
       <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
@@ -972,10 +1225,123 @@ function filterDevices() {
       <td>${r.parent_node}</td>
       <td style="text-align:right">${r.download_max_mbps}</td>
       <td style="text-align:right">${r.upload_max_mbps}</td>
-      <td style="color:var(--muted)">${r.comment}</td>
+      <td style="color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">${r.comment}</td>
       <td style="text-align:center">${r.is_static?'<i class="bi bi-lock-fill" style="color:#f59e0b"></i>':''}</td>
+      <td style="text-align:center;white-space:nowrap">
+        <button class="btn-row-edit"   title="Edit"   onclick='openEditDevice(${JSON.stringify(r)})'><i class="bi bi-pencil-fill"></i></button>
+        <button class="btn-row-delete" title="Delete" onclick="deleteDevice(${JSON.stringify(r.code)})"><i class="bi bi-trash3-fill"></i></button>
+      </td>
     </tr>`).join('');
 }
+
+// ── Device modal ──────────────────────────────────────────────────────────
+let editingDeviceCode = null;
+
+function openDeviceModal(prefill) {
+  editingDeviceCode = null;
+  document.getElementById('device-modal-title').textContent = 'Add Device';
+  document.getElementById('device-modal-sub').textContent   = 'Manually added devices are marked static and won\'t be overwritten by sync';
+  document.getElementById('device-modal-save-btn').innerHTML = '<i class="bi bi-floppy-fill"></i> Save Device';
+  clearDeviceForm();
+  if (prefill) fillDeviceForm(prefill);
+  document.getElementById('dev-code').readOnly = false;
+  showDeviceModal();
+}
+
+function openEditDevice(row) {
+  editingDeviceCode = row.code;
+  document.getElementById('device-modal-title').textContent = 'Edit Device';
+  document.getElementById('device-modal-sub').textContent   = row.code;
+  document.getElementById('device-modal-save-btn').innerHTML = '<i class="bi bi-floppy-fill"></i> Update Device';
+  fillDeviceForm(row);
+  document.getElementById('dev-code').readOnly = true;
+  showDeviceModal();
+}
+
+function showDeviceModal() {
+  const ov = document.getElementById('device-modal-overlay');
+  ov.style.display = 'flex';
+  document.getElementById('device-modal-error').style.display = 'none';
+  setTimeout(() => document.getElementById('dev-code').focus(), 50);
+}
+
+function closeDeviceModal() {
+  document.getElementById('device-modal-overlay').style.display = 'none';
+}
+
+function clearDeviceForm() {
+  ['dev-code','dev-ipv4','dev-mac','dev-ipv6','dev-router','dev-parent','dev-comment'].forEach(id =>
+    document.getElementById(id).value = '');
+  document.getElementById('dev-dl').value = '100';
+  document.getElementById('dev-ul').value = '100';
+  document.getElementById('dev-source').value = 'address_list';
+}
+
+function fillDeviceForm(r) {
+  document.getElementById('dev-code').value    = r.code        || '';
+  document.getElementById('dev-ipv4').value    = r.ipv4        || '';
+  document.getElementById('dev-mac').value     = r.mac         || '';
+  document.getElementById('dev-ipv6').value    = r.ipv6        || '';
+  document.getElementById('dev-dl').value      = r.download_max_mbps || 100;
+  document.getElementById('dev-ul').value      = r.upload_max_mbps   || 100;
+  document.getElementById('dev-source').value  = r.source      || 'address_list';
+  document.getElementById('dev-router').value  = r.router      || '';
+  document.getElementById('dev-parent').value  = r.parent_node || '';
+  document.getElementById('dev-comment').value = r.comment     || '';
+}
+
+function deviceFormPayload() {
+  return {
+    code:              document.getElementById('dev-code').value.trim(),
+    ipv4:              document.getElementById('dev-ipv4').value.trim(),
+    mac:               document.getElementById('dev-mac').value.trim(),
+    ipv6:              document.getElementById('dev-ipv6').value.trim(),
+    download_max_mbps: +document.getElementById('dev-dl').value,
+    upload_max_mbps:   +document.getElementById('dev-ul').value,
+    source:            document.getElementById('dev-source').value,
+    router:            document.getElementById('dev-router').value.trim(),
+    parent_node:       document.getElementById('dev-parent').value.trim(),
+    comment:           document.getElementById('dev-comment').value.trim(),
+  };
+}
+
+async function saveDevice() {
+  const errEl = document.getElementById('device-modal-error');
+  errEl.style.display = 'none';
+  const payload = deviceFormPayload();
+  if (!payload.code) { errEl.textContent = 'Code / Name is required'; errEl.style.display='block'; return; }
+  if (!payload.download_max_mbps || !payload.upload_max_mbps) {
+    errEl.textContent = 'Download and Upload speeds are required'; errEl.style.display='block'; return;
+  }
+
+  const isEdit = !!editingDeviceCode;
+  const url    = isEdit ? `/api/devices/${encodeURIComponent(editingDeviceCode)}` : '/api/devices';
+  const method = isEdit ? 'PUT' : 'POST';
+
+  const r = await fetch(url, {
+    method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  });
+  const d = await r.json();
+  if (!d.ok) { errEl.textContent = d.error; errEl.style.display = 'block'; return; }
+
+  toast(isEdit ? `${payload.code} updated` : `${payload.code} added`);
+  closeDeviceModal();
+  loadDevices();
+}
+
+async function deleteDevice(code) {
+  if (!confirm(`Delete device "${code}"?\n\nThis cannot be undone.`)) return;
+  const r = await fetch(`/api/devices/${encodeURIComponent(code)}`, { method: 'DELETE' });
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  toast(`${code} deleted`);
+  loadDevices();
+}
+
+// close modal on overlay click
+document.getElementById('device-modal-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeDeviceModal();
+});
 
 // ══════════════════════════════════════════════════════════════════════════
 // CONFIG / SETTINGS
@@ -1795,6 +2161,227 @@ async function applyMgmt() {
     + (d.netplan_output ? '\n\n' + d.netplan_output : '');
   toast(`Management port configured (${mgmtMode.toUpperCase()})`);
   setTimeout(loadMgmt, 2000);
+}
+
+// ── Topology / Sankey ────────────────────────────────────────────────────
+let topoChart   = null;
+let topoMode    = 'overview';   // 'overview' | 'detail'
+let topoDevices = [];
+
+const SRC_COLORS = {
+  pppoe:        '#3b82f6',
+  hotspot:      '#22c55e',
+  dhcp:         '#f59e0b',
+  address_list: '#8b5cf6',
+};
+const NODE_COLORS = [
+  '#2563eb','#7c3aed','#0891b2','#047857','#b45309',
+  '#be185d','#1d4ed8','#6d28d9','#0e7490','#065f46',
+];
+
+async function loadTopology() {
+  const r = await fetch('/api/devices');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  topoDevices = d.rows;
+
+  // populate router filter
+  const routers = [...new Set(topoDevices.map(r => r.router).filter(Boolean))].sort();
+  const sel = document.getElementById('topo-router-filter');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All routers</option>' +
+    routers.map(r => `<option value="${r}" ${r===prev?'selected':''}>${r}</option>`).join('');
+
+  renderTopology();
+}
+
+function setTopoMode(m) {
+  topoMode = m;
+  document.getElementById('topo-btn-overview').classList.toggle('active', m==='overview');
+  document.getElementById('topo-btn-detail').classList.toggle('active',   m==='detail');
+  document.getElementById('topo-limit').style.display = m==='detail' ? '' : 'none';
+  renderTopology();
+}
+
+function renderTopology() {
+  const srcF    = document.getElementById('topo-src-filter').value;
+  const routerF = document.getElementById('topo-router-filter').value;
+  const limit   = parseInt(document.getElementById('topo-limit').value || '50');
+
+  let devices = topoDevices.filter(d =>
+    (!srcF    || d.source === srcF) &&
+    (!routerF || d.router === routerF) &&
+    d.parent_node
+  );
+
+  // Summary pills
+  const totalBW = devices.reduce((s,d) => s + d.download_max_mbps + d.upload_max_mbps, 0);
+  const parents  = [...new Set(devices.map(d => d.parent_node))];
+  document.getElementById('topo-summary').innerHTML = [
+    `<span class="topo-pill" style="background:#1d3fbb22;color:#60a5fa"><i class="bi bi-diagram-3"></i> ${parents.length} parent nodes</span>`,
+    `<span class="topo-pill" style="background:#14532d22;color:#4ade80"><i class="bi bi-hdd-network-fill"></i> ${devices.length} devices</span>`,
+    `<span class="topo-pill" style="background:#3b076422;color:#c4b5fd"><i class="bi bi-speedometer2"></i> ${(totalBW/1000).toFixed(1)} Gbps total</span>`,
+  ].join('');
+
+  if (!devices.length) {
+    document.getElementById('topo-chart').style.display  = 'none';
+    document.getElementById('topo-empty').style.display  = 'flex';
+    return;
+  }
+  document.getElementById('topo-chart').style.display = 'block';
+  document.getElementById('topo-empty').style.display  = 'none';
+
+  topoMode === 'overview' ? _renderOverview(devices, parents) : _renderDetail(devices, parents, limit);
+}
+
+// ── Overview: Router → Parent Node → Source bucket ────────────────────────
+function _renderOverview(devices, parents) {
+  const nodes = [];
+  const links = [];
+  const nodeSet = new Set();
+
+  // Collect routers
+  const routers = [...new Set(devices.map(d => d.router).filter(Boolean))];
+  const hasRouters = routers.length > 0;
+
+  // Build aggregated bandwidth: router→parent and parent→source
+  const rpMap  = {};  // "router|parent" → bw
+  const psMap  = {};  // "parent|source" → bw
+
+  devices.forEach(d => {
+    const p = d.parent_node;
+    const s = d.source || 'unknown';
+    const r = d.router  || '(no router)';
+    const bw = (d.download_max_mbps || 0) + (d.upload_max_mbps || 0);
+
+    if (hasRouters) {
+      const rk = `${r}|||${p}`;
+      rpMap[rk] = (rpMap[rk] || 0) + bw;
+    }
+    const pk = `${p}|||${s}`;
+    psMap[pk] = (psMap[pk] || 0) + bw;
+  });
+
+  // Add nodes
+  const addNode = (name, color) => {
+    if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
+  };
+
+  const parentColorMap = {};
+  parents.forEach((p, i) => { parentColorMap[p] = NODE_COLORS[i % NODE_COLORS.length]; });
+
+  if (hasRouters) {
+    routers.forEach((r, i) => addNode(r, NODE_COLORS[(i + 5) % NODE_COLORS.length]));
+  }
+  parents.forEach(p => addNode(p, parentColorMap[p]));
+  Object.keys(SRC_COLORS).forEach(s => {
+    if (devices.some(d => d.source === s))
+      addNode(_srcLabel(s), SRC_COLORS[s]);
+  });
+
+  // Add links
+  if (hasRouters) {
+    Object.entries(rpMap).forEach(([k, bw]) => {
+      const [r, p] = k.split('|||');
+      links.push({ source: r, target: p, value: Math.max(bw, 1) });
+    });
+  }
+  Object.entries(psMap).forEach(([k, bw]) => {
+    const [p, s] = k.split('|||');
+    links.push({ source: p, target: _srcLabel(s), value: Math.max(bw, 1) });
+  });
+
+  _drawSankey(nodes, links, 3);
+}
+
+// ── Detail: Parent Node → Device ──────────────────────────────────────────
+function _renderDetail(devices, parents, limit) {
+  // Sort by bandwidth desc, apply limit
+  let sorted = [...devices].sort((a,b) =>
+    (b.download_max_mbps + b.upload_max_mbps) - (a.download_max_mbps + a.upload_max_mbps));
+  if (limit > 0) sorted = sorted.slice(0, limit);
+
+  const nodes = [];
+  const links = [];
+  const nodeSet = new Set();
+  const parentColorMap = {};
+  parents.forEach((p, i) => { parentColorMap[p] = NODE_COLORS[i % NODE_COLORS.length]; });
+
+  const addNode = (name, color) => {
+    if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
+  };
+
+  // Parent nodes
+  [...new Set(sorted.map(d => d.parent_node))].forEach(p =>
+    addNode(p, parentColorMap[p] || '#3b82f6'));
+
+  // Device nodes (prefix to avoid collision with parent names)
+  sorted.forEach(d => {
+    const src = d.source || 'address_list';
+    addNode('dev::' + d.code, SRC_COLORS[src] || '#94a3b8');
+  });
+
+  sorted.forEach(d => {
+    const bw = (d.download_max_mbps || 1) + (d.upload_max_mbps || 1);
+    links.push({ source: d.parent_node, target: 'dev::' + d.code, value: Math.max(bw, 1) });
+  });
+
+  _drawSankey(nodes, links, 2, d => d.name.startsWith('dev::') ? d.name.slice(5) : d.name);
+}
+
+function _srcLabel(s) {
+  return { pppoe:'PPPoE', hotspot:'Hotspot', dhcp:'DHCP / IPoE', address_list:'Address List' }[s] || s;
+}
+
+function _drawSankey(nodes, links, levels, labelFn) {
+  if (!topoChart) {
+    topoChart = echarts.init(document.getElementById('topo-chart'), null, { renderer: 'canvas' });
+    window.addEventListener('resize', () => topoChart && topoChart.resize());
+  }
+
+  topoChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a2035',
+      borderColor: '#2a3350',
+      textStyle: { color: '#e2e8f0', fontSize: 12 },
+      formatter: p => {
+        if (p.dataType === 'edge') {
+          const src  = p.data.source.startsWith('dev::') ? p.data.source.slice(5) : p.data.source;
+          const tgt  = p.data.target.startsWith('dev::') ? p.data.target.slice(5) : p.data.target;
+          return `<b>${src}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+        }
+        const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
+        return `<b>${name}</b><br>${_fmtBw(p.value)}`;
+      }
+    },
+    series: [{
+      type: 'sankey',
+      layout: 'none',
+      emphasis: { focus: 'adjacency' },
+      nodeAlign: 'left',
+      nodeGap: levels === 2 ? 6 : 10,
+      nodeWidth: 14,
+      layoutIterations: 32,
+      data: nodes,
+      links: links,
+      label: {
+        color: '#cbd5e1',
+        fontSize: 11,
+        formatter: p => {
+          const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
+          return name.length > 22 ? name.slice(0, 21) + '…' : name;
+        },
+      },
+      lineStyle: { color: 'gradient', opacity: 0.35, curveness: 0.5 },
+      itemStyle: { borderWidth: 0, borderRadius: 3 },
+    }]
+  }, true);
+}
+
+function _fmtBw(mbps) {
+  return mbps >= 1000 ? (mbps/1000).toFixed(2)+' Gbps' : Math.round(mbps)+' Mbps';
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────
