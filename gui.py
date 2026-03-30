@@ -6,8 +6,11 @@ import string
 import subprocess
 import time
 import threading
+import hashlib
+import secrets
+import functools
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 
 try:
     import psutil
@@ -33,6 +36,48 @@ def find_file(name):
 
 CONFIG_PATH = find_file("config.json")
 DB_PATH     = find_file("devices.db")
+AUTH_PATH   = find_file("gui_auth.json")
+
+# ---------------------------------------------------------------------------
+# Auth helpers
+# ---------------------------------------------------------------------------
+_DEFAULT_PASSWORD = "admin"
+
+def _hash_password(password: str, salt: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode(), salt.encode(), 260_000
+    ).hex()
+
+def _load_auth() -> dict:
+    if AUTH_PATH.exists():
+        try:
+            return json.loads(AUTH_PATH.read_text())
+        except Exception:
+            pass
+    # First-run: create default auth file
+    salt       = secrets.token_hex(16)
+    secret_key = secrets.token_hex(32)
+    data = {
+        "password_hash": _hash_password(_DEFAULT_PASSWORD, salt),
+        "salt":          salt,
+        "secret_key":    secret_key,
+    }
+    AUTH_PATH.write_text(json.dumps(data, indent=2))
+    return data
+
+_auth = _load_auth()
+app.secret_key = _auth["secret_key"]
+
+def _verify_password(password: str) -> bool:
+    return _hash_password(password, _auth["salt"]) == _auth["password_hash"]
+
+def require_auth(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("authed"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return wrapper
 
 YAML_FILES = {
     "libreqos":    find_file("libreqos.yaml"),
@@ -113,7 +158,47 @@ def index():
     return render_template("index.html")
 
 
+# ---------------------------------------------------------------------------
+# Auth routes (public)
+# ---------------------------------------------------------------------------
+
+@app.route("/api/auth/check")
+def auth_check():
+    return jsonify({"ok": True, "authed": bool(session.get("authed"))})
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    data = request.get_json(force=True)
+    if _verify_password(data.get("password", "")):
+        session["authed"] = True
+        return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Invalid password"}), 401
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+@app.route("/api/auth/password", methods=["POST"])
+@require_auth
+def change_password():
+    global _auth
+    data = request.get_json(force=True)
+    current  = data.get("current", "")
+    new_pass = data.get("new", "")
+    if not _verify_password(current):
+        return jsonify({"ok": False, "error": "Current password is incorrect"}), 400
+    if len(new_pass) < 6:
+        return jsonify({"ok": False, "error": "Password must be at least 6 characters"}), 400
+    salt = secrets.token_hex(16)
+    _auth["salt"]          = salt
+    _auth["password_hash"] = _hash_password(new_pass, salt)
+    AUTH_PATH.write_text(json.dumps(_auth, indent=2))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/metrics/stream")
+@require_auth
 def metrics_stream():
     queue = []
     with _metric_lock:
@@ -137,6 +222,7 @@ def metrics_stream():
 
 
 @app.route("/api/config", methods=["GET"])
+@require_auth
 def get_config():
     try:
         return jsonify({"ok": True, "path": str(CONFIG_PATH),
@@ -146,6 +232,7 @@ def get_config():
 
 
 @app.route("/api/config", methods=["POST"])
+@require_auth
 def save_config():
     try:
         data = request.get_json(force=True)
@@ -159,6 +246,7 @@ def save_config():
 
 
 @app.route("/api/yaml/<name>", methods=["GET"])
+@require_auth
 def get_yaml(name):
     path = YAML_FILES.get(name)
     if not path:
@@ -171,6 +259,7 @@ def get_yaml(name):
 
 
 @app.route("/api/yaml/<name>", methods=["POST"])
+@require_auth
 def save_yaml(name):
     path = YAML_FILES.get(name)
     if not path:
@@ -197,6 +286,7 @@ def save_yaml(name):
 
 
 @app.route("/api/interfaces")
+@require_auth
 def get_interfaces():
     try:
         if not HAS_PSUTIL:
@@ -231,6 +321,7 @@ def _db_con():
 
 
 @app.route("/api/devices")
+@require_auth
 def get_devices():
     try:
         if not DB_PATH.exists():
@@ -252,6 +343,7 @@ def get_devices():
 
 
 @app.route("/api/devices", methods=["POST"])
+@require_auth
 def add_device():
     try:
         d   = request.get_json(force=True)
@@ -299,6 +391,7 @@ def add_device():
 
 
 @app.route("/api/devices/<path:code>", methods=["PUT"])
+@require_auth
 def update_device(code):
     try:
         d   = request.get_json(force=True)
@@ -337,6 +430,7 @@ def update_device(code):
 
 
 @app.route("/api/devices/<path:code>", methods=["DELETE"])
+@require_auth
 def delete_device(code):
     try:
         con = _db_con()
@@ -349,6 +443,7 @@ def delete_device(code):
 
 
 @app.route("/api/service/status")
+@require_auth
 def service_status():
     try:
         result = subprocess.run(
@@ -368,6 +463,7 @@ def service_status():
 
 
 @app.route("/api/service/<action>", methods=["POST"])
+@require_auth
 def service_action(action):
     if action not in ("start", "stop", "restart"):
         return jsonify({"ok": False, "error": "invalid action"}), 400
@@ -420,6 +516,7 @@ def _get_service_info(name):
     }
 
 @app.route("/api/services")
+@require_auth
 def get_services():
     try:
         result = [_get_service_info(n) for n in MANAGED_SERVICES]
@@ -428,6 +525,7 @@ def get_services():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/services/<name>/<action>", methods=["POST"])
+@require_auth
 def manage_service(name, action):
     if name not in MANAGED_SERVICES:
         return jsonify({"ok": False, "error": "unknown service"}), 400
@@ -446,6 +544,7 @@ def manage_service(name, action):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/services/<name>/logs")
+@require_auth
 def service_logs(name):
     if name not in MANAGED_SERVICES:
         return jsonify({"ok": False, "error": "unknown service"}), 400
@@ -460,6 +559,7 @@ def service_logs(name):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 @app.route("/api/lqusers/status")
+@require_auth
 def lqusers_status():
     for p in LQUSERS_PATHS:
         if p.exists():
@@ -467,6 +567,7 @@ def lqusers_status():
     return jsonify({"ok": True, "exists": False, "path": None})
 
 @app.route("/api/lqusers/reset", methods=["POST"])
+@require_auth
 def lqusers_reset():
     try:
         removed = None
