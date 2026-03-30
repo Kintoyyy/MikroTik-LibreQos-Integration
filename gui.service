@@ -1,0 +1,17 @@
+[Unit]
+Description=LibreQoS MikroTik GUI
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/opt/libreqos/src
+Environment="VIRTUAL_ENV=/opt/libreqos/venv"
+Environment="PATH=/opt/libreqos/venv/bin:$PATH"
+ExecStart=/opt/libreqos/venv/bin/python3 /opt/libreqos/src/gui.py
+Restart=always
+RestartSec=5
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target

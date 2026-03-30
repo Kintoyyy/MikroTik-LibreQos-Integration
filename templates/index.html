@@ -1,0 +1,1823 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LibreQoS MikroTik — Dashboard</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/theme/dracula.css" rel="stylesheet">
+<style>
+/* ── Base ── */
+:root {
+  --bg:      #0d1117;
+  --surface: #161b27;
+  --card:    #1a2035;
+  --border:  #2a3350;
+  --muted:   #64748b;
+  --text:    #e2e8f0;
+  --blue:    #3b82f6;
+  --green:   #22c55e;
+  --yellow:  #f59e0b;
+  --purple:  #8b5cf6;
+  --red:     #ef4444;
+  --cyan:    #06b6d4;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; }
+
+/* ── Navbar ── */
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: .6rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+.brand  { font-weight: 700; font-size: 1rem; display: flex; align-items: center; gap: .5rem; color: var(--text); }
+.brand i { color: var(--blue); font-size: 1.2rem; }
+
+/* ── Tabs ── */
+.tab-nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 1.25rem; display: flex; gap: .25rem; }
+.tab-btn { background: none; border: none; color: var(--muted); padding: .75rem 1rem; font-size: .875rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; transition: all .2s; display: flex; align-items: center; gap: .4rem; }
+.tab-btn:hover  { color: var(--text); }
+.tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+/* ── Layout ── */
+.page { display: none; padding: 1.25rem; }
+.page.active { display: block; }
+
+/* ── Cards ── */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.card-hd { background: #1e2740; border-bottom: 1px solid var(--border); padding: .75rem 1rem; font-weight: 600; font-size: .875rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.card-bd { padding: 1rem; }
+.card-hd i { color: var(--blue); }
+
+/* ── Stat cards ── */
+.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
+@media(max-width:768px){ .stat-grid { grid-template-columns: repeat(2,1fr); } }
+.stat-card { background: linear-gradient(135deg, #1a2b4a, var(--card)); border: 1px solid #2563eb2a; border-radius: 12px; padding: 1rem 1.25rem; }
+.stat-val { font-size: 1.875rem; font-weight: 700; color: var(--blue); line-height: 1; }
+.stat-lbl { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: .3rem; }
+
+/* ── Charts ── */
+.charts-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 1rem; }
+@media(max-width:900px){ .charts-grid { grid-template-columns: 1fr; } }
+.chart-wrap { position: relative; height: 190px; }
+
+/* ── CPU bars ── */
+.cpu-bar-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: .75rem; }
+.cpu-bar-item { flex: 1; min-width: 28px; text-align: center; }
+.cpu-bar-item .lbl { font-size: 9px; color: var(--muted); }
+.cpu-bar-item .prog { height: 5px; background: #2d3748; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+.cpu-bar-item .fill { height: 100%; background: var(--blue); transition: width .35s; border-radius: 3px; }
+
+/* ── Badges ── */
+.src-badge { font-size: .7rem; padding: .15em .55em; border-radius: 20px; font-weight: 600; }
+.badge-pppoe       { background: #1d3fbb33; color: #60a5fa; border: 1px solid #3b82f633; }
+.badge-hotspot     { background: #14532d33; color: #4ade80; border: 1px solid #22c55e33; }
+.badge-dhcp        { background: #78350f33; color: #fbbf24; border: 1px solid #f59e0b33; }
+.badge-address_list{ background: #3b0764aa; color: #c4b5fd; border: 1px solid #8b5cf633; }
+
+/* ── Status ── */
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.dot-green  { background: var(--green); box-shadow: 0 0 6px #22c55e77; }
+.dot-red    { background: var(--red);   box-shadow: 0 0 6px #ef444477; }
+.dot-grey   { background: var(--muted); }
+
+/* ── Buttons ── */
+.btn-primary  { background: var(--blue); border: none; color: #fff; padding: .45rem 1rem; border-radius: 8px; font-size: .875rem; cursor: pointer; transition: background .15s; display: inline-flex; align-items: center; gap: .4rem; }
+.btn-primary:hover  { background: #2563eb; }
+.btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: .4rem .8rem; border-radius: 8px; font-size: .8rem; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: .35rem; }
+.btn-ghost:hover   { border-color: var(--blue); color: var(--text); }
+.btn-danger-ghost  { background: transparent; border: 1px solid #ef444433; color: var(--red); padding: .35rem .7rem; border-radius: 8px; font-size: .8rem; cursor: pointer; }
+.btn-danger-ghost:hover { background: #ef444411; }
+.btn-success-ghost { background: transparent; border: 1px solid #22c55e33; color: var(--green); padding: .4rem .9rem; border-radius: 8px; font-size: .8rem; cursor: pointer; }
+.btn-success-ghost:hover { background: #22c55e11; }
+.btn-icon { background: none; border: none; color: var(--muted); cursor: pointer; padding: .25rem; border-radius: 6px; transition: color .15s; }
+.btn-icon:hover { color: var(--text); }
+.btn-group-svc { display: flex; gap: .4rem; }
+
+/* ── Forms ── */
+.form-label { font-size: .78rem; color: var(--muted); font-weight: 500; margin-bottom: .35rem; display: block; }
+.form-input { background: #0d1117; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: .5rem .75rem; font-size: .875rem; width: 100%; transition: border-color .15s; }
+.form-input:focus { outline: none; border-color: var(--blue); }
+.form-input-group { display: flex; align-items: stretch; }
+.form-input-group .form-input { border-radius: 8px 0 0 8px; flex: 1; }
+.form-input-group .input-suffix { background: #0d1117; border: 1px solid var(--border); border-left: none; border-radius: 0 8px 8px 0; padding: 0 .75rem; color: var(--muted); font-size: .8rem; display: flex; align-items: center; white-space: nowrap; }
+.form-row { display: grid; gap: .75rem; }
+.form-row-2 { grid-template-columns: 1fr 1fr; }
+.form-row-3 { grid-template-columns: 1fr 1fr 1fr; }
+.form-row-4 { grid-template-columns: repeat(4,1fr); }
+@media(max-width:600px){ .form-row-2,.form-row-3,.form-row-4 { grid-template-columns: 1fr 1fr; } }
+
+/* ── Toggle ── */
+.toggle-wrap { display: flex; align-items: center; gap: .6rem; cursor: pointer; user-select: none; }
+.toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-track { position: absolute; inset: 0; background: #2d3748; border-radius: 11px; transition: background .2s; }
+.toggle input:checked + .toggle-track { background: var(--blue); }
+.toggle-thumb { position: absolute; width: 16px; height: 16px; background: white; border-radius: 50%; top: 3px; left: 3px; transition: transform .2s; box-shadow: 0 1px 3px #0005; }
+.toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
+
+/* ── Strategy selector ── */
+.strategy-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: .6rem; }
+@media(max-width:700px){ .strategy-grid { grid-template-columns: repeat(2,1fr); } }
+.strategy-card { border: 2px solid var(--border); border-radius: 10px; padding: .75rem; cursor: pointer; transition: all .15s; text-align: center; background: #0d1117; }
+.strategy-card:hover { border-color: #3b82f655; background: #1a2035; }
+.strategy-card.selected { border-color: var(--blue); background: #1d3fbb22; }
+.strategy-card i { font-size: 1.4rem; display: block; margin-bottom: .35rem; color: var(--muted); }
+.strategy-card.selected i { color: var(--blue); }
+.strategy-card .s-name { font-size: .78rem; font-weight: 700; color: var(--text); }
+.strategy-card .s-desc { font-size: .65rem; color: var(--muted); margin-top: .2rem; line-height: 1.3; }
+
+/* ── Router cards ── */
+.router-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 1rem; background: #131929; transition: border-color .2s; }
+.router-card:hover { border-color: #3b82f655; }
+.router-hd { background: #1a2240; padding: .8rem 1rem; display: flex; align-items: center; gap: .75rem; cursor: pointer; user-select: none; }
+.router-hd .router-num { background: var(--blue); color: #fff; width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: .75rem; font-weight: 700; flex-shrink: 0; }
+.router-hd .router-title { flex: 1; }
+.router-hd .router-name { font-weight: 600; font-size: .9rem; }
+.router-hd .router-addr { font-size: .75rem; color: var(--muted); }
+.router-body { padding: 1rem; display: none; border-top: 1px solid var(--border); }
+.router-body.open { display: block; }
+
+/* ── Source section ── */
+.source-section { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: .6rem; }
+.source-hd { padding: .6rem .85rem; display: flex; align-items: center; gap: .75rem; background: #0d1117; cursor: pointer; }
+.source-hd .src-icon { font-size: .95rem; }
+.source-hd .src-label { flex: 1; font-size: .85rem; font-weight: 600; }
+.source-body { padding: .75rem; background: #080d16; display: none; border-top: 1px solid var(--border); }
+.source-body.open { display: block; }
+
+/* ── Source colors ── */
+.src-pppoe  .source-hd { border-left: 3px solid var(--blue); }
+.src-hotspot .source-hd { border-left: 3px solid var(--green); }
+.src-dhcp   .source-hd { border-left: 3px solid var(--yellow); }
+.src-addrlist .source-hd { border-left: 3px solid var(--purple); }
+
+/* ── Devices table ── */
+.devices-wrap { overflow-x: auto; max-height: 580px; overflow-y: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+thead th { background: #1e2740; padding: .55rem .75rem; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; white-space: nowrap; }
+tbody td { padding: .5rem .75rem; border-bottom: 1px solid #1a2035; white-space: nowrap; }
+tbody tr:hover { background: #1a2240; }
+code { font-size: .8rem; color: #94a3b8; }
+
+/* ── Toolbar ── */
+.toolbar { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.search-input { background: #0d1117; border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: .4rem .75rem; font-size: .8rem; }
+.search-input:focus { outline: none; border-color: var(--blue); }
+
+/* ── CodeMirror ── */
+.CodeMirror { height: 500px; border-radius: 8px; font-size: 13px; }
+
+/* ── Toast ── */
+.toast-stack { position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9999; display: flex; flex-direction: column; gap: .5rem; }
+.toast-item { padding: .65rem 1rem; border-radius: 8px; font-size: .85rem; font-weight: 500; display: flex; align-items: center; gap: .6rem; animation: slideIn .25s ease; box-shadow: 0 4px 20px #0008; }
+.toast-ok   { background: #14532d; border: 1px solid #22c55e44; color: #4ade80; }
+.toast-err  { background: #450a0a; border: 1px solid #ef444444; color: #f87171; }
+@keyframes slideIn { from { opacity:0; transform: translateX(20px); } to { opacity:1; transform: none; } }
+
+/* ── Service cards ── */
+.svc-card { background: #0d1117; border: 1px solid var(--border); border-radius: 12px; padding: 1rem; transition: border-color .2s; }
+.svc-card:hover { border-color: #3b82f655; }
+.svc-card.active   { border-left: 3px solid var(--green); }
+.svc-card.inactive { border-left: 3px solid var(--muted); }
+.svc-card.failed   { border-left: 3px solid var(--red); }
+.svc-name { font-weight: 700; font-size: .95rem; display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; }
+.svc-meta { font-size: .72rem; color: var(--muted); line-height: 1.7; margin-bottom: .8rem; }
+.svc-actions { display: flex; gap: .45rem; flex-wrap: wrap; }
+.btn-svc-start   { background: #14532d22; border: 1px solid #22c55e33; color: var(--green); padding: .3rem .7rem; border-radius: 7px; font-size: .78rem; cursor: pointer; transition: background .15s; }
+.btn-svc-start:hover   { background: #14532d44; }
+.btn-svc-restart { background: #78350f22; border: 1px solid #f59e0b33; color: var(--yellow); padding: .3rem .7rem; border-radius: 7px; font-size: .78rem; cursor: pointer; transition: background .15s; }
+.btn-svc-restart:hover { background: #78350f44; }
+.btn-svc-stop    { background: #450a0a22; border: 1px solid #ef444433; color: var(--red); padding: .3rem .7rem; border-radius: 7px; font-size: .78rem; cursor: pointer; transition: background .15s; }
+.btn-svc-stop:hover    { background: #450a0a44; }
+.btn-svc-logs    { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: .3rem .7rem; border-radius: 7px; font-size: .78rem; cursor: pointer; transition: all .15s; margin-left: auto; }
+.btn-svc-logs:hover    { border-color: var(--blue); color: var(--text); }
+
+/* ── Troubleshooting ── */
+.trouble-step { display: flex; gap: .85rem; align-items: flex-start; }
+.trouble-step-num { width: 26px; height: 26px; border-radius: 50%; background: #1e274022; border: 1px solid var(--border); color: var(--muted); font-size: .75rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: .1rem; }
+
+/* ── Interface cards ── */
+.iface-card { background: #0d1117; border: 1px solid var(--border); border-radius: 10px; padding: .85rem 1rem; transition: border-color .2s; }
+.iface-card.up   { border-left: 3px solid var(--green); }
+.iface-card.down { border-left: 3px solid var(--muted); opacity: .65; }
+.iface-name { font-weight: 700; font-size: .9rem; margin-bottom: .3rem; display: flex; align-items: center; gap: .5rem; }
+.iface-meta { font-size: .72rem; color: var(--muted); line-height: 1.6; }
+.iface-speed { font-size: .8rem; font-weight: 600; color: var(--cyan); }
+.iface-addr { font-size: .72rem; color: #60a5fa; font-family: monospace; }
+
+/* ── Netplan option cards ── */
+@media(max-width:640px){ #netplan-options { grid-template-columns: 1fr !important; } }
+.netplan-option-card { border: 2px solid var(--border); border-radius: 14px; cursor: pointer; transition: all .2s; position: relative; background: #0d1117; }
+.netplan-option-card:hover { border-color: #3b82f655; background: #131929; }
+.netplan-option-card.selected { border-color: var(--blue); background: #1a2b4a22; }
+.netplan-option-card.selected .netplan-option-inner { opacity: 1; }
+.netplan-option-inner { padding: 1.1rem 1.1rem 1rem; }
+.netplan-option-check { position: absolute; top: .75rem; right: .75rem; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); background: transparent; display: flex; align-items: center; justify-content: center; font-size: .7rem; color: #fff; transition: all .2s; }
+.netplan-option-card.selected .netplan-option-check { background: var(--blue); border-color: var(--blue); }
+.netplan-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0; }
+.netplan-pill { font-size: .68rem; font-weight: 600; padding: .2em .6em; border-radius: 20px; }
+.cmd-line { display: flex; align-items: center; gap: .75rem; background: #080d16; border: 1px solid var(--border); border-radius: 8px; padding: .55rem .85rem; }
+.cmd-line code { flex: 1; font-size: .82rem; color: #94a3b8; font-family: 'Consolas','Courier New',monospace; }
+.btn-copy { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: .2rem .5rem; cursor: pointer; font-size: .75rem; transition: all .15s; }
+.btn-copy:hover { border-color: var(--blue); color: var(--text); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ── Topbar ── -->
+<div class="topbar">
+  <div class="brand"><i class="bi bi-router-fill"></i> LibreQoS MikroTik</div>
+  <div style="display:flex;align-items:center;gap:1rem;">
+    <div style="display:flex;align-items:center;gap:.5rem;font-size:.8rem;">
+      <span class="dot dot-grey" id="svc-dot"></span>
+      <span id="svc-label" style="color:var(--muted)">checking…</span>
+    </div>
+    <div class="btn-group-svc">
+      <button class="btn-ghost" onclick="serviceAction('start')"   title="Start">  <i class="bi bi-play-fill"      style="color:var(--green)"></i></button>
+      <button class="btn-ghost" onclick="serviceAction('restart')" title="Restart"><i class="bi bi-arrow-clockwise" style="color:var(--yellow)"></i></button>
+      <button class="btn-ghost" onclick="serviceAction('stop')"    title="Stop">   <i class="bi bi-stop-fill"       style="color:var(--red)"></i></button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Tab nav ── -->
+<div class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab('dashboard')"><i class="bi bi-speedometer2"></i>Dashboard</button>
+  <button class="tab-btn"        onclick="switchTab('config')">   <i class="bi bi-sliders"></i>Settings</button>
+  <button class="tab-btn"        onclick="switchTab('services')"> <i class="bi bi-grid-3x2-gap-fill"></i>Services</button>
+  <button class="tab-btn"        onclick="switchTab('network')">  <i class="bi bi-hdd-network"></i>Network</button>
+  <button class="tab-btn"        onclick="switchTab('mgmt')">     <i class="bi bi-ethernet"></i>Management Port</button>
+  <button class="tab-btn"        onclick="switchTab('yaml')">     <i class="bi bi-file-code"></i>Files</button>
+  <button class="tab-btn"        onclick="switchTab('devices')">  <i class="bi bi-table"></i>Devices</button>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     DASHBOARD
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page active" id="page-dashboard">
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-val" id="stat-cpu">—</div><div class="stat-lbl">CPU Average</div></div>
+    <div class="stat-card"><div class="stat-val" id="stat-mem">—</div><div class="stat-lbl">Memory Used</div></div>
+    <div class="stat-card"><div class="stat-val" id="stat-devices">—</div><div class="stat-lbl">Total Devices</div></div>
+    <div class="stat-card"><div class="stat-val" id="stat-routers">—</div><div class="stat-lbl">Routers</div></div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-cpu-fill"></i> CPU Usage</span><span style="font-size:.75rem;color:var(--muted)" id="cpu-cores-label"></span></div>
+      <div class="card-bd">
+        <div class="chart-wrap"><canvas id="cpu-chart"></canvas></div>
+        <div class="cpu-bar-grid" id="cpu-bars"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><i class="bi bi-memory" style="color:var(--cyan)"></i> Memory</div>
+      <div class="card-bd">
+        <div class="chart-wrap"><canvas id="mem-chart"></canvas></div>
+        <div style="display:flex;justify-content:space-between;margin-top:.75rem;font-size:.78rem;color:var(--muted)">
+          <span>Used <strong id="mem-used-label" style="color:var(--cyan)">—</strong></span>
+          <span>Free <strong id="mem-free-label" style="color:var(--green)">—</strong></span>
+          <span>Total <strong id="mem-total-label">—</strong></span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><i class="bi bi-pie-chart-fill" style="color:var(--yellow)"></i> Devices by Source</div>
+      <div class="card-bd"><div class="chart-wrap"><canvas id="src-chart"></canvas></div></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><i class="bi bi-bar-chart-fill" style="color:var(--green)"></i> Top 10 by Bandwidth</div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>Device</th><th>Source</th><th style="text-align:right">DL Mbps</th><th style="text-align:right">UL Mbps</th></tr></thead>
+          <tbody id="top-bw-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SETTINGS
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-config">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Settings</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Configure routers and integration behavior</p>
+    </div>
+    <div style="display:flex;gap:.6rem;align-items:center">
+      <button class="btn-ghost" onclick="toggleRawConfig()" id="btn-raw-toggle"><i class="bi bi-code-slash"></i> Raw JSON</button>
+      <button class="btn-primary" onclick="saveConfig()"><i class="bi bi-floppy-fill"></i> Save Changes</button>
+    </div>
+  </div>
+
+  <!-- Raw JSON panel (hidden by default) -->
+  <div id="raw-config-panel" style="display:none;margin-bottom:1rem;">
+    <div class="card">
+      <div class="card-hd"><i class="bi bi-code-slash"></i> Raw JSON <span style="font-size:.72rem;color:var(--muted)" id="config-path"></span></div>
+      <div class="card-bd" style="padding:.5rem"><textarea id="config-editor"></textarea></div>
+    </div>
+  </div>
+
+  <!-- Form panel -->
+  <div id="form-config-panel">
+
+    <!-- Global settings -->
+    <div class="card" style="margin-bottom:1rem">
+      <div class="card-hd"><i class="bi bi-toggles"></i> Global Settings</div>
+      <div class="card-bd">
+        <div style="margin-bottom:1.25rem">
+          <div class="form-label" style="margin-bottom:.6rem">Topology Strategy</div>
+          <div class="strategy-grid" id="strategy-grid">
+            <div class="strategy-card" data-val="cpu" onclick="selectStrategy('cpu')">
+              <i class="bi bi-cpu-fill"></i>
+              <div class="s-name">CPU</div>
+              <div class="s-desc">Greedy bin-pack across CPU cores</div>
+            </div>
+            <div class="strategy-card" data-val="flat" onclick="selectStrategy('flat')">
+              <i class="bi bi-dash-square"></i>
+              <div class="s-name">Flat</div>
+              <div class="s-desc">No hierarchy, empty network.json</div>
+            </div>
+            <div class="strategy-card" data-val="ap_only" onclick="selectStrategy('ap_only')">
+              <i class="bi bi-router"></i>
+              <div class="s-name">AP Only</div>
+              <div class="s-desc">Group devices under router</div>
+            </div>
+            <div class="strategy-card" data-val="ap_site" onclick="selectStrategy('ap_site')">
+              <i class="bi bi-diagram-3"></i>
+              <div class="s-name">AP Site</div>
+              <div class="s-desc">Site → router hierarchy</div>
+            </div>
+            <div class="strategy-card" data-val="full" onclick="selectStrategy('full')">
+              <i class="bi bi-share-fill"></i>
+              <div class="s-name">Full</div>
+              <div class="s-desc">Full path & backhaul shaping</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:2rem;flex-wrap:wrap">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="toggle-queues"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+            <span style="font-size:.875rem">Enable Queues</span>
+          </label>
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="toggle-promote"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+            <span style="font-size:.875rem">Promote to Root <span style="font-size:.72rem;color:var(--muted)">(full strategy)</span></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Routers -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
+      <div style="font-weight:600;font-size:.95rem">Routers <span id="router-count-badge" style="background:#1d3fbb33;color:#60a5fa;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.4rem">0</span></div>
+      <button class="btn-ghost" onclick="addRouter()"><i class="bi bi-plus-lg"></i> Add Router</button>
+    </div>
+    <div id="routers-list"></div>
+
+  </div><!-- /form-config-panel -->
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     SERVICES
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-services">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Services</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Monitor and control LibreQoS system services</p>
+    </div>
+    <button class="btn-ghost" onclick="loadServices()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+  </div>
+
+  <!-- Service cards grid -->
+  <div id="svc-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:.85rem;margin-bottom:1.5rem"></div>
+
+  <!-- Log drawer -->
+  <div id="log-drawer" style="display:none">
+    <div class="card">
+      <div class="card-hd">
+        <span><i class="bi bi-terminal-fill" style="color:var(--green)"></i> <span id="log-drawer-title">Logs</span></span>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn-ghost" onclick="refreshDrawerLogs()" title="Refresh logs"><i class="bi bi-arrow-clockwise"></i></button>
+          <button class="btn-ghost" onclick="closeLogDrawer()"><i class="bi bi-x-lg"></i></button>
+        </div>
+      </div>
+      <div class="card-bd" style="padding:.5rem">
+        <pre id="log-content" style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.75rem;color:#94a3b8;max-height:400px;overflow-y:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.5"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Troubleshooting ── -->
+  <div style="margin-top:.5rem">
+    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.65rem">
+      <i class="bi bi-tools" style="color:var(--yellow)"></i> Troubleshooting
+    </div>
+
+    <!-- Password not working -->
+    <div class="card" style="border-color:#f59e0b22">
+      <div class="card-hd" style="background:#1a1500">
+        <span style="display:flex;align-items:center;gap:.6rem">
+          <i class="bi bi-shield-exclamation" style="color:var(--yellow);font-size:1rem"></i>
+          <span>User Password Not Working</span>
+        </span>
+        <button class="btn-ghost" onclick="toggleTrouble()" id="trouble-toggle" style="font-size:.75rem">
+          <i class="bi bi-chevron-down"></i> Show
+        </button>
+      </div>
+      <div id="trouble-body" style="display:none">
+        <div class="card-bd" style="padding:1.1rem">
+
+          <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 1rem">
+            Current builds automatically migrate older auth files and redirect
+            <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/login.html</code>
+            to
+            <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/first-run.html</code>
+            when no users exist. If the correct username/password still fails, try restarting <strong>lqosd</strong> first.
+          </p>
+
+          <!-- Step 1 -->
+          <div class="trouble-step">
+            <div class="trouble-step-num">1</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Restart lqosd</div>
+              <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem">This is the first thing to try — it re-reads the auth files and often resolves login failures.</div>
+              <button class="btn-primary" onclick="restartLqosd()" id="btn-restart-lqosd">
+                <i class="bi bi-arrow-clockwise"></i> Restart lqosd Now
+              </button>
+              <span id="lqosd-restart-result" style="font-size:.78rem;margin-left:.75rem"></span>
+            </div>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="trouble-step" style="margin-top:1rem">
+            <div class="trouble-step-num" style="background:#ef444422;color:var(--red);border-color:#ef444433">2</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Reset user database <span style="font-size:.72rem;font-weight:400;color:var(--red)">(destructive)</span></div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.6;margin-bottom:.5rem">
+                Only do this if the correct credentials still fail after restarting lqosd, or if
+                <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code>
+                is corrupt. This will <strong style="color:#f87171">delete all users</strong> — you will need to create a new admin account via first-run setup.
+              </div>
+
+              <!-- lqusers.toml status -->
+              <div id="lqusers-status" style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem">
+                <i class="bi bi-hourglass-split" style="color:var(--muted)"></i> Checking…
+              </div>
+
+              <button class="btn-danger-ghost" onclick="confirmResetUsers()" id="btn-reset-users" style="padding:.45rem 1rem">
+                <i class="bi bi-trash3"></i> Remove lqusers.toml &amp; Restart lqosd
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 3 info -->
+          <div class="trouble-step" style="margin-top:1rem">
+            <div class="trouble-step-num" style="background:#1d3fbb22;color:var(--blue);border-color:#3b82f633">3</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Complete first-run setup</div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
+                After removing <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code> and restarting lqosd,
+                open <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">BOX_IP:9123/login.html</code> — the WebUI will automatically redirect to first-run setup.
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     NETWORK
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-network">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Network Setup</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Configure Netplan for LibreQoS shaping interfaces</p>
+    </div>
+    <button class="btn-ghost" onclick="loadInterfaces()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+  </div>
+
+  <!-- Interface cards -->
+  <div style="margin-bottom:1.25rem">
+    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.65rem">System Interfaces</div>
+    <div id="iface-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.75rem"></div>
+  </div>
+
+  <!-- Bridge mode selector -->
+  <div style="margin-bottom:1rem">
+    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.65rem">Bridge Mode <span style="font-size:.7rem;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0">— select one</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem" id="netplan-options">
+
+      <!-- Option A -->
+      <div class="netplan-option-card" id="opt-card-a" onclick="selectNetplan('a')">
+        <div class="netplan-option-inner">
+          <div class="netplan-option-check" id="opt-check-a"><i class="bi bi-check-lg"></i></div>
+          <div style="display:flex;align-items:flex-start;gap:.85rem">
+            <div class="netplan-icon" style="background:#1d3fbb22;color:var(--blue)"><i class="bi bi-diagram-2-fill"></i></div>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:.95rem;margin-bottom:.25rem">Option A — Linux Bridge</div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.5;margin-bottom:.7rem">
+                Standard kernel bridge <code style="font-size:.75rem;color:#94a3b8">br0</code> combining both shaping interfaces. Recommended for most deployments.
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+                <span class="netplan-pill" style="color:#60a5fa;background:#1d3fbb22">Recommended</span>
+                <span class="netplan-pill" style="color:#4ade80;background:#14532d22">Kernel bridge</span>
+                <span class="netplan-pill" style="color:#94a3b8;background:#1e273822">br0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Option B -->
+      <div class="netplan-option-card" id="opt-card-b" onclick="selectNetplan('b')">
+        <div class="netplan-option-inner">
+          <div class="netplan-option-check" id="opt-check-b"><i class="bi bi-check-lg"></i></div>
+          <div style="display:flex;align-items:flex-start;gap:.85rem">
+            <div class="netplan-icon" style="background:#3b076422;color:#a78bfa"><i class="bi bi-lightning-charge-fill"></i></div>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:.95rem;margin-bottom:.25rem">Option B — Bifrost XDP Bridge</div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.5;margin-bottom:.7rem">
+                High-performance XDP-based bridge. No <code style="font-size:.75rem;color:#94a3b8">br0</code> — interfaces run independently without IP or DHCP.
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+                <span class="netplan-pill" style="color:#a78bfa;background:#3b076422">XDP / eBPF</span>
+                <span class="netplan-pill" style="color:#fbbf24;background:#78350f22">High performance</span>
+                <span class="netplan-pill" style="color:#94a3b8;background:#1e273822">No bridge</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interface selectors + apply -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-ethernet"></i> Shaping Interface Assignment</div>
+    <div class="card-bd">
+      <p style="font-size:.78rem;color:var(--muted);margin:0 0 1rem">Select the two interfaces LibreQoS will use for traffic shaping. The dropdowns are populated from interfaces detected on this system.</p>
+      <div style="display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:1rem">
+        <div>
+          <label class="form-label">Interface 1</label>
+          <select class="form-input" id="iface1" style="width:160px"></select>
+        </div>
+        <div>
+          <label class="form-label">Interface 2</label>
+          <select class="form-input" id="iface2" style="width:160px"></select>
+        </div>
+        <button class="btn-primary" onclick="applyNetplan()" id="btn-apply-netplan" style="margin-bottom:1px">
+          <i class="bi bi-floppy-fill"></i> Save &amp; Apply
+        </button>
+      </div>
+      <!-- Apply log -->
+      <div id="netplan-log" style="display:none;background:#080d16;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;color:#94a3b8;font-family:monospace;white-space:pre-wrap"></div>
+    </div>
+  </div>
+
+  <!-- Config preview -->
+  <div class="card">
+    <div class="card-hd"><i class="bi bi-file-earmark-code"></i> Generated libreqos.yaml preview</div>
+    <div class="card-bd" style="padding:.5rem"><textarea id="netplan-preview-editor"></textarea></div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     MANAGEMENT PORT
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-mgmt">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Management Port</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Configure the management interface IP via <code style="font-size:.75rem">50-cloud-init.yaml</code></p>
+    </div>
+    <button class="btn-ghost" onclick="loadMgmt()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+  </div>
+
+  <!-- Current status card -->
+  <div class="card" style="margin-bottom:1.25rem" id="mgmt-status-card">
+    <div class="card-hd"><i class="bi bi-info-circle-fill" style="color:var(--cyan)"></i> Current Status</div>
+    <div class="card-bd">
+      <div id="mgmt-status-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem">
+        <div style="color:var(--muted);font-size:.85rem">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Interface selector -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-ethernet"></i> Management Interface</div>
+    <div class="card-bd">
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:.75rem">Select the interface used for SSH, web access, and management traffic.</div>
+      <div>
+        <label class="form-label">Interface</label>
+        <select class="form-input" id="mgmt-iface" style="max-width:220px" onchange="onMgmtIfaceChange()"></select>
+      </div>
+    </div>
+  </div>
+
+  <!-- IP mode selector -->
+  <div style="margin-bottom:1rem">
+    <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.65rem">IP Configuration Mode</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+
+      <!-- DHCP -->
+      <div class="netplan-option-card" id="mgmt-card-dhcp" onclick="selectMgmtMode('dhcp')">
+        <div class="netplan-option-inner">
+          <div class="netplan-option-check" id="mgmt-check-dhcp"><i class="bi bi-check-lg"></i></div>
+          <div style="display:flex;align-items:flex-start;gap:.85rem">
+            <div class="netplan-icon" style="background:#065f4622;color:#34d399"><i class="bi bi-arrow-repeat"></i></div>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:.95rem;margin-bottom:.25rem">DHCP</div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.5;margin-bottom:.7rem">
+                IP address assigned automatically by your DHCP server. Easiest option but IP may change on reboot.
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+                <span class="netplan-pill" style="color:#34d399;background:#065f4622">Auto IP</span>
+                <span class="netplan-pill" style="color:#94a3b8;background:#1e273822">No config needed</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Static -->
+      <div class="netplan-option-card" id="mgmt-card-static" onclick="selectMgmtMode('static')">
+        <div class="netplan-option-inner">
+          <div class="netplan-option-check" id="mgmt-check-static"><i class="bi bi-check-lg"></i></div>
+          <div style="display:flex;align-items:flex-start;gap:.85rem">
+            <div class="netplan-icon" style="background:#1d3fbb22;color:var(--blue)"><i class="bi bi-pin-map-fill"></i></div>
+            <div style="flex:1">
+              <div style="font-weight:700;font-size:.95rem;margin-bottom:.25rem">Static IP</div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.5;margin-bottom:.7rem">
+                Fixed IP address that never changes. Recommended for servers so the management address stays predictable.
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:.4rem">
+                <span class="netplan-pill" style="color:#60a5fa;background:#1d3fbb22">Recommended</span>
+                <span class="netplan-pill" style="color:#94a3b8;background:#1e273822">Fixed address</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Static IP fields -->
+  <div id="mgmt-static-fields" style="display:none;margin-bottom:1rem">
+    <div class="card">
+      <div class="card-hd"><i class="bi bi-pencil-square"></i> Static IP Configuration</div>
+      <div class="card-bd">
+        <div class="form-row form-row-2" style="margin-bottom:.85rem">
+          <div>
+            <label class="form-label">IP Address</label>
+            <div class="form-input-group">
+              <input class="form-input" id="mgmt-ip" placeholder="192.168.1.100" oninput="updateMgmtPreview()">
+              <span class="input-suffix">/</span>
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Prefix Length <span style="color:var(--muted);font-weight:400">(subnet)</span></label>
+            <select class="form-input" id="mgmt-prefix" onchange="updateMgmtPreview()">
+              <option value="8">/8 — 255.0.0.0</option>
+              <option value="16">/16 — 255.255.0.0</option>
+              <option value="24" selected>/24 — 255.255.255.0</option>
+              <option value="25">/25 — 255.255.255.128</option>
+              <option value="26">/26 — 255.255.255.192</option>
+              <option value="27">/27 — 255.255.255.224</option>
+              <option value="28">/28 — 255.255.255.240</option>
+              <option value="29">/29 — 255.255.255.248</option>
+              <option value="30">/30 — 255.255.255.252</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row form-row-3">
+          <div>
+            <label class="form-label">Default Gateway</label>
+            <input class="form-input" id="mgmt-gw" placeholder="192.168.1.1" oninput="updateMgmtPreview()">
+          </div>
+          <div>
+            <label class="form-label">DNS Server 1</label>
+            <input class="form-input" id="mgmt-dns1" placeholder="8.8.8.8" value="8.8.8.8" oninput="updateMgmtPreview()">
+          </div>
+          <div>
+            <label class="form-label">DNS Server 2</label>
+            <input class="form-input" id="mgmt-dns2" placeholder="8.8.4.4" value="8.8.4.4" oninput="updateMgmtPreview()">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Preview + apply -->
+  <div class="card">
+    <div class="card-hd">
+      <span><i class="bi bi-file-earmark-code"></i> Generated 50-cloud-init.yaml</span>
+      <button class="btn-primary" onclick="applyMgmt()" id="btn-apply-mgmt">
+        <i class="bi bi-floppy-fill"></i> Save &amp; Apply
+      </button>
+    </div>
+    <div class="card-bd" style="padding:.5rem">
+      <textarea id="mgmt-preview-editor"></textarea>
+    </div>
+    <div id="mgmt-log" style="display:none;margin:.25rem .5rem .5rem;background:#080d16;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;font-family:monospace;white-space:pre-wrap"></div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     FILES (YAML / CONF)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-yaml">
+  <div class="card">
+    <div class="card-hd">
+      <div style="display:flex;flex-wrap:wrap;gap:.5rem" id="yaml-switcher">
+        <button class="btn-primary" onclick="loadYaml('libreqos')">libreqos.yaml</button>
+        <button class="btn-ghost"   onclick="loadYaml('lqos')">lqos.conf</button>
+        <button class="btn-ghost"   onclick="loadYaml('network')">50-cloud-init.yaml</button>
+        <button class="btn-ghost"   onclick="loadYaml('config_json')">config.json</button>
+        <button class="btn-ghost"   onclick="loadYaml('network_json')">network.json</button>
+        <button class="btn-ghost"   onclick="loadYaml('updatecsv')">updatecsv.py</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:.75rem">
+        <span style="font-size:.72rem;color:var(--muted)" id="yaml-path"></span>
+        <button class="btn-primary" onclick="saveYaml()"><i class="bi bi-floppy-fill"></i> Save</button>
+      </div>
+    </div>
+    <div class="card-bd" style="padding:.5rem"><textarea id="yaml-editor"></textarea></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     DEVICES
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-devices">
+  <div class="card">
+    <div class="card-hd">
+      <span><i class="bi bi-table"></i> Devices <span id="devices-count" style="background:#2d3748;color:#94a3b8;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.3rem">0</span></span>
+      <div class="toolbar">
+        <input class="search-input" id="device-search" placeholder="Search…" oninput="filterDevices()">
+        <select class="search-input" id="device-source-filter" onchange="filterDevices()">
+          <option value="">All sources</option>
+          <option value="pppoe">PPPoE</option>
+          <option value="hotspot">Hotspot</option>
+          <option value="dhcp">DHCP / IPoE</option>
+          <option value="address_list">Address List</option>
+        </select>
+        <button class="btn-ghost" onclick="loadDevices()"><i class="bi bi-arrow-clockwise"></i></button>
+      </div>
+    </div>
+    <div class="devices-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th><th>IPv4</th><th>MAC</th>
+            <th>Source</th><th>Router</th><th>Parent</th>
+            <th style="text-align:right">DL Max</th><th style="text-align:right">UL Max</th>
+            <th>Comment</th><th style="text-align:center">Static</th>
+          </tr>
+        </thead>
+        <tbody id="devices-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toasts ── -->
+<div class="toast-stack" id="toast-stack"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/yaml/yaml.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/python/python.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/matchbrackets.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/addon/edit/closebrackets.js"></script>
+<script>
+'use strict';
+
+// ── Tab routing ───────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b,i) => {
+    const names = ['dashboard','config','services','network','mgmt','yaml','devices'];
+    b.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  if (name === 'config')   renderConfig();
+  if (name === 'network')  loadInterfaces();
+  if (name === 'mgmt')     loadMgmt();
+  if (name === 'services') loadServices();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function toast(msg, ok=true) {
+  const stack = document.getElementById('toast-stack');
+  const el = document.createElement('div');
+  el.className = 'toast-item ' + (ok ? 'toast-ok' : 'toast-err');
+  el.innerHTML = `<i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'}"></i> ${msg}`;
+  stack.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function fmtBytes(b) {
+  if (b >= 1073741824) return (b/1073741824).toFixed(1)+' GB';
+  if (b >= 1048576)    return (b/1048576).toFixed(1)+' MB';
+  return (b/1024).toFixed(0)+' KB';
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────
+const MAX_PTS = 60;
+function makeChart(id, color) {
+  return new Chart(document.getElementById(id), {
+    type: 'line',
+    data: { labels: Array(MAX_PTS).fill(''), datasets: [{
+      data: Array(MAX_PTS).fill(null),
+      borderColor: color, backgroundColor: color+'1a',
+      borderWidth: 2, pointRadius: 0, fill: true, tension: 0.4
+    }]},
+    options: {
+      animation: false, responsive: true, maintainAspectRatio: false,
+      scales: {
+        x: { display: false },
+        y: { min:0, max:100, grid:{color:'#2a334855'},
+             ticks:{color:'#64748b', callback: v => v+'%'} }
+      },
+      plugins: { legend: { display: false } }
+    }
+  });
+}
+const cpuChart = makeChart('cpu-chart','#3b82f6');
+const memChart = makeChart('mem-chart','#06b6d4');
+function pushPt(chart, v) {
+  chart.data.datasets[0].data.push(v);
+  if (chart.data.datasets[0].data.length > MAX_PTS) chart.data.datasets[0].data.shift();
+  chart.update('none');
+}
+const srcChart = new Chart(document.getElementById('src-chart'), {
+  type: 'doughnut',
+  data: {
+    labels: ['PPPoE','Hotspot','DHCP / IPoE','Address List'],
+    datasets: [{ data:[0,0,0,0], backgroundColor:['#3b82f6','#22c55e','#f59e0b','#8b5cf6'], borderWidth:0 }]
+  },
+  options: { responsive:true, maintainAspectRatio:false,
+    plugins: { legend:{ position:'right', labels:{color:'#94a3b8',boxWidth:12,font:{size:11}} } }
+  }
+});
+
+// ── CPU bars ──────────────────────────────────────────────────────────────
+let barEls = [];
+function buildBars(n) {
+  const wrap = document.getElementById('cpu-bars');
+  wrap.innerHTML = '';
+  barEls = [];
+  for (let i=0;i<n;i++) {
+    const d = document.createElement('div');
+    d.className = 'cpu-bar-item';
+    d.innerHTML = `<div class="lbl">C${i}</div><div class="prog"><div class="fill" style="width:0%"></div></div>`;
+    wrap.appendChild(d);
+    barEls.push(d.querySelector('.fill'));
+  }
+  document.getElementById('cpu-cores-label').textContent = n + ' cores';
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────
+const es = new EventSource('/api/metrics/stream');
+es.onmessage = e => {
+  const d = JSON.parse(e.data);
+  if (d.error) return;
+  pushPt(cpuChart, d.cpu_avg);
+  document.getElementById('stat-cpu').textContent = d.cpu_avg.toFixed(1)+'%';
+  if (barEls.length !== d.cpu_per.length) buildBars(d.cpu_per.length);
+  d.cpu_per.forEach((v,i) => { if(barEls[i]) barEls[i].style.width = v+'%'; });
+  pushPt(memChart, d.mem_percent);
+  document.getElementById('stat-mem').textContent = fmtBytes(d.mem_used);
+  document.getElementById('mem-used-label').textContent  = fmtBytes(d.mem_used);
+  document.getElementById('mem-free-label').textContent  = fmtBytes(d.mem_total - d.mem_used);
+  document.getElementById('mem-total-label').textContent = fmtBytes(d.mem_total);
+};
+
+// ── Service ───────────────────────────────────────────────────────────────
+async function checkService() {
+  const r = await fetch('/api/service/status');
+  const d = await r.json();
+  const dot = document.getElementById('svc-dot');
+  const lbl = document.getElementById('svc-label');
+  dot.className = 'dot ' + (d.active==='active' ? 'dot-green' : d.active==='inactive' ? 'dot-red' : 'dot-grey');
+  lbl.textContent = 'updatecsv: ' + (d.active || 'unknown');
+}
+async function serviceAction(a) {
+  const r = await fetch(`/api/service/${a}`, {method:'POST'});
+  const d = await r.json();
+  toast(d.ok ? `Service ${a}ed` : d.error, d.ok);
+  setTimeout(checkService, 1500);
+}
+checkService();
+setInterval(checkService, 10000);
+
+// ── Devices ───────────────────────────────────────────────────────────────
+let allDevices = [];
+async function loadDevices() {
+  const r = await fetch('/api/devices');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  allDevices = d.rows;
+  document.getElementById('devices-count').textContent = d.count;
+  document.getElementById('stat-devices').textContent  = d.count;
+  const counts = {pppoe:0,hotspot:0,dhcp:0,address_list:0};
+  allDevices.forEach(r => { if(counts[r.source]!==undefined) counts[r.source]++; });
+  srcChart.data.datasets[0].data = [counts.pppoe,counts.hotspot,counts.dhcp,counts.address_list];
+  srcChart.update();
+  const top = [...allDevices].sort((a,b)=>b.download_max_mbps-a.download_max_mbps).slice(0,10);
+  document.getElementById('top-bw-body').innerHTML = top.map(r=>`
+    <tr>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${r.code}</td>
+      <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
+      <td style="text-align:right">${r.download_max_mbps}</td>
+      <td style="text-align:right">${r.upload_max_mbps}</td>
+    </tr>`).join('');
+  filterDevices();
+}
+function filterDevices() {
+  const q   = document.getElementById('device-search').value.toLowerCase();
+  const src = document.getElementById('device-source-filter').value;
+  const rows = allDevices.filter(r =>
+    (!src || r.source===src) && (!q || JSON.stringify(r).toLowerCase().includes(q)));
+  document.getElementById('devices-body').innerHTML = rows.map(r=>`
+    <tr>
+      <td>${r.code}</td>
+      <td><code>${r.ipv4||''}</code></td>
+      <td><code>${r.mac||''}</code></td>
+      <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
+      <td>${r.router}</td>
+      <td>${r.parent_node}</td>
+      <td style="text-align:right">${r.download_max_mbps}</td>
+      <td style="text-align:right">${r.upload_max_mbps}</td>
+      <td style="color:var(--muted)">${r.comment}</td>
+      <td style="text-align:center">${r.is_static?'<i class="bi bi-lock-fill" style="color:#f59e0b"></i>':''}</td>
+    </tr>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// CONFIG / SETTINGS
+// ══════════════════════════════════════════════════════════════════════════
+let configData = null;
+let rawMode = false;
+
+const configCM = CodeMirror.fromTextArea(document.getElementById('config-editor'), {
+  mode:'application/json', theme:'dracula', lineNumbers:true,
+  matchBrackets:true, autoCloseBrackets:true, indentUnit:4
+});
+
+async function loadConfig() {
+  const r = await fetch('/api/config');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  configData = d.content;
+  document.getElementById('config-path').textContent = d.path;
+  document.getElementById('stat-routers').textContent = (d.content.routers||[]).length;
+  configCM.setValue(JSON.stringify(d.content, null, 4));
+}
+
+function toggleRawConfig() {
+  rawMode = !rawMode;
+  document.getElementById('raw-config-panel').style.display  = rawMode ? 'block' : 'none';
+  document.getElementById('form-config-panel').style.display = rawMode ? 'none'  : 'block';
+  document.getElementById('btn-raw-toggle').innerHTML =
+    rawMode ? '<i class="bi bi-ui-checks"></i> Form View' : '<i class="bi bi-code-slash"></i> Raw JSON';
+  if (rawMode) configCM.setValue(JSON.stringify(configData, null, 4));
+  else syncFromRaw();
+}
+
+function syncFromRaw() {
+  try { configData = JSON.parse(configCM.getValue()); renderConfig(); }
+  catch(e) { toast('Invalid JSON: '+e.message, false); }
+}
+
+// ── Strategy ──────────────────────────────────────────────────────────────
+function selectStrategy(val) {
+  document.querySelectorAll('.strategy-card').forEach(c =>
+    c.classList.toggle('selected', c.dataset.val === val));
+  if (configData) configData.strategy = val;
+}
+
+// ── Render whole config form ───────────────────────────────────────────────
+function renderConfig() {
+  if (!configData) return;
+  // strategy
+  selectStrategy(configData.strategy || 'cpu');
+  // toggles
+  document.getElementById('toggle-queues').checked  = !!configData.queues;
+  document.getElementById('toggle-promote').checked = !!configData.promote_to_root;
+  // routers
+  const list = document.getElementById('routers-list');
+  list.innerHTML = '';
+  (configData.routers || []).forEach((rt, idx) => list.appendChild(buildRouterCard(rt, idx)));
+  document.getElementById('router-count-badge').textContent = (configData.routers||[]).length;
+}
+
+// ── Router card builder ────────────────────────────────────────────────────
+function buildRouterCard(rt, idx) {
+  const wrap = document.createElement('div');
+  wrap.className = 'router-card';
+  wrap.id = `router-card-${idx}`;
+  wrap.innerHTML = `
+    <div class="router-hd" onclick="toggleRouter(${idx})">
+      <div class="router-num">${idx+1}</div>
+      <div class="router-title">
+        <div class="router-name" id="rname-display-${idx}">${rt.name||'New Router'}</div>
+        <div class="router-addr">${rt.address||''}${rt.port?':'+rt.port:''}</div>
+      </div>
+      <button class="btn-danger-ghost" onclick="removeRouter(event,${idx})" title="Remove router">
+        <i class="bi bi-trash3"></i>
+      </button>
+      <i class="bi bi-chevron-down" style="color:var(--muted);margin-left:.25rem;transition:transform .2s" id="chevron-${idx}"></i>
+    </div>
+    <div class="router-body" id="router-body-${idx}">
+
+      <!-- Connection -->
+      <div style="margin-bottom:1rem">
+        <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.6rem">Connection</div>
+        <div class="form-row form-row-2" style="margin-bottom:.6rem">
+          <div>
+            <label class="form-label">Router Name</label>
+            <input class="form-input" value="${esc(rt.name||'')}"
+              oninput="setRouterField(${idx},'name',this.value);document.getElementById('rname-display-${idx}').textContent=this.value||'New Router'">
+          </div>
+          <div>
+            <label class="form-label">IP Address</label>
+            <input class="form-input" placeholder="192.168.88.1" value="${esc(rt.address||'')}"
+              oninput="setRouterField(${idx},'address',this.value)">
+          </div>
+        </div>
+        <div class="form-row form-row-3">
+          <div>
+            <label class="form-label">API Port</label>
+            <input class="form-input" type="number" value="${rt.port||8728}"
+              oninput="setRouterField(${idx},'port',+this.value)">
+          </div>
+          <div>
+            <label class="form-label">Username</label>
+            <input class="form-input" value="${esc(rt.username||'')}"
+              oninput="setRouterField(${idx},'username',this.value)">
+          </div>
+          <div>
+            <label class="form-label">Password</label>
+            <div class="form-input-group">
+              <input class="form-input" type="password" id="pwd-${idx}" value="${esc(rt.password||'')}"
+                oninput="setRouterField(${idx},'password',this.value)">
+              <button class="input-suffix btn-icon" style="border:1px solid var(--border);border-left:none;border-radius:0 8px 8px 0;padding:0 .65rem;background:#0d1117"
+                onclick="togglePwd(${idx})" type="button">
+                <i class="bi bi-eye" id="eye-${idx}"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sources -->
+      <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.6rem">Sources &amp; Default Speeds</div>
+
+      ${buildSourceSection(rt, idx, 'pppoe',   'PPPoE',        'bi-plug-fill',   'src-pppoe',    true)}
+      ${buildSourceSection(rt, idx, 'hotspot', 'Hotspot',      'bi-wifi',        'src-hotspot',  true)}
+      ${buildSourceSection(rt, idx, 'dhcp',    'IPoE / DHCP',  'bi-hdd-network', 'src-dhcp',     true)}
+      ${buildAddrListSection(rt, idx)}
+
+    </div>
+  `;
+  return wrap;
+}
+
+function buildSourceSection(rt, idx, key, label, icon, cls, hasEnabled) {
+  const src = rt[key] || {};
+  const enabled = src.enabled !== false;
+  const dl = src.default_download_limit || 100;
+  const ul = src.default_upload_limit   || 100;
+  return `
+  <div class="source-section ${cls}">
+    <div class="source-hd" onclick="toggleSource(event,'src-body-${idx}-${key}')">
+      <i class="bi ${icon} src-icon" style="color:${srcColor(key)}"></i>
+      <span class="src-label">${label}</span>
+      ${hasEnabled ? `
+      <label class="toggle-wrap" onclick="event.stopPropagation()">
+        <div class="toggle" style="width:32px;height:18px">
+          <input type="checkbox" ${enabled?'checked':''} onchange="setSourceField(${idx},'${key}','enabled',this.checked)">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb" style="width:12px;height:12px;top:3px;left:3px"></div>
+        </div>
+      </label>` : ''}
+      <i class="bi bi-chevron-down" style="color:var(--muted);font-size:.75rem"></i>
+    </div>
+    <div class="source-body" id="src-body-${idx}-${key}">
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:.5rem">Default speeds (used when no rate is found in address list)</div>
+      <div class="form-row form-row-2">
+        <div>
+          <label class="form-label">Default Download</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" min="1" value="${dl}"
+              oninput="setSourceField(${idx},'${key}','default_download_limit',+this.value)">
+            <span class="input-suffix">Mbps</span>
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Default Upload</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" min="1" value="${ul}"
+              oninput="setSourceField(${idx},'${key}','default_upload_limit',+this.value)">
+            <span class="input-suffix">Mbps</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function buildAddrListSection(rt, idx) {
+  const src = rt.address_list || {};
+  const dl = src.default_download_limit || 100;
+  const ul = src.default_upload_limit   || 100;
+  return `
+  <div class="source-section src-addrlist">
+    <div class="source-hd" onclick="toggleSource(event,'src-body-${idx}-address_list')">
+      <i class="bi bi-list-check src-icon" style="color:#8b5cf6"></i>
+      <span class="src-label">Address List</span>
+      <i class="bi bi-chevron-down" style="color:var(--muted);font-size:.75rem"></i>
+    </div>
+    <div class="source-body" id="src-body-${idx}-address_list">
+      <div style="font-size:.75rem;color:var(--muted);margin-bottom:.5rem">Fallback speeds for devices sourced from the firewall address list</div>
+      <div class="form-row form-row-2">
+        <div>
+          <label class="form-label">Default Download</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" min="1" value="${dl}"
+              oninput="setSourceField(${idx},'address_list','default_download_limit',+this.value)">
+            <span class="input-suffix">Mbps</span>
+          </div>
+        </div>
+        <div>
+          <label class="form-label">Default Upload</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" min="1" value="${ul}"
+              oninput="setSourceField(${idx},'address_list','default_upload_limit',+this.value)">
+            <span class="input-suffix">Mbps</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function srcColor(key) {
+  return {pppoe:'#3b82f6',hotspot:'#22c55e',dhcp:'#f59e0b',address_list:'#8b5cf6'}[key]||'#94a3b8';
+}
+function esc(s) { return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Config mutations ──────────────────────────────────────────────────────
+function setRouterField(idx, field, val) {
+  if (!configData.routers[idx]) return;
+  configData.routers[idx][field] = val;
+}
+function setSourceField(idx, src, field, val) {
+  if (!configData.routers[idx]) return;
+  if (!configData.routers[idx][src]) configData.routers[idx][src] = {};
+  configData.routers[idx][src][field] = val;
+}
+function addRouter() {
+  if (!configData) return;
+  configData.routers = configData.routers || [];
+  configData.routers.push({
+    name:'New Router', address:'', port:8728, username:'admin', password:'',
+    pppoe:{enabled:true,default_download_limit:100,default_upload_limit:100},
+    hotspot:{enabled:false,default_download_limit:100,default_upload_limit:100},
+    dhcp:{enabled:false,default_download_limit:100,default_upload_limit:100},
+    address_list:{default_download_limit:100,default_upload_limit:100}
+  });
+  renderConfig();
+  // open the new router
+  const idx = configData.routers.length - 1;
+  const body = document.getElementById(`router-body-${idx}`);
+  if (body) { body.classList.add('open'); }
+  document.getElementById(`router-card-${idx}`).scrollIntoView({behavior:'smooth',block:'start'});
+}
+function removeRouter(e, idx) {
+  e.stopPropagation();
+  if (!confirm(`Remove router #${idx+1}?`)) return;
+  configData.routers.splice(idx, 1);
+  renderConfig();
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────
+function toggleRouter(idx) {
+  const body    = document.getElementById(`router-body-${idx}`);
+  const chevron = document.getElementById(`chevron-${idx}`);
+  const open = body.classList.toggle('open');
+  chevron.style.transform = open ? 'rotate(180deg)' : '';
+}
+function toggleSource(e, id) {
+  e.stopPropagation();
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('open');
+}
+function togglePwd(idx) {
+  const inp = document.getElementById(`pwd-${idx}`);
+  const eye = document.getElementById(`eye-${idx}`);
+  if (inp.type === 'password') { inp.type='text';  eye.className='bi bi-eye-slash'; }
+  else                         { inp.type='password'; eye.className='bi bi-eye'; }
+}
+
+// ── Save config ───────────────────────────────────────────────────────────
+async function saveConfig() {
+  // collect toggles
+  if (!rawMode) {
+    configData.strategy      = document.querySelector('.strategy-card.selected')?.dataset.val || configData.strategy;
+    configData.queues         = document.getElementById('toggle-queues').checked;
+    configData.promote_to_root = document.getElementById('toggle-promote').checked;
+  } else {
+    syncFromRaw();
+  }
+  const r = await fetch('/api/config', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({content: configData})
+  });
+  const d = await r.json();
+  toast(d.ok ? 'Settings saved successfully' : d.error, d.ok);
+  if (d.ok) document.getElementById('stat-routers').textContent = (configData.routers||[]).length;
+}
+
+// ── YAML editor ───────────────────────────────────────────────────────────
+let currentYaml = 'libreqos';
+const yamlCM = CodeMirror.fromTextArea(document.getElementById('yaml-editor'), {
+  mode:'yaml', theme:'dracula', lineNumbers:true, indentUnit:2
+});
+const YAML_MODES = {
+  libreqos:    'yaml',
+  lqos:        'text/plain',
+  network:     'yaml',
+  config_json: 'application/json',
+  network_json:'application/json',
+  updatecsv:   'text/x-python',
+};
+const YAML_NAMES = ['libreqos','lqos','network','config_json','network_json','updatecsv'];
+
+async function loadYaml(name) {
+  currentYaml = name;
+  document.querySelectorAll('#yaml-switcher button').forEach((b,i) => {
+    b.className = YAML_NAMES[i] === name ? 'btn-primary' : 'btn-ghost';
+  });
+  const r = await fetch(`/api/yaml/${name}`);
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  yamlCM.setValue(d.content);
+  yamlCM.setOption('mode', YAML_MODES[name] || 'text/plain');
+  document.getElementById('yaml-path').textContent = d.path;
+}
+async function saveYaml() {
+  const r = await fetch(`/api/yaml/${currentYaml}`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({content: yamlCM.getValue()})
+  });
+  const d = await r.json();
+  toast(d.ok ? 'File saved' : d.error, d.ok);
+}
+
+// ── Network tab ───────────────────────────────────────────────────────────
+let selectedNetplan = null;
+let ifaceList = [];
+let netplanCM = null;
+
+async function loadInterfaces() {
+  const r = await fetch('/api/interfaces');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  ifaceList = d.interfaces;
+  renderIfaceCards(d.interfaces);
+  populateIfaceSelects(d.interfaces);
+  updateNetplanPreview();
+}
+
+function renderIfaceCards(ifaces) {
+  const grid = document.getElementById('iface-grid');
+  grid.innerHTML = ifaces.map(i => {
+    const speedTxt = i.speed > 0 ? `${i.speed >= 1000 ? (i.speed/1000).toFixed(0)+'G' : i.speed+'M'}bps` : '—';
+    const addrHtml = i.addresses.length
+      ? i.addresses.map(a => `<div class="iface-addr">${a}</div>`).join('')
+      : `<div style="color:var(--muted);font-size:.72rem">No IP</div>`;
+    return `
+    <div class="iface-card ${i.is_up ? 'up' : 'down'}">
+      <div class="iface-name">
+        <span class="dot ${i.is_up ? 'dot-green' : 'dot-grey'}"></span>
+        <span>${i.name}</span>
+        <span style="margin-left:auto;font-size:.68rem;font-weight:500;color:${i.is_up ? 'var(--green)' : 'var(--muted)'}">
+          ${i.is_up ? 'UP' : 'DOWN'}
+        </span>
+      </div>
+      <div class="iface-meta">
+        <div>Speed: <span class="iface-speed">${speedTxt}</span></div>
+        <div>MTU: ${i.mtu} &nbsp;·&nbsp; ${i.duplex}</div>
+        ${addrHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function populateIfaceSelects(ifaces) {
+  ['iface1','iface2'].forEach((id, idx) => {
+    const sel = document.getElementById(id);
+    const prev = sel.value;
+    sel.innerHTML = ifaces.map(i =>
+      `<option value="${i.name}" ${i.name === prev ? 'selected' : ''}>${i.name}${i.is_up ? ' ●' : ''}</option>`
+    ).join('');
+    // sensible defaults: pick first two up interfaces
+    const upIfaces = ifaces.filter(i => i.is_up && i.name !== 'lo');
+    if (!prev && upIfaces[idx]) sel.value = upIfaces[idx].name;
+  });
+  document.getElementById('iface1').addEventListener('change', updateNetplanPreview);
+  document.getElementById('iface2').addEventListener('change', updateNetplanPreview);
+}
+
+function selectNetplan(opt) {
+  selectedNetplan = opt;
+  ['a','b'].forEach(o =>
+    document.getElementById(`opt-card-${o}`).classList.toggle('selected', o === opt));
+  updateNetplanPreview();
+}
+
+function buildNetplanYaml(opt, i1, i2) {
+  if (opt === 'a') return (
+`network:
+    ethernets:
+        ${i1}:
+            dhcp4: no
+            dhcp6: no
+        ${i2}:
+            dhcp4: no
+            dhcp6: no
+    bridges:
+        br0:
+            interfaces:
+            - ${i1}
+            - ${i2}
+    version: 2`);
+  return (
+`network:
+    ethernets:
+        ${i1}:
+            dhcp4: no
+            dhcp6: no
+        ${i2}:
+            dhcp4: no
+            dhcp6: no
+    version: 2`);
+}
+
+function updateNetplanPreview() {
+  if (!netplanCM) return;
+  const i1 = document.getElementById('iface1')?.value || 'ens19';
+  const i2 = document.getElementById('iface2')?.value || 'ens20';
+  netplanCM.setValue(selectedNetplan ? buildNetplanYaml(selectedNetplan, i1, i2) : '# Select Option A or B above');
+}
+
+async function applyNetplan() {
+  if (!selectedNetplan) { toast('Select Option A or B first', false); return; }
+  const i1  = document.getElementById('iface1').value;
+  const i2  = document.getElementById('iface2').value;
+  if (i1 === i2) { toast('Interface 1 and 2 must be different', false); return; }
+  const yaml = buildNetplanYaml(selectedNetplan, i1, i2);
+
+  const btn = document.getElementById('btn-apply-netplan');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Applying…';
+
+  const logEl = document.getElementById('netplan-log');
+  logEl.style.display = 'block';
+  logEl.textContent = 'Saving and running netplan apply…';
+
+  const r = await fetch('/api/yaml/libreqos', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ content: yaml, apply_netplan: true })
+  });
+  const d = await r.json();
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Save &amp; Apply';
+
+  if (!d.ok) {
+    logEl.textContent = '✗ Error: ' + d.error;
+    logEl.style.color = '#f87171';
+    toast(d.error, false);
+    return;
+  }
+  if (d.netplan_error) {
+    logEl.textContent = '⚠ Saved but netplan apply failed:\n' + d.netplan_error;
+    logEl.style.color = '#fbbf24';
+    toast('Saved, but netplan apply failed', false);
+    return;
+  }
+  logEl.style.color = '#4ade80';
+  logEl.textContent = '✓ libreqos.yaml saved\n✓ chmod 600 applied\n✓ netplan apply completed'
+    + (d.netplan_output ? '\n\n' + d.netplan_output : '');
+  toast(`Option ${selectedNetplan.toUpperCase()} applied successfully`);
+  setTimeout(loadInterfaces, 2000);
+}
+
+// ── Services tab ─────────────────────────────────────────────────────────
+const SVC_LABELS = {
+  lqosd:              { icon: 'bi-shield-fill-check', label: 'lqosd',              desc: 'LibreQoS core daemon — handles shaping, auth, and the WebUI' },
+  lqos_node_manager:  { icon: 'bi-diagram-3-fill',    label: 'lqos_node_manager',  desc: 'Manages queue nodes and topology assignments' },
+  lqos_scheduler:     { icon: 'bi-clock-fill',        label: 'lqos_scheduler',     desc: 'Schedules periodic tasks and data collection' },
+  updatecsv:          { icon: 'bi-router-fill',        label: 'updatecsv',          desc: 'MikroTik sync service — polls routers and updates LibreQoS' },
+  gui:                { icon: 'bi-window-stack',       label: 'gui',                desc: 'This management GUI (port 5000)' },
+};
+
+let logDrawerService = null;
+
+async function loadServices() {
+  const r = await fetch('/api/services');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  renderServiceCards(d.services);
+  if (logDrawerService) refreshDrawerLogs();
+  loadLqusersStatus();
+}
+
+function renderServiceCards(services) {
+  document.getElementById('svc-grid').innerHTML = services.map(svc => {
+    const meta  = SVC_LABELS[svc.name] || { icon: 'bi-gear-fill', label: svc.name, desc: '' };
+    const state = svc.active;
+    const cls   = state === 'active' ? 'active' : state === 'failed' ? 'failed' : 'inactive';
+    const dotCls = state === 'active' ? 'dot-green' : state === 'failed' ? 'dot-red' : 'dot-grey';
+    const stateColor = state === 'active' ? 'var(--green)' : state === 'failed' ? 'var(--red)' : 'var(--muted)';
+    const started = svc.started ? svc.started.replace('T',' ').replace(/\.\d+.*$/,'') : '';
+    const notFound = svc.loaded === 'not-found';
+    return `
+    <div class="svc-card ${cls}" id="svc-card-${svc.name}">
+      <div class="svc-name">
+        <i class="bi ${meta.icon}" style="color:${stateColor}"></i>
+        ${meta.label}
+        <span style="margin-left:auto;display:flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:500;color:${stateColor}">
+          <span class="dot ${dotCls}"></span>${state}${svc.sub && svc.sub!==state ? ' ('+svc.sub+')' : ''}
+        </span>
+      </div>
+      <div class="svc-meta">
+        ${meta.desc}
+        ${svc.pid && svc.pid !== '0' ? `<br>PID: <code style="font-size:.72rem">${svc.pid}</code>` : ''}
+        ${started ? `<br>Started: ${started}` : ''}
+        ${notFound ? `<br><span style="color:var(--red)">Service unit not found on this system</span>` : ''}
+      </div>
+      <div class="svc-actions">
+        <button class="btn-svc-start"   onclick="svcAction('${svc.name}','start')"><i class="bi bi-play-fill"></i> Start</button>
+        <button class="btn-svc-restart" onclick="svcAction('${svc.name}','restart')"><i class="bi bi-arrow-clockwise"></i> Restart</button>
+        <button class="btn-svc-stop"    onclick="svcAction('${svc.name}','stop')"><i class="bi bi-stop-fill"></i> Stop</button>
+        <button class="btn-svc-logs"    onclick="openLogDrawer('${svc.name}')"><i class="bi bi-journal-text"></i> Logs</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function svcAction(name, action) {
+  const card = document.getElementById(`svc-card-${name}`);
+  if (card) card.style.opacity = '.5';
+  const r = await fetch(`/api/services/${name}/${action}`, { method: 'POST' });
+  const d = await r.json();
+  if (card) card.style.opacity = '1';
+  if (!d.ok) { toast(d.error, false); return; }
+  toast(`${name} ${action}ed`);
+  if (d.service) renderServiceCards(
+    document.querySelectorAll('.svc-card').length > 0
+      ? [...document.querySelectorAll('.svc-card')].map(c => {
+          const n = c.id.replace('svc-card-','');
+          return n === name ? d.service : { name: n, active:'unknown', sub:'', pid:'0', started:'', loaded:'' };
+        })
+      : [d.service]
+  );
+  loadServices();
+}
+
+async function openLogDrawer(name) {
+  logDrawerService = name;
+  document.getElementById('log-drawer').style.display = 'block';
+  document.getElementById('log-drawer-title').textContent = name + ' — logs';
+  document.getElementById('log-content').textContent = 'Loading…';
+  document.getElementById('log-drawer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  await refreshDrawerLogs();
+}
+
+async function refreshDrawerLogs() {
+  if (!logDrawerService) return;
+  const r = await fetch(`/api/services/${logDrawerService}/logs`);
+  const d = await r.json();
+  const el = document.getElementById('log-content');
+  el.textContent = d.ok ? (d.logs || '(no logs)') : 'Error: ' + d.error;
+  el.scrollTop = el.scrollHeight;
+}
+
+function closeLogDrawer() {
+  logDrawerService = null;
+  document.getElementById('log-drawer').style.display = 'none';
+}
+
+// ── Troubleshooting ───────────────────────────────────────────────────────
+function toggleTrouble() {
+  const body = document.getElementById('trouble-body');
+  const btn  = document.getElementById('trouble-toggle');
+  const open = body.style.display === 'none';
+  body.style.display = open ? 'block' : 'none';
+  btn.innerHTML = open
+    ? '<i class="bi bi-chevron-up"></i> Hide'
+    : '<i class="bi bi-chevron-down"></i> Show';
+  if (open) loadLqusersStatus();
+}
+
+async function loadLqusersStatus() {
+  const r = await fetch('/api/lqusers/status');
+  const d = await r.json();
+  const el = document.getElementById('lqusers-status');
+  if (!el) return;
+  if (d.exists) {
+    el.innerHTML = `<i class="bi bi-file-earmark-fill" style="color:var(--green)"></i>
+      <span><code style="font-size:.76rem;background:#0d1117;padding:.1em .4em;border-radius:4px">lqusers.toml</code>
+      found at <code style="font-size:.76rem;color:#60a5fa">${d.path}</code></span>`;
+  } else {
+    el.innerHTML = `<i class="bi bi-file-earmark-x" style="color:var(--muted)"></i>
+      <span style="color:var(--muted)"><code style="font-size:.76rem">lqusers.toml</code> not found — first-run setup may be needed</span>`;
+    document.getElementById('btn-reset-users').disabled = true;
+  }
+}
+
+async function restartLqosd() {
+  const btn = document.getElementById('btn-restart-lqosd');
+  const res = document.getElementById('lqosd-restart-result');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Restarting…';
+  res.textContent = '';
+  const r = await fetch('/api/services/lqosd/restart', { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Restart lqosd Now';
+  if (d.ok) {
+    res.style.color = 'var(--green)';
+    res.textContent = '✓ lqosd restarted — try logging in again';
+    loadServices();
+  } else {
+    res.style.color = 'var(--red)';
+    res.textContent = '✗ ' + d.error;
+  }
+}
+
+async function confirmResetUsers() {
+  const confirmed = confirm(
+    'WARNING: This will permanently delete lqusers.toml and restart lqosd.\n\n' +
+    'All user accounts will be removed and you will need to complete first-run setup again.\n\n' +
+    'Are you sure?'
+  );
+  if (!confirmed) return;
+  const btn = document.getElementById('btn-reset-users');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Removing…';
+  const r = await fetch('/api/lqusers/reset', { method: 'POST' });
+  const d = await r.json();
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-trash3"></i> Remove lqusers.toml & Restart lqosd';
+  if (d.ok) {
+    toast(d.removed ? `Removed ${d.removed} — lqosd restarted` : 'File not found, lqosd restarted');
+    loadLqusersStatus();
+    loadServices();
+  } else {
+    toast(d.error, false);
+  }
+}
+
+// ── Management Port ───────────────────────────────────────────────────────
+let mgmtMode = null;
+let mgmtCM   = null;
+
+async function loadMgmt() {
+  // Load interfaces into selector
+  const ir = await fetch('/api/interfaces');
+  const id = await ir.json();
+  if (id.ok) {
+    const sel = document.getElementById('mgmt-iface');
+    const prev = sel.value;
+    sel.innerHTML = id.interfaces
+      .filter(i => i.name !== 'lo')
+      .map(i => `<option value="${i.name}" ${i.name===prev?'selected':''}>${i.name}${i.is_up?' ●':''}</option>`)
+      .join('');
+    renderMgmtStatus(id.interfaces);
+  }
+
+  // Load and parse existing 50-cloud-init.yaml
+  const yr = await fetch('/api/yaml/network');
+  const yd = await yr.json();
+  if (yd.ok && yd.content) {
+    parseMgmtYaml(yd.content);
+  }
+  updateMgmtPreview();
+}
+
+function renderMgmtStatus(ifaces) {
+  const sel  = document.getElementById('mgmt-iface');
+  const name = sel.value;
+  const iface = ifaces.find(i => i.name === name);
+  const body  = document.getElementById('mgmt-status-body');
+  if (!iface) { body.innerHTML = '<div style="color:var(--muted);font-size:.85rem">Select an interface</div>'; return; }
+
+  const speedTxt = iface.speed > 0
+    ? (iface.speed >= 1000 ? (iface.speed/1000).toFixed(0)+'G' : iface.speed+'M') + 'bps'
+    : '—';
+
+  body.innerHTML = `
+    <div>
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">Interface</div>
+      <div style="font-weight:700;font-size:1rem;display:flex;align-items:center;gap:.5rem">
+        <span class="dot ${iface.is_up?'dot-green':'dot-grey'}"></span>${iface.name}
+      </div>
+      <div style="font-size:.75rem;color:${iface.is_up?'var(--green)':'var(--muted)'}">${iface.is_up?'UP':'DOWN'}</div>
+    </div>
+    <div>
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">IP Address</div>
+      ${iface.addresses.length
+        ? iface.addresses.map(a=>`<div style="font-family:monospace;font-size:.85rem;color:#60a5fa">${a}</div>`).join('')
+        : '<div style="font-size:.85rem;color:var(--muted)">No IP assigned</div>'}
+    </div>
+    <div>
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">Speed / MTU</div>
+      <div style="font-size:.9rem;font-weight:600;color:var(--cyan)">${speedTxt}</div>
+      <div style="font-size:.75rem;color:var(--muted)">MTU ${iface.mtu}</div>
+    </div>
+    <div>
+      <div style="font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">Duplex</div>
+      <div style="font-size:.85rem">${iface.duplex}</div>
+    </div>`;
+}
+
+function onMgmtIfaceChange() {
+  fetch('/api/interfaces').then(r=>r.json()).then(d => {
+    if (d.ok) renderMgmtStatus(d.interfaces);
+  });
+  updateMgmtPreview();
+}
+
+function parseMgmtYaml(text) {
+  // Detect interface name
+  const ifaceMatch = text.match(/ethernets:\s*\n\s+(\S+):/);
+  if (ifaceMatch) {
+    const sel = document.getElementById('mgmt-iface');
+    if ([...sel.options].some(o => o.value === ifaceMatch[1])) sel.value = ifaceMatch[1];
+  }
+  // Detect mode
+  const isDhcp = /dhcp4:\s*(yes|true)/i.test(text);
+  if (isDhcp) {
+    selectMgmtMode('dhcp');
+  } else {
+    selectMgmtMode('static');
+    // Extract static values
+    const addrMatch = text.match(/addresses:\s*\n\s+- ([\d.]+)\/(\d+)/);
+    if (addrMatch) {
+      document.getElementById('mgmt-ip').value     = addrMatch[1];
+      document.getElementById('mgmt-prefix').value = addrMatch[2];
+    }
+    const gwMatch = text.match(/via:\s*([\d.]+)/);
+    if (gwMatch) document.getElementById('mgmt-gw').value = gwMatch[1];
+    const dnsMatches = [...text.matchAll(/- ([\d.]+)/g)]
+      .map(m => m[1]).filter(ip => ip !== document.getElementById('mgmt-ip')?.value);
+    if (dnsMatches[0]) document.getElementById('mgmt-dns1').value = dnsMatches[0];
+    if (dnsMatches[1]) document.getElementById('mgmt-dns2').value = dnsMatches[1];
+  }
+}
+
+function selectMgmtMode(mode) {
+  mgmtMode = mode;
+  ['dhcp','static'].forEach(m => {
+    document.getElementById(`mgmt-card-${m}`).classList.toggle('selected', m === mode);
+  });
+  document.getElementById('mgmt-static-fields').style.display = mode === 'static' ? 'block' : 'none';
+  updateMgmtPreview();
+}
+
+function buildMgmtYaml() {
+  const iface  = document.getElementById('mgmt-iface').value || 'eth0';
+  if (!mgmtMode) return '# Select DHCP or Static IP above';
+
+  if (mgmtMode === 'dhcp') {
+    return `network:
+    version: 2
+    ethernets:
+        ${iface}:
+            dhcp4: true`;
+  }
+
+  const ip     = document.getElementById('mgmt-ip').value.trim()   || '192.168.1.100';
+  const prefix = document.getElementById('mgmt-prefix').value      || '24';
+  const gw     = document.getElementById('mgmt-gw').value.trim()   || '';
+  const dns1   = document.getElementById('mgmt-dns1').value.trim() || '';
+  const dns2   = document.getElementById('mgmt-dns2').value.trim() || '';
+  const dnsArr = [dns1, dns2].filter(Boolean);
+
+  let yaml = `network:
+    version: 2
+    ethernets:
+        ${iface}:
+            dhcp4: false
+            addresses:
+                - ${ip}/${prefix}`;
+
+  if (gw) yaml += `\n            routes:\n                - to: default\n                  via: ${gw}`;
+  if (dnsArr.length) yaml += `\n            nameservers:\n                addresses:\n` + dnsArr.map(d=>`                    - ${d}`).join('\n');
+
+  return yaml;
+}
+
+function updateMgmtPreview() {
+  if (mgmtCM) mgmtCM.setValue(buildMgmtYaml());
+}
+
+async function applyMgmt() {
+  if (!mgmtMode) { toast('Select DHCP or Static IP first', false); return; }
+  if (mgmtMode === 'static') {
+    const ip = document.getElementById('mgmt-ip').value.trim();
+    const gw = document.getElementById('mgmt-gw').value.trim();
+    if (!ip) { toast('IP address is required', false); return; }
+    if (!gw) { toast('Gateway is required', false); return; }
+  }
+
+  const btn = document.getElementById('btn-apply-mgmt');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Applying…';
+
+  const logEl = document.getElementById('mgmt-log');
+  logEl.style.display = 'block';
+  logEl.style.color   = '#94a3b8';
+  logEl.textContent   = 'Saving 50-cloud-init.yaml and running netplan apply…';
+
+  const yaml = buildMgmtYaml();
+  const r = await fetch('/api/yaml/network', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ content: yaml, apply_netplan: true })
+  });
+  const d = await r.json();
+
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-floppy-fill"></i> Save &amp; Apply';
+
+  if (!d.ok) {
+    logEl.style.color = '#f87171';
+    logEl.textContent = '✗ Error: ' + d.error;
+    toast(d.error, false);
+    return;
+  }
+  if (d.netplan_error) {
+    logEl.style.color = '#fbbf24';
+    logEl.textContent = '⚠ Saved but netplan apply failed:\n' + d.netplan_error;
+    toast('Saved, but netplan apply failed', false);
+    return;
+  }
+  logEl.style.color = '#4ade80';
+  logEl.textContent = '✓ 50-cloud-init.yaml saved\n✓ chmod 600 applied\n✓ netplan apply completed'
+    + (d.netplan_output ? '\n\n' + d.netplan_output : '');
+  toast(`Management port configured (${mgmtMode.toUpperCase()})`);
+  setTimeout(loadMgmt, 2000);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+netplanCM = CodeMirror.fromTextArea(document.getElementById('netplan-preview-editor'), {
+  mode: 'yaml', theme: 'dracula', lineNumbers: true, indentUnit: 2
+});
+netplanCM.setValue('# Select Option A or B and choose interfaces above');
+
+mgmtCM = CodeMirror.fromTextArea(document.getElementById('mgmt-preview-editor'), {
+  mode: 'yaml', theme: 'dracula', lineNumbers: true, indentUnit: 2
+});
+mgmtCM.setValue('# Select DHCP or Static IP above');
+
+// live preview update when iface selects change (before interfaces load)
+['iface1','iface2'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('change', updateNetplanPreview);
+});
+
+loadConfig().then(renderConfig);
+loadYaml('libreqos');
+loadDevices();
+setInterval(loadDevices, 30000);
+</script>
+</body>
+</html>
