@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LibreQoS MikroTik — Dashboard</title>
+<title>LQ-Sync — Dashboard</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css" rel="stylesheet">
@@ -355,7 +355,7 @@ code { font-size: .8rem; color: #94a3b8; }
 <!-- ── Login overlay ── -->
 <div id="login-overlay">
   <div class="login-card">
-    <h1><i class="bi bi-router-fill" style="color:var(--blue)"></i> LibreQoS MikroTik</h1>
+    <h1><i class="bi bi-router-fill" style="color:var(--blue)"></i> LQ-Sync</h1>
     <p style="margin:0;font-size:.82rem;color:var(--muted)">Sign in to continue</p>
     <div>
       <label style="font-size:.78rem;color:var(--muted);display:block;margin-bottom:.4rem">Password</label>
@@ -390,7 +390,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
 <!-- ── Topbar ── -->
 <div class="topbar">
-  <div class="brand"><i class="bi bi-router-fill"></i><span class="brand-text"> LibreQoS MikroTik</span></div>
+  <div class="brand"><i class="bi bi-router-fill"></i><span class="brand-text"> LQ-Sync</span></div>
   <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:nowrap;">
     <div style="display:flex;align-items:center;gap:.5rem;font-size:.8rem;">
       <span class="dot dot-grey" id="svc-dot"></span>
@@ -418,6 +418,8 @@ code { font-size: .8rem; color: #94a3b8; }
   <button class="tab-btn"        onclick="switchTab('yaml')">     <i class="bi bi-file-code"></i>Files</button>
   <button class="tab-btn"        onclick="switchTab('topology')"> <i class="bi bi-diagram-3"></i>Topology</button>
   <button class="tab-btn"        onclick="switchTab('devices')">  <i class="bi bi-table"></i>Devices</button>
+  <button class="tab-btn"        onclick="switchTab('lqos')">     <i class="bi bi-gear-wide-connected"></i>Config</button>
+  <button class="tab-btn"        onclick="switchTab('credits')">  <i class="bi bi-heart-fill"></i>Credits</button>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -578,17 +580,6 @@ code { font-size: .8rem; color: #94a3b8; }
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-services">
 
-  <!-- LibreQoS not-installed banner -->
-  <div id="svc-lq-banner" style="display:none;background:#1a0e00;border:1px solid #f59e0b44;border-radius:12px;padding:.9rem 1.1rem;margin-bottom:1rem;display:none;align-items:center;gap:.85rem;flex-wrap:wrap">
-    <i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow);font-size:1.3rem;flex-shrink:0"></i>
-    <div style="flex:1;min-width:200px">
-      <div style="font-weight:600;font-size:.9rem;color:var(--yellow)">LibreQoS not detected</div>
-      <div style="font-size:.78rem;color:var(--muted);margin-top:.2rem">Core LibreQoS services are not found. Install LibreQoS first before using this integration.</div>
-    </div>
-    <button class="btn-ghost" style="border-color:#f59e0b44;color:var(--yellow)" onclick="switchTab('troubleshoot');setTimeout(openInstallPanel,200)"><i class="bi bi-download"></i> Install LibreQoS</button>
-  </div>
-
-
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
     <div>
       <h2 style="font-size:1.1rem;font-weight:700;margin:0">Services</h2>
@@ -628,51 +619,6 @@ code { font-size: .8rem; color: #94a3b8; }
       <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Diagnostics for MikroTik API connectivity and LibreQoS authentication</p>
     </div>
     <button class="btn-ghost" onclick="loadTroubleshooting()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
-  </div>
-
-  <!-- ── Install LibreQoS ── -->
-  <div id="install-lq-card" class="card" style="margin-bottom:1rem;border-color:#3b82f633">
-    <div class="card-hd" style="background:#0d1a2e;cursor:pointer" onclick="openInstallPanel()">
-      <span style="display:flex;align-items:center;gap:.6rem">
-        <i class="bi bi-download" style="color:var(--blue)"></i>
-        <span>Install LibreQoS</span>
-        <span id="lq-install-badge" style="font-size:.7rem;padding:.15em .6em;border-radius:20px;background:#14532d33;color:#4ade80;border:1px solid #22c55e33;display:none">Installed</span>
-      </span>
-      <i class="bi bi-chevron-down" id="install-lq-chevron" style="color:var(--muted);transition:transform .2s"></i>
-    </div>
-    <div id="install-lq-body" style="display:none">
-      <div class="card-bd">
-        <p style="font-size:.82rem;color:var(--muted);margin:0 0 1rem;line-height:1.6">
-          Downloads and installs the latest LibreQoS <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">.deb</code> package from the official release.
-          Requires root privileges and an internet connection.
-        </p>
-
-        <div style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.6rem .85rem;margin-bottom:1rem;font-size:.78rem;color:var(--muted)">
-          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
-            <span style="font-family:monospace;color:#60a5fa">wget https://download.libreqos.com/libreqos_2.0.202603200330-1_amd64.deb</span>
-          </div>
-          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-top:.3rem">
-            <span style="font-family:monospace;color:#60a5fa">apt install ./libreqos_2.0.202603200330-1_amd64.deb</span>
-          </div>
-        </div>
-
-        <div id="lq-status-row" style="margin-bottom:1rem;font-size:.82rem;display:flex;align-items:center;gap:.6rem">
-          <i class="bi bi-hourglass-split" style="color:var(--muted)"></i>
-          <span id="lq-status-text" style="color:var(--muted)">Checking…</span>
-        </div>
-
-        <div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1rem">
-          <button class="btn-primary" id="btn-install-lq" onclick="startInstallLibreqos()">
-            <i class="bi bi-download"></i> Install Now
-          </button>
-          <button class="btn-ghost" onclick="checkLqStatus()">
-            <i class="bi bi-arrow-clockwise"></i> Check Status
-          </button>
-        </div>
-
-        <pre id="install-lq-log" style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;height:300px;overflow-y:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.45;display:none"></pre>
-      </div>
-    </div>
   </div>
 
   <div class="card" style="margin-bottom:1rem">
@@ -1230,6 +1176,356 @@ code { font-size: .8rem; color: #94a3b8; }
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════════════════
+     LibreQos CONFIG
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-lqos">
+
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">lqos Config</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0" id="lqos-path-label">lqos.conf</p>
+    </div>
+    <div style="display:flex;gap:.6rem">
+      <button class="btn-ghost" onclick="loadLqosConf()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
+      <button class="btn-primary" onclick="saveLqosConf()"><i class="bi bi-floppy-fill"></i> Save Changes</button>
+    </div>
+  </div>
+
+  <!-- General -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-info-circle-fill"></i> General</div>
+    <div class="card-bd">
+      <div class="form-row form-row-2" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Node Name</label>
+          <input class="form-input" id="lq-node_name" type="text" placeholder="e.g. my-router">
+        </div>
+        <div>
+          <label class="form-label">LibreQoS Directory</label>
+          <input class="form-input" id="lq-lqos_directory" type="text" placeholder="/opt/libreqos/src">
+        </div>
+      </div>
+      <div class="form-row form-row-3">
+        <div>
+          <label class="form-label">Packet Capture Time (s)</label>
+          <input class="form-input" id="lq-packet_capture_time" type="number" min="1">
+        </div>
+        <div>
+          <label class="form-label">Queue Check Period (ms)</label>
+          <input class="form-input" id="lq-queue_check_period_ms" type="number" min="100">
+        </div>
+        <div style="display:flex;align-items:flex-end;padding-bottom:.1rem">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="lq-disable_webserver"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+            <span style="font-size:.83rem">Disable Webserver</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bridge -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-ethernet"></i> Bridge</div>
+    <div class="card-bd">
+      <div class="form-row form-row-3">
+        <div>
+          <label class="form-label">To Internet Interface</label>
+          <input class="form-input" id="lq-bridge-to_internet" type="text" placeholder="e.g. eth0">
+        </div>
+        <div>
+          <label class="form-label">To Network Interface</label>
+          <input class="form-input" id="lq-bridge-to_network" type="text" placeholder="e.g. eth1">
+        </div>
+        <div style="display:flex;align-items:flex-end;padding-bottom:.1rem">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="lq-bridge-use_xdp_bridge"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+            <span style="font-size:.83rem">Use XDP Bridge</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Queues -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-bar-chart-fill"></i> Queues</div>
+    <div class="card-bd">
+      <div class="form-row form-row-2" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Uplink Bandwidth (Mbps)</label>
+          <input class="form-input" id="lq-queues-uplink_bandwidth_mbps" type="number" min="1">
+        </div>
+        <div>
+          <label class="form-label">Downlink Bandwidth (Mbps)</label>
+          <input class="form-input" id="lq-queues-downlink_bandwidth_mbps" type="number" min="1">
+        </div>
+      </div>
+      <div class="form-row form-row-2" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Generated PN Download (Mbps)</label>
+          <input class="form-input" id="lq-queues-generated_pn_download_mbps" type="number" min="1">
+        </div>
+        <div>
+          <label class="form-label">Generated PN Upload (Mbps)</label>
+          <input class="form-input" id="lq-queues-generated_pn_upload_mbps" type="number" min="1">
+        </div>
+      </div>
+      <div class="form-row form-row-2" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Default SQM</label>
+          <input class="form-input" id="lq-queues-default_sqm" type="text" placeholder="e.g. cake diffserv4">
+        </div>
+      </div>
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-queues-monitor_only"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Monitor Only</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-queues-dry_run"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Dry Run</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-queues-use_binpacking"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Use Bin Packing</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-queues-sudo"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Use Sudo</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tuning -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-sliders2"></i> Tuning</div>
+    <div class="card-bd">
+      <div class="form-row form-row-4" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">netdev_budget_usecs</label>
+          <input class="form-input" id="lq-tuning-netdev_budget_usecs" type="number" min="0">
+        </div>
+        <div>
+          <label class="form-label">netdev_budget_packets</label>
+          <input class="form-input" id="lq-tuning-netdev_budget_packets" type="number" min="0">
+        </div>
+        <div>
+          <label class="form-label">rx_usecs</label>
+          <input class="form-input" id="lq-tuning-rx_usecs" type="number" min="0">
+        </div>
+        <div>
+          <label class="form-label">tx_usecs</label>
+          <input class="form-input" id="lq-tuning-tx_usecs" type="number" min="0">
+        </div>
+      </div>
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-tuning-stop_irq_balance"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Stop IRQ Balance</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-tuning-disable_rxvlan"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Disable RX VLAN</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-tuning-disable_txvlan"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Disable TX VLAN</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- IP Ranges -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-diagram-2-fill"></i> IP Ranges</div>
+    <div class="card-bd">
+      <div class="form-row form-row-2" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Ignore Subnets <span style="color:var(--muted);font-weight:400">(one per line)</span></label>
+          <textarea class="form-input" id="lq-ip_ranges-ignore_subnets" rows="4" style="resize:vertical;font-family:monospace;font-size:.82rem"></textarea>
+        </div>
+        <div>
+          <label class="form-label">Allow Subnets <span style="color:var(--muted);font-weight:400">(one per line)</span></label>
+          <textarea class="form-input" id="lq-ip_ranges-allow_subnets" rows="4" style="resize:vertical;font-family:monospace;font-size:.82rem"></textarea>
+        </div>
+      </div>
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-ip_ranges-unknown_ip_honors_ignore"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Unknown IP Honors Ignore</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-ip_ranges-unknown_ip_honors_allow"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Unknown IP Honors Allow</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Long Term Stats -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-graph-up-arrow"></i> Long Term Stats</div>
+    <div class="card-bd">
+      <div class="form-row form-row-3" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Collation Period (s)</label>
+          <input class="form-input" id="lq-long_term_stats-collation_period_seconds" type="number" min="1">
+        </div>
+        <div>
+          <label class="form-label">UISP Reporting Interval (s)</label>
+          <input class="form-input" id="lq-long_term_stats-uisp_reporting_interval_seconds" type="number" min="1">
+        </div>
+        <div style="display:flex;align-items:flex-end;padding-bottom:.1rem">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="lq-long_term_stats-gather_stats"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+            <span style="font-size:.83rem">Gather Stats</span>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Integration Common -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><i class="bi bi-plug-fill"></i> Integration Common</div>
+    <div class="card-bd">
+      <div class="form-row form-row-2" style="margin-bottom:.75rem">
+        <div>
+          <label class="form-label">Queue Refresh Interval (mins)</label>
+          <input class="form-input" id="lq-integration_common-queue_refresh_interval_mins" type="number" min="1">
+        </div>
+      </div>
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-integration_common-circuit_name_as_address"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Circuit Name as Address</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-integration_common-always_overwrite_network_json"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Always Overwrite network.json</span>
+        </label>
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="lq-integration_common-use_mikrotik_ipv6"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.83rem">Use MikroTik IPv6</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     CREDITS
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-credits">
+  <div style="max-width:640px;margin:0 auto">
+
+    <div style="text-align:center;padding:2rem 0 1.5rem">
+      <i class="bi bi-router-fill" style="font-size:3rem;color:var(--blue)"></i>
+      <h2 style="font-size:1.4rem;font-weight:700;margin:.75rem 0 .3rem">LQ-Sync</h2>
+      <p style="font-size:.85rem;color:var(--muted);margin:0">Open-source MikroTik ↔ LibreQoS synchronization with web GUI</p>
+    </div>
+
+    <!-- Author -->
+    <div class="card" style="margin-bottom:1rem;text-align:center">
+      <div class="card-hd"><i class="bi bi-person-fill"></i> Author</div>
+      <div class="card-bd" style="padding:1.5rem">
+        <div style="font-size:1.1rem;font-weight:700;margin-bottom:.3rem">Kintoyyy</div>
+        <div style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">Developer &amp; maintainer of this project</div>
+        <div style="display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap">
+          <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank"
+             style="display:inline-flex;align-items:center;gap:.4rem;background:#0d1117;border:1px solid var(--border);color:var(--text);padding:.45rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem;transition:border-color .15s"
+             onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--border)'">
+            <i class="bi bi-github"></i> GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Support -->
+    <div class="card" style="margin-bottom:1rem">
+      <div class="card-hd"><i class="bi bi-heart-fill" style="color:#f472b6"></i> Support the Project</div>
+      <div class="card-bd">
+        <p style="font-size:.83rem;color:var(--muted);margin:0 0 1.1rem;line-height:1.6">
+          If this project has saved you time or helped your network, consider supporting its development.
+          Every donation helps keep the project maintained and improved.
+        </p>
+        <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.2rem">
+          <a href="https://paypal.me/Kintoyyyy?country.x=PH" target="_blank"
+             style="display:inline-flex;align-items:center;gap:.5rem;background:#003087;border:1px solid #0059c122;color:#fff;padding:.55rem 1.1rem;border-radius:10px;text-decoration:none;font-size:.85rem;font-weight:600;transition:opacity .15s"
+             onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+            <i class="bi bi-paypal"></i> Donate via PayPal
+          </a>
+          <a href="https://www.buymeacoffee.com/kintoyyy" target="_blank"
+             style="display:inline-flex;align-items:center;gap:.5rem;background:#FFDD00;border:1px solid #e6c70022;color:#000;padding:.55rem 1.1rem;border-radius:10px;text-decoration:none;font-size:.85rem;font-weight:600;transition:opacity .15s"
+             onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+            <i class="bi bi-cup-hot-fill"></i> Buy Me a Coffee
+          </a>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:.5rem">
+          <p style="font-size:.78rem;color:var(--muted);margin:0;font-weight:600;letter-spacing:.04em;text-transform:uppercase">GCash QR Code</p>
+          <img src="https://i.imgur.com/nfxbhOv.jpeg" alt="GCash QR Code"
+               style="width:100%;border-radius:12px;border:2px solid var(--border);display:block">
+        </div>
+      </div>
+    </div>
+
+    <!-- Links -->
+    <div class="card" style="margin-bottom:1rem">
+      <div class="card-hd"><i class="bi bi-link-45deg"></i> Links</div>
+      <div class="card-bd" style="display:flex;flex-direction:column;gap:.6rem">
+        <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank"
+           style="display:flex;align-items:center;gap:.6rem;color:var(--blue);font-size:.85rem;text-decoration:none">
+          <i class="bi bi-github"></i> GitHub Repository
+        </a>
+        <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration/issues" target="_blank"
+           style="display:flex;align-items:center;gap:.6rem;color:var(--blue);font-size:.85rem;text-decoration:none">
+          <i class="bi bi-bug-fill"></i> Report an Issue
+        </a>
+        <a href="https://libreqos.io" target="_blank"
+           style="display:flex;align-items:center;gap:.6rem;color:var(--blue);font-size:.85rem;text-decoration:none">
+          <i class="bi bi-box-arrow-up-right"></i> LibreQoS Official Site
+        </a>
+        <a href="https://mikrotik.com" target="_blank"
+           style="display:flex;align-items:center;gap:.6rem;color:var(--blue);font-size:.85rem;text-decoration:none">
+          <i class="bi bi-box-arrow-up-right"></i> MikroTik Official Site
+        </a>
+      </div>
+    </div>
+
+    <!-- Built with -->
+    <div class="card">
+      <div class="card-hd"><i class="bi bi-code-slash"></i> Built With</div>
+      <div class="card-bd">
+        <div style="display:flex;flex-wrap:wrap;gap:.5rem;font-size:.78rem">
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">Python / Flask</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">routeros-api</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">psutil</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">Chart.js</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">ECharts</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">CodeMirror</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">Bootstrap Icons</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">SQLite</span>
+          <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">systemd</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Footer ── -->
+<footer style="border-top:1px solid var(--border);padding:.85rem 1.25rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--muted)">
+  <span><i class="bi bi-router-fill" style="color:var(--blue)"></i> LQ-Sync Integration — by <strong style="color:var(--text)">Kintoyyy</strong></span>
+  <span style="display:flex;gap:1rem">
+    <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank" style="color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:.3rem" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'"><i class="bi bi-github"></i> GitHub</a>
+    <a href="https://paypal.me/Kintoyyyy?country.x=PH" target="_blank" style="color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:.3rem" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'"><i class="bi bi-heart-fill" style="color:#f472b6"></i> Donate</a>
+  </span>
+</footer>
+
 <!-- ── Toasts ── -->
 <div class="toast-stack" id="toast-stack"></div>
 
@@ -1247,17 +1543,18 @@ code { font-size: .8rem; color: #94a3b8; }
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const names = ['dashboard','config','services','troubleshoot','network','mgmt','yaml','topology','devices'];
+    const names = ['dashboard','config','services','troubleshoot','network','mgmt','yaml','topology','devices','lqos','credits'];
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
-  if (name === 'config')   renderConfig();
-  if (name === 'network')  loadInterfaces();
-  if (name === 'mgmt')     loadMgmt();
-  if (name === 'services') { loadServices(); checkLqStatus(); }
+  if (name === 'config')       renderConfig();
+  if (name === 'network')      loadInterfaces();
+  if (name === 'mgmt')         loadMgmt();
+  if (name === 'services')     loadServices();
   if (name === 'troubleshoot') loadTroubleshooting();
-  if (name === 'topology') loadTopology();
+  if (name === 'topology')     loadTopology();
+  if (name === 'lqos')         loadLqosConf();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -2149,98 +2446,10 @@ function closeLogDrawer() {
   document.getElementById('log-drawer').style.display = 'none';
 }
 
-// ── LibreQoS install ──────────────────────────────────────────────────────
-async function checkLqStatus() {
-  const statusText = document.getElementById('lq-status-text');
-  const statusRow  = document.getElementById('lq-status-row');
-  const badge      = document.getElementById('lq-install-badge');
-  const btn        = document.getElementById('btn-install-lq');
-  if (!statusText) return;
-  statusText.textContent = 'Checking…';
-  const r = await fetch('/api/libreqos/status');
-  const d = await r.json();
-  if (!d.ok) { statusText.textContent = 'Error: ' + d.error; return; }
-
-  const icon = statusRow.querySelector('i');
-  if (d.installed && d.services_present) {
-    icon.className = 'bi bi-check-circle-fill'; icon.style.color = 'var(--green)';
-    statusText.style.color = 'var(--green)';
-    statusText.textContent = 'LibreQoS is installed and services are present.';
-    badge.style.display = 'inline';
-    btn.disabled = true; btn.style.opacity = '.5';
-    const banner = document.getElementById('svc-lq-banner');
-    if (banner) banner.style.display = 'none';
-  } else if (d.installed) {
-    icon.className = 'bi bi-check-circle'; icon.style.color = 'var(--yellow)';
-    statusText.style.color = 'var(--yellow)';
-    statusText.textContent = 'LibreQoS files found but services not detected.';
-    badge.style.display = 'inline';
-    btn.disabled = false; btn.style.opacity = '';
-  } else {
-    icon.className = 'bi bi-x-circle-fill'; icon.style.color = 'var(--red)';
-    statusText.style.color = 'var(--red)';
-    statusText.textContent = 'LibreQoS is not installed.';
-    badge.style.display = 'none';
-    btn.disabled = false; btn.style.opacity = '';
-    const banner = document.getElementById('svc-lq-banner');
-    if (banner) banner.style.display = 'flex';
-  }
-}
-
-function openInstallPanel() {
-  const body    = document.getElementById('install-lq-body');
-  const chevron = document.getElementById('install-lq-chevron');
-  if (!body) return;
-  const isOpen = body.style.display !== 'none';
-  body.style.display = isOpen ? 'none' : 'block';
-  if (chevron) chevron.style.transform = isOpen ? '' : 'rotate(180deg)';
-  if (!isOpen) checkLqStatus();
-}
-
-async function startInstallLibreqos() {
-  const btn = document.getElementById('btn-install-lq');
-  const log = document.getElementById('install-lq-log');
-  if (!btn || !log) return;
-  if (!confirm('This will download and install LibreQoS via apt. Continue?')) return;
-
-  btn.disabled = true;
-  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Installing…';
-  log.style.display = 'block';
-  log.textContent = '';
-
-  try {
-    const resp = await fetch('/api/libreqos/install', { method: 'POST' });
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const lines = buf.split('\n');
-      buf = lines.pop();
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          log.textContent += line.slice(6) + '\n';
-          log.scrollTop = log.scrollHeight;
-        }
-      }
-    }
-  } catch(e) {
-    log.textContent += '\n✘ Connection error: ' + e.message;
-  }
-
-  btn.disabled = false;
-  btn.innerHTML = '<i class="bi bi-download"></i> Install Now';
-  await checkLqStatus();
-}
-
 // ── Troubleshooting ───────────────────────────────────────────────────────
 async function loadTroubleshooting() {
   await loadTroubleRouters();
   await loadLqusersStatus();
-  await checkLqStatus();
 }
 
 async function loadTroubleRouters() {
@@ -2853,6 +3062,145 @@ mgmtCM.setValue('# Select DHCP or Static IP above');
   const el = document.getElementById(id);
   if (el) el.addEventListener('change', updateNetplanPreview);
 });
+
+// ── LQ-OS Config ─────────────────────────────────────────────────────────
+let _lqosData = {};
+
+function _lqGet(section, key) {
+  if (section) return (_lqosData[section] || {})[key];
+  return _lqosData[key];
+}
+
+function _lqSetField(id, section, key) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const val = _lqGet(section, key);
+  if (val === undefined || val === null) return;
+  if (el.type === 'checkbox') {
+    el.checked = !!val;
+  } else if (Array.isArray(val)) {
+    el.value = val.join('\n');
+  } else {
+    el.value = val;
+  }
+}
+
+async function loadLqosConf() {
+  const r = await fetch('/api/lqos');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error, false); return; }
+  if (!d.exists) { toast('lqos.conf not found at ' + d.path, false); return; }
+  _lqosData = d.data || {};
+  document.getElementById('lqos-path-label').textContent = d.path;
+
+  // General (top-level)
+  _lqSetField('lq-node_name',           null,               'node_name');
+  _lqSetField('lq-lqos_directory',      null,               'lqos_directory');
+  _lqSetField('lq-packet_capture_time', null,               'packet_capture_time');
+  _lqSetField('lq-queue_check_period_ms',null,              'queue_check_period_ms');
+  _lqSetField('lq-disable_webserver',   null,               'disable_webserver');
+  // Bridge
+  _lqSetField('lq-bridge-to_internet',  'bridge',           'to_internet');
+  _lqSetField('lq-bridge-to_network',   'bridge',           'to_network');
+  _lqSetField('lq-bridge-use_xdp_bridge','bridge',          'use_xdp_bridge');
+  // Queues
+  _lqSetField('lq-queues-uplink_bandwidth_mbps',   'queues','uplink_bandwidth_mbps');
+  _lqSetField('lq-queues-downlink_bandwidth_mbps', 'queues','downlink_bandwidth_mbps');
+  _lqSetField('lq-queues-generated_pn_download_mbps','queues','generated_pn_download_mbps');
+  _lqSetField('lq-queues-generated_pn_upload_mbps','queues','generated_pn_upload_mbps');
+  _lqSetField('lq-queues-default_sqm',   'queues',          'default_sqm');
+  _lqSetField('lq-queues-monitor_only',  'queues',          'monitor_only');
+  _lqSetField('lq-queues-dry_run',       'queues',          'dry_run');
+  _lqSetField('lq-queues-use_binpacking','queues',          'use_binpacking');
+  _lqSetField('lq-queues-sudo',          'queues',          'sudo');
+  // Tuning
+  _lqSetField('lq-tuning-netdev_budget_usecs',   'tuning',  'netdev_budget_usecs');
+  _lqSetField('lq-tuning-netdev_budget_packets', 'tuning',  'netdev_budget_packets');
+  _lqSetField('lq-tuning-rx_usecs',      'tuning',          'rx_usecs');
+  _lqSetField('lq-tuning-tx_usecs',      'tuning',          'tx_usecs');
+  _lqSetField('lq-tuning-stop_irq_balance','tuning',        'stop_irq_balance');
+  _lqSetField('lq-tuning-disable_rxvlan','tuning',          'disable_rxvlan');
+  _lqSetField('lq-tuning-disable_txvlan','tuning',          'disable_txvlan');
+  // IP Ranges
+  _lqSetField('lq-ip_ranges-ignore_subnets', 'ip_ranges',  'ignore_subnets');
+  _lqSetField('lq-ip_ranges-allow_subnets',  'ip_ranges',  'allow_subnets');
+  _lqSetField('lq-ip_ranges-unknown_ip_honors_ignore','ip_ranges','unknown_ip_honors_ignore');
+  _lqSetField('lq-ip_ranges-unknown_ip_honors_allow', 'ip_ranges','unknown_ip_honors_allow');
+  // Long Term Stats
+  _lqSetField('lq-long_term_stats-gather_stats',  'long_term_stats','gather_stats');
+  _lqSetField('lq-long_term_stats-collation_period_seconds','long_term_stats','collation_period_seconds');
+  _lqSetField('lq-long_term_stats-uisp_reporting_interval_seconds','long_term_stats','uisp_reporting_interval_seconds');
+  // Integration Common
+  _lqSetField('lq-integration_common-circuit_name_as_address','integration_common','circuit_name_as_address');
+  _lqSetField('lq-integration_common-always_overwrite_network_json','integration_common','always_overwrite_network_json');
+  _lqSetField('lq-integration_common-queue_refresh_interval_mins','integration_common','queue_refresh_interval_mins');
+  _lqSetField('lq-integration_common-use_mikrotik_ipv6','integration_common','use_mikrotik_ipv6');
+}
+
+function _lqReadField(id, type) {
+  const el = document.getElementById(id);
+  if (!el) return undefined;
+  if (type === 'bool')   return el.checked;
+  if (type === 'int')    return parseInt(el.value) || 0;
+  if (type === 'float')  return parseFloat(el.value) || 0;
+  if (type === 'array')  return el.value.split('\n').map(s=>s.trim()).filter(Boolean);
+  return el.value;
+}
+
+async function saveLqosConf() {
+  const updates = {
+    // General (top-level: section="")
+    'node_name':              _lqReadField('lq-node_name', 'str'),
+    'lqos_directory':         _lqReadField('lq-lqos_directory', 'str'),
+    'packet_capture_time':    _lqReadField('lq-packet_capture_time', 'int'),
+    'queue_check_period_ms':  _lqReadField('lq-queue_check_period_ms', 'int'),
+    'disable_webserver':      _lqReadField('lq-disable_webserver', 'bool'),
+    // Bridge
+    'bridge|to_internet':     _lqReadField('lq-bridge-to_internet', 'str'),
+    'bridge|to_network':      _lqReadField('lq-bridge-to_network', 'str'),
+    'bridge|use_xdp_bridge':  _lqReadField('lq-bridge-use_xdp_bridge', 'bool'),
+    // Queues
+    'queues|uplink_bandwidth_mbps':        _lqReadField('lq-queues-uplink_bandwidth_mbps','int'),
+    'queues|downlink_bandwidth_mbps':      _lqReadField('lq-queues-downlink_bandwidth_mbps','int'),
+    'queues|generated_pn_download_mbps':   _lqReadField('lq-queues-generated_pn_download_mbps','int'),
+    'queues|generated_pn_upload_mbps':     _lqReadField('lq-queues-generated_pn_upload_mbps','int'),
+    'queues|default_sqm':      _lqReadField('lq-queues-default_sqm', 'str'),
+    'queues|monitor_only':     _lqReadField('lq-queues-monitor_only', 'bool'),
+    'queues|dry_run':          _lqReadField('lq-queues-dry_run', 'bool'),
+    'queues|use_binpacking':   _lqReadField('lq-queues-use_binpacking', 'bool'),
+    'queues|sudo':             _lqReadField('lq-queues-sudo', 'bool'),
+    // Tuning
+    'tuning|netdev_budget_usecs':   _lqReadField('lq-tuning-netdev_budget_usecs','int'),
+    'tuning|netdev_budget_packets': _lqReadField('lq-tuning-netdev_budget_packets','int'),
+    'tuning|rx_usecs':         _lqReadField('lq-tuning-rx_usecs','int'),
+    'tuning|tx_usecs':         _lqReadField('lq-tuning-tx_usecs','int'),
+    'tuning|stop_irq_balance': _lqReadField('lq-tuning-stop_irq_balance','bool'),
+    'tuning|disable_rxvlan':   _lqReadField('lq-tuning-disable_rxvlan','bool'),
+    'tuning|disable_txvlan':   _lqReadField('lq-tuning-disable_txvlan','bool'),
+    // IP Ranges
+    'ip_ranges|ignore_subnets': _lqReadField('lq-ip_ranges-ignore_subnets','array'),
+    'ip_ranges|allow_subnets':  _lqReadField('lq-ip_ranges-allow_subnets','array'),
+    'ip_ranges|unknown_ip_honors_ignore': _lqReadField('lq-ip_ranges-unknown_ip_honors_ignore','bool'),
+    'ip_ranges|unknown_ip_honors_allow':  _lqReadField('lq-ip_ranges-unknown_ip_honors_allow','bool'),
+    // Long Term Stats
+    'long_term_stats|gather_stats':                    _lqReadField('lq-long_term_stats-gather_stats','bool'),
+    'long_term_stats|collation_period_seconds':        _lqReadField('lq-long_term_stats-collation_period_seconds','int'),
+    'long_term_stats|uisp_reporting_interval_seconds': _lqReadField('lq-long_term_stats-uisp_reporting_interval_seconds','int'),
+    // Integration Common
+    'integration_common|circuit_name_as_address':      _lqReadField('lq-integration_common-circuit_name_as_address','bool'),
+    'integration_common|always_overwrite_network_json':_lqReadField('lq-integration_common-always_overwrite_network_json','bool'),
+    'integration_common|queue_refresh_interval_mins':  _lqReadField('lq-integration_common-queue_refresh_interval_mins','int'),
+    'integration_common|use_mikrotik_ipv6':            _lqReadField('lq-integration_common-use_mikrotik_ipv6','bool'),
+  };
+
+  const r = await fetch('/api/lqos', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({updates})
+  });
+  const d = await r.json();
+  toast(d.ok ? 'lqos.conf saved' : (d.error || 'Save failed'), d.ok);
+}
 
 // ── Auth ──────────────────────────────────────────────────────────────────
 async function checkAuth() {

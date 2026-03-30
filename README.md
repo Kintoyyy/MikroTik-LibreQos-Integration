@@ -1,6 +1,8 @@
 # LibreQoS MikroTik Integration
 
-This script automates synchronization of active MikroTik users (PPPoE, Hotspot, IPoE/DHCP, and Address List) with LibreQoS's `ShapedDevices.csv` and `network.json`. It supports RADIUS and User Manager authentication. It runs continuously as a systemd service, polling your routers on a fixed interval and triggering a LibreQoS update whenever anything changes.
+Automates synchronization of active MikroTik users (PPPoE, Hotspot, IPoE/DHCP, and Address List) with LibreQoS's `ShapedDevices.csv` and `network.json`. Supports RADIUS and User Manager authentication. Runs continuously as a systemd service, polling your routers on a fixed interval and triggering a LibreQoS update whenever anything changes.
+
+Includes a full **web-based GUI** for configuration, monitoring, device management, and troubleshooting — accessible from any browser including mobile.
 
 ---
 
@@ -38,7 +40,20 @@ This script automates synchronization of active MikroTik users (PPPoE, Hotspot, 
    - When the same IP appears in multiple sources, the highest-priority source wins
    - Priority order: PPPoE > Hotspot > IPoE/DHCP > Address List
 
-6. **Logging and systemd integration**
+6. **Web GUI**
+   - Password-protected dashboard with live CPU, memory, and interface throughput graphs
+   - Form-based settings editor — no raw JSON required
+   - Netplan / network interface configuration
+   - Management port (DHCP or static IP) configuration
+   - Service control (start / restart / stop) with live logs
+   - File editor for `config.json`, `network.json`, `updatecsv.py`, and more
+   - Sankey topology diagram showing bandwidth flow from parent nodes to devices
+   - Device table with manual add / edit / delete
+   - Troubleshooting tools: MikroTik ping, API connect, permission check, lqusers reset
+   - One-click LibreQoS installer with live streaming output
+   - Mobile-friendly responsive layout
+
+7. **Logging and systemd integration**
    - Structured logging for all additions, updates, and removals
    - Runs as a `systemd` service with automatic restart on failure
 
@@ -67,9 +82,9 @@ This script automates synchronization of active MikroTik users (PPPoE, Hotspot, 
 ## Prerequisites
 
 - Linux (Debian/Ubuntu) with Python 3.7+
-- `routeros_api` Python library
+- `routeros_api`, `flask`, `psutil` Python libraries (installed automatically)
 - MikroTik router with API access enabled
-- LibreQoS installed at `/opt/libreqos`
+- LibreQoS installed at `/opt/libreqos` (can be installed via the GUI)
 
 ---
 
@@ -82,13 +97,70 @@ chmod +x install_updatecsv.sh
 sudo ./install_updatecsv.sh
 ```
 
+The installer will:
+- Install system dependencies (`python3`, `python3-venv`, `jq`, `git`)
+- Create a Python virtual environment at `/opt/libreqos/venv`
+- Install Python dependencies (`routeros-api`, `flask`, `psutil`)
+- Copy `updatecsv.py`, `gui.py`, and `templates/` to `/opt/libreqos/src/`
+- Create and enable `updatecsv.service` and `gui.service`
+- Print the GUI URL and default credentials on completion
+
+After installation, open the GUI in your browser:
+
+```
+http://<server-ip>:5000
+```
+
+Default password: **`admin`** — change it immediately via the key icon in the top bar.
+
 See [Installation.md](Installation.md) for the full step-by-step guide.
+
+---
+
+## Web GUI
+
+The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
+
+### Tabs
+
+| Tab | Description |
+|-----|-------------|
+| **Dashboard** | Live CPU, memory, and interface throughput graphs; device count by source |
+| **Settings** | Form-based `config.json` editor — routers, sources, topology strategy. Saving restarts `updatecsv` automatically |
+| **Services** | Start / restart / stop all integration and LibreQoS services; view live logs |
+| **Network** | Netplan configuration — Option A (Linux bridge) or Option B (Bifrost XDP); interface cards with speed and IP |
+| **Management Port** | Configure the management interface as DHCP or static IP (`50-cloud-init.yaml`) |
+| **Files** | Edit `config.json`, `network.json`, `updatecsv.py`, and other files directly in the browser |
+| **Topology** | Sankey diagram showing bandwidth flow from parent nodes to devices; overview and detail modes |
+| **Devices** | Live device table with search and filter; manually add, edit, or delete devices |
+| **Troubleshooting** | MikroTik API diagnostics, lqusers reset, and one-click LibreQoS installer |
+
+### Authentication
+
+- Login required before any page or API endpoint is accessible
+- Password is stored as a PBKDF2-SHA256 hash in `gui_auth.json`
+- Change password anytime via the key icon in the top bar
+- Sessions are invalidated on GUI service restart
+
+### Service Management
+
+```bash
+# GUI service
+sudo systemctl status gui.service
+sudo systemctl restart gui.service
+journalctl -u gui.service -f
+
+# Sync service
+sudo systemctl status updatecsv.service
+sudo systemctl restart updatecsv.service
+journalctl -u updatecsv.service -f
+```
 
 ---
 
 ## Configuration
 
-Edit `/opt/libreqos/src/config.json` after installation:
+Edit `/opt/libreqos/src/config.json` after installation (or use the Settings tab in the GUI):
 
 ```json
 {
@@ -134,13 +206,13 @@ For the full configuration reference, see [CONFIG.md](CONFIG.md).
 
 Rates are driven by **firewall address list names** on the MikroTik side. See [MIKROTIK_RATE_SETUP.md](MIKROTIK_RATE_SETUP.md) for step-by-step instructions covering:
 
-- How to create address list entries with rate names
-- PPPoE and Hotspot rate lookup flow
-- DHCP lease rate configuration
+- PPPoE and Hotspot profile `address-list` setup
+- IPoE/DHCP static lease rate configuration
+- RADIUS / User Manager (`Mikrotik-Address-List` attribute)
 - Rate format reference (`50M/50M`, `1G/1G`, `512k/256k`)
 
-> **Using User Manager?**
-> Assign rates via user groups with the `Mikrotik-Address-List` attribute (e.g., `attributes=Mikrotik-Address-List:50M/50M`) instead of `Mikrotik-Rate-Limit`. The integration reads rates from the firewall address list name — see [MIKROTIK_RATE_SETUP.md](MIKROTIK_RATE_SETUP.md) for setup details.
+> **Using RADIUS or User Manager?**
+> Return `Mikrotik-Address-List = 50M/50M` in your Access-Accept — do **not** use `Mikrotik-Rate-Limit`. The integration reads rates from the firewall address list name. See [MIKROTIK_RATE_SETUP.md](MIKROTIK_RATE_SETUP.md) for details.
 
 ---
 
@@ -151,16 +223,10 @@ Rates are driven by **firewall address list names** on the MikroTik side. See [M
 | `ShapedDevices.csv` | LibreQoS device shaping table |
 | `network.json` | LibreQoS topology/queue node tree |
 | `devices.db` | SQLite state database |
+| `gui_auth.json` | GUI password hash (auto-created, do not share) |
 
 **CSV columns:**
 `Circuit ID`, `Circuit Name`, `Device ID`, `Device Name`, `Parent Node`, `MAC`, `IPv4`, `IPv6`, `Download Min Mbps`, `Upload Min Mbps`, `Download Max Mbps`, `Upload Max Mbps`, `Comment`
-
-**Example rows:**
-```
-Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment
-A1B2C3D4,PPP-john,E5F6G7H8,PPP-john,CPU0,AA:BB:CC:DD:EE:FF,10.0.0.5,,46,46,92,92,pppoe | 80M/80M | 2026-03-25 10:00:00
-X9Y8Z7W6,HS-AABBCCDD,Q1R2S3T4,HS-AABBCCDD,CPU1,AA:BB:CC:11:22:33,10.0.0.6,,6,6,12,12,hotspot | 10M/10M | 2026-03-25 10:00:00
-```
 
 ---
 
@@ -176,21 +242,6 @@ Create a minimal read-only API user on each router:
     password="<strong-password>" \
     address="<LibreQoS-server-IP>" \
     disabled=no
-```
-
----
-
-## Service Management
-
-```bash
-# Check status
-sudo systemctl status updatecsv.service
-
-# View logs
-journalctl -u updatecsv.service -f
-
-# Restart after config change
-sudo systemctl restart updatecsv.service
 ```
 
 ---

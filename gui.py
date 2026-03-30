@@ -86,6 +86,16 @@ def require_auth(f):
         return f(*args, **kwargs)
     return wrapper
 
+LQOS_CONF_PATHS = [
+    OPT_DIR / "lqos.conf",
+]
+
+def _find_lqos_conf():
+    for p in LQOS_CONF_PATHS:
+        if p.exists():
+            return p
+    return LQOS_CONF_PATHS[1]  # default write target
+
 YAML_FILES = {
     "libreqos":      NETPLAN_DIR / "libreqos.yaml",
     "lqos":          OPT_DIR / "lqos.conf",
@@ -765,95 +775,128 @@ def troubleshoot_mt_permissions():
 
 
 # ---------------------------------------------------------------------------
-# LibreQoS install / status
+# lqos.conf structured API
 # ---------------------------------------------------------------------------
 
-LIBREQOS_DEB_URL = "https://download.libreqos.com/libreqos_2.0.202603200330-1_amd64.deb"
-LIBREQOS_DEB_FILE = "/tmp/libreqos_latest.deb"
+def _parse_toml_simple(text: str) -> dict:
+    """Minimal TOML parser: handles string/bool/int/float/array values."""
+    result: dict = {}
+    section = result
+    section_key = None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('[') and not line.startswith('[['):
+            section_key = line[1:line.index(']')]
+            section = {}
+            result[section_key] = section
+            continue
+        if '=' in line:
+            k, _, v = line.partition('=')
+            k = k.strip(); v = v.strip()
+            # strip inline comment
+            if '#' in v and not v.startswith('"'):
+                v = v[:v.index('#')].strip()
+            if v == 'true':
+                section[k] = True
+            elif v == 'false':
+                section[k] = False
+            elif v.startswith('"') and v.endswith('"'):
+                section[k] = v[1:-1]
+            elif v.startswith('['):
+                # collect array (may span lines — grab from raw text)
+                section[k] = _extract_array(text, section_key, k)
+            else:
+                try:
+                    section[k] = int(v) if '.' not in v else float(v)
+                except ValueError:
+                    section[k] = v
+    return result
 
-LIBREQOS_INDICATORS = [
-    Path("/opt/libreqos"),
-    Path("/opt/libreqos/src"),
-    Path("/opt/libreqos/src/LibreQoS.py"),
-]
+def _extract_array(text: str, section: str | None, key: str) -> list:
+    """Extract an array value from TOML text for a given section+key."""
+    import re
+    # locate the key= line, then collect items until ]
+    if section:
+        sec_m = re.search(rf'^\[{re.escape(section)}\]', text, re.MULTILINE)
+        search_text = text[sec_m.end():] if sec_m else text
+    else:
+        search_text = text
+    m = re.search(rf'^{re.escape(key)}\s*=\s*(\[.*?\])', search_text, re.MULTILINE | re.DOTALL)
+    if not m:
+        return []
+    raw = m.group(1)
+    items = re.findall(r'"([^"]*)"', raw)
+    return items
 
-def _libreqos_installed() -> bool:
-    return any(p.exists() for p in LIBREQOS_INDICATORS)
+def _toml_update(text: str, section: str | None, key: str, value) -> str:
+    """Return TOML text with the given key updated to value."""
+    import re
+    if isinstance(value, bool):
+        v_str = 'true' if value else 'false'
+    elif isinstance(value, str):
+        v_str = f'"{value}"'
+    elif isinstance(value, list):
+        items = ', '.join(f'"{i}"' for i in value)
+        v_str = f'[{items}]'
+    else:
+        v_str = str(value)
 
-def _libreqos_services_present() -> bool:
-    """Return True if at least one core LibreQoS service unit is loaded."""
-    for svc in ("lqosd", "lqos_node_manager", "lqos_scheduler"):
-        info = _get_service_info(svc)
-        if info.get("loaded") != "not-found":
-            return True
-    return False
+    pattern = rf'^({re.escape(key)}\s*=\s*).*$'
 
-@app.route("/api/libreqos/status")
+    if section:
+        sec_m = re.search(rf'^\[{re.escape(section)}\]', text, re.MULTILINE)
+        if not sec_m:
+            return text
+        before = text[:sec_m.end()]
+        after  = text[sec_m.end():]
+        next_sec = re.search(r'^\[', after, re.MULTILINE)
+        body_end = next_sec.start() if next_sec else len(after)
+        body = after[:body_end]
+        rest = after[body_end:]
+        body = re.sub(pattern, rf'\g<1>{v_str}', body, flags=re.MULTILINE)
+        return before + body + rest
+    else:
+        first_sec = re.search(r'^\[', text, re.MULTILINE)
+        top_end = first_sec.start() if first_sec else len(text)
+        top = text[:top_end]
+        top = re.sub(pattern, rf'\g<1>{v_str}', top, flags=re.MULTILINE)
+        return top + text[top_end:]
+
+@app.route("/api/lqos", methods=["GET"])
 @require_auth
-def libreqos_status():
-    installed = _libreqos_installed()
-    svc_present = _libreqos_services_present()
-    return jsonify({
-        "ok": True,
-        "installed": installed,
-        "services_present": svc_present,
-        "opt_dir": str(OPT_DIR),
-    })
+def get_lqos_conf():
+    path = _find_lqos_conf()
+    if not path.exists():
+        return jsonify({"ok": True, "exists": False, "path": str(path), "data": {}})
+    try:
+        raw  = path.read_text()
+        data = _parse_toml_simple(raw)
+        return jsonify({"ok": True, "exists": True, "path": str(path), "data": data})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
-@app.route("/api/libreqos/install", methods=["POST"])
+@app.route("/api/lqos", methods=["POST"])
 @require_auth
-def libreqos_install():
-    """Stream live install output as SSE."""
-    def generate():
-        def emit(line):
-            # SSE data lines cannot contain bare newlines — escape them
-            for part in line.splitlines():
-                yield f"data: {part}\n"
-            yield "\n"
-
-        yield from emit("➜ Downloading LibreQoS package…")
-        try:
-            dl = subprocess.run(
-                ["wget", "-q", "--show-progress", "--progress=dot:mega",
-                 "-O", LIBREQOS_DEB_FILE, LIBREQOS_DEB_URL],
-                capture_output=True, text=True, timeout=300
-            )
-            if dl.returncode != 0:
-                yield from emit(f"✘ Download failed:\n{dl.stderr.strip()}")
-                yield "event: done\ndata: error\n\n"
-                return
-        except Exception as e:
-            yield from emit(f"✘ Download error: {e}")
-            yield "event: done\ndata: error\n\n"
-            return
-
-        yield from emit("✔ Download complete.")
-        yield from emit("➜ Installing package (apt install)…")
-
-        try:
-            proc = subprocess.Popen(
-                ["apt-get", "install", "-y", LIBREQOS_DEB_FILE],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1
-            )
-            for line in proc.stdout:
-                yield from emit(line.rstrip())
-            proc.wait(timeout=300)
-            if proc.returncode != 0:
-                yield from emit(f"✘ Installation failed (exit {proc.returncode})")
-                yield "event: done\ndata: error\n\n"
-                return
-        except Exception as e:
-            yield from emit(f"✘ Install error: {e}")
-            yield "event: done\ndata: error\n\n"
-            return
-
-        yield from emit("✔ LibreQoS installed successfully.")
-        yield "event: done\ndata: ok\n\n"
-
-    return Response(stream_with_context(generate()),
-                    mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+def save_lqos_conf():
+    path = _find_lqos_conf()
+    try:
+        updates = request.get_json(force=True).get("updates", {})
+        # updates = { "section|key": value, ...} where section="" means top-level
+        if not path.exists():
+            return jsonify({"ok": False, "error": "lqos.conf not found"}), 404
+        text = path.read_text()
+        for field_key, value in updates.items():
+            if '|' in field_key:
+                sec, k = field_key.split('|', 1)
+            else:
+                sec, k = None, field_key
+            text = _toml_update(text, sec or None, k, value)
+        path.write_text(text)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 if __name__ == "__main__":
