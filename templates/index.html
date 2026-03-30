@@ -61,11 +61,27 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .chart-wrap { position: relative; height: 190px; }
 
 /* ── CPU bars ── */
-.cpu-bar-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: .75rem; }
-.cpu-bar-item { flex: 1; min-width: 28px; text-align: center; }
+.cpu-bar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(28px, 1fr)); gap: 6px; margin-top: .75rem; width: 100%; }
+.cpu-bar-item { min-width: 0; text-align: center; }
 .cpu-bar-item .lbl { font-size: 9px; color: var(--muted); }
 .cpu-bar-item .prog { height: 5px; background: #2d3748; border-radius: 3px; overflow: hidden; margin-top: 2px; }
 .cpu-bar-item .fill { height: 100%; background: var(--blue); transition: width .35s; border-radius: 3px; }
+
+/* ── System info chips ── */
+.sys-info-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: .75rem; }
+.sys-chip { background:#0d1117; border:1px solid var(--border); border-radius:10px; padding:.7rem .8rem; }
+.sys-chip .k { font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.25rem; }
+.sys-chip .v { font-size:.84rem; color:var(--text); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media(max-width:700px){ .sys-info-grid { grid-template-columns: 1fr; } }
+
+/* ── Compact MikroTik stats ── */
+.mt-compact-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:.7rem; }
+.mt-mini { background:#0d1117; border:1px solid var(--border); border-radius:10px; padding:.8rem .85rem; min-height:108px; }
+.mt-mini .name { font-size:.86rem; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.mt-mini .row { display:flex; align-items:center; justify-content:space-between; margin-top:.42rem; font-size:.8rem; color:var(--muted); }
+.mt-mini .pct { font-weight:700; color:#93c5fd; }
+.mt-mini .pct.ram { color:#34d399; }
+.mt-mini.offline .name { color:var(--muted); }
 
 /* ── Badges ── */
 .src-badge { font-size: .7rem; padding: .15em .55em; border-radius: 20px; font-weight: 600; }
@@ -401,6 +417,9 @@ code { font-size: .8rem; color: #94a3b8; }
       <button class="btn-ghost" onclick="serviceAction('restart')" title="Restart"><i class="bi bi-arrow-clockwise" style="color:var(--yellow)"></i></button>
       <button class="btn-ghost" onclick="serviceAction('stop')"    title="Stop">   <i class="bi bi-stop-fill"       style="color:var(--red)"></i></button>
     </div>
+    <button class="btn-ghost" onclick="restartUbuntuHost()" title="Restart Ubuntu host">
+      <i class="bi bi-power" style="color:var(--yellow)"></i>
+    </button>
     <div style="width:1px;height:18px;background:var(--border)"></div>
     <button class="btn-ghost" onclick="openChpw()" title="Change password"><i class="bi bi-key-fill" style="color:var(--muted)"></i></button>
     <button class="btn-ghost" onclick="doLogout()" title="Logout"><i class="bi bi-box-arrow-right" style="color:var(--muted)"></i></button>
@@ -431,6 +450,46 @@ code { font-size: .8rem; color: #94a3b8; }
     <div class="stat-card"><div class="stat-val" id="stat-mem">—</div><div class="stat-lbl">Memory Used</div></div>
     <div class="stat-card"><div class="stat-val" id="stat-devices">—</div><div class="stat-lbl">Total Devices</div></div>
     <div class="stat-card"><div class="stat-val" id="stat-routers">—</div><div class="stat-lbl">Routers</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-pc-display-horizontal"></i> System Hardware</span></div>
+    <div class="card-bd">
+      <div class="sys-info-grid">
+        <div class="sys-chip">
+          <div class="k">Hostname</div>
+          <div class="v" id="sys-hostname">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">OS</div>
+          <div class="v" id="sys-os">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">Kernel / Arch</div>
+          <div class="v" id="sys-kernel-arch">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">CPU Model</div>
+          <div class="v" id="sys-cpu-model">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">CPU Cores / Threads</div>
+          <div class="v" id="sys-cpu-cores">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">CPU Clock</div>
+          <div class="v" id="sys-cpu-clock">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">RAM Total</div>
+          <div class="v" id="sys-ram-total">—</div>
+        </div>
+        <div class="sys-chip">
+          <div class="k">Uptime</div>
+          <div class="v" id="sys-uptime">—</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div class="charts-grid">
@@ -471,9 +530,10 @@ code { font-size: .8rem; color: #94a3b8; }
       <div class="card-hd">
         <span><i class="bi bi-activity" style="color:#f472b6"></i> Interface Throughput</span>
         <div style="display:flex;align-items:center;gap:.75rem">
-          <select id="bridge-iface-select" class="search-input" style="font-size:.75rem;padding:.25rem .6rem" onchange="onBridgeIfaceChange()">
+          <select id="bridge-iface-select" class="search-input" style="font-size:.75rem;padding:.25rem .6rem" onchange="onBridgeIfaceChange()" disabled>
             <option value="">Loading…</option>
           </select>
+          <span style="font-size:.72rem;color:var(--muted)">from to_internet</span>
           <div style="display:flex;gap:.4rem;font-size:.72rem;color:var(--muted);align-items:center">
             <span style="width:18px;height:3px;background:#3b82f6;border-radius:2px;display:inline-block"></span>RX
             <span style="width:18px;height:3px;background:#22c55e;border-radius:2px;display:inline-block;margin-left:.4rem"></span>TX
@@ -504,6 +564,15 @@ code { font-size: .8rem; color: #94a3b8; }
     <div style="display:flex;gap:.6rem;align-items:center">
       <button class="btn-ghost" onclick="toggleRawConfig()" id="btn-raw-toggle"><i class="bi bi-code-slash"></i> Raw JSON</button>
       <button class="btn-primary" onclick="saveConfig()"><i class="bi bi-floppy-fill"></i> Save Changes</button>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-router-fill"></i> MikroTik Resource (config.json)</span></div>
+    <div class="card-bd">
+      <div id="mt-compact-list" class="mt-compact-grid">
+        <div class="mt-mini"><div class="name">Loading…</div></div>
+      </div>
     </div>
   </div>
 
@@ -1604,6 +1673,16 @@ function fmtBytes(b) {
   return (b/1024).toFixed(0)+' KB';
 }
 
+function fmtUptime(seconds) {
+  const s = Math.max(0, Number(seconds || 0));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 // ── Charts ────────────────────────────────────────────────────────────────
 const MAX_PTS = 60;
 function makeChart(id, color) {
@@ -1669,6 +1748,8 @@ let barEls = [];
 function buildBars(n) {
   const wrap = document.getElementById('cpu-bars');
   wrap.innerHTML = '';
+  const cols = Math.max(1, Math.ceil(n / 3));
+  wrap.style.gridTemplateColumns = `repeat(${cols}, minmax(24px, 1fr))`;
   barEls = [];
   for (let i=0;i<n;i++) {
     const d = document.createElement('div');
@@ -1683,26 +1764,28 @@ function buildBars(n) {
 // ── Bridge / interface throughput ─────────────────────────────────────────
 let bridgeIface  = '';          // selected interface
 let bridgeIfaceList = [];       // known interfaces from SSE
+let bridgeIfaceLocked = false;
 
 function onBridgeIfaceChange() {
+  if (bridgeIfaceLocked) return;
   bridgeIface = document.getElementById('bridge-iface-select').value;
   // reset chart data when switching
   bridgeChart.data.datasets.forEach(ds => ds.data = Array(MAX_PTS).fill(null));
   bridgeChart.update('none');
 }
 
-function _updateBridgeSelect(netData) {
+function _updateBridgeSelect(netData, preferredIface='') {
   const ifaces = Object.keys(netData).sort();
+  if (preferredIface && !ifaces.includes(preferredIface)) ifaces.unshift(preferredIface);
   if (JSON.stringify(ifaces) === JSON.stringify(bridgeIfaceList)) return;
   bridgeIfaceList = ifaces;
   const sel  = document.getElementById('bridge-iface-select');
-  const prev = bridgeIface || sel.value;
-  sel.innerHTML = ifaces.map(n => `<option value="${n}" ${n===prev?'selected':''}>${n}</option>`).join('');
-  // auto-select br0 if present, else first
-  if (!bridgeIface) {
-    bridgeIface = ifaces.includes('br0') ? 'br0' : ifaces[0] || '';
-    sel.value   = bridgeIface;
-  }
+  const target = preferredIface || bridgeIface || sel.value || ifaces[0] || '';
+  sel.innerHTML = ifaces.map(n => `<option value="${n}" ${n===target?'selected':''}>${n}</option>`).join('');
+  bridgeIface = target;
+  sel.value   = bridgeIface;
+  bridgeIfaceLocked = !!preferredIface;
+  sel.disabled = bridgeIfaceLocked;
 }
 
 function fmtMbps(v) {
@@ -1715,6 +1798,24 @@ const es = new EventSource('/api/metrics/stream');
 es.onmessage = e => {
   const d = JSON.parse(e.data);
   if (d.error) return;
+
+  if (d.system) {
+    document.getElementById('sys-hostname').textContent = d.system.hostname || 'Unknown';
+    document.getElementById('sys-os').textContent = d.system.os || 'Unknown';
+    const kernel = d.system.kernel || 'Unknown';
+    const arch = d.system.arch || 'Unknown';
+    document.getElementById('sys-kernel-arch').textContent = `${kernel} / ${arch}`;
+    document.getElementById('sys-cpu-model').textContent = d.system.cpu_model || 'Unknown';
+    const p = Number(d.system.cpu_cores_physical || 0);
+    const l = Number(d.system.cpu_cores_logical || 0);
+    document.getElementById('sys-cpu-cores').textContent = p > 0 || l > 0 ? `${p || '?'} / ${l || '?'}` : 'Unknown';
+    const ghz = Number(d.system.cpu_clock_ghz || 0);
+    document.getElementById('sys-cpu-clock').textContent = ghz > 0 ? `${ghz.toFixed(2)} GHz` : 'Unknown';
+    const ramTotal = Number(d.system.ram_total || 0);
+    document.getElementById('sys-ram-total').textContent = ramTotal > 0 ? fmtBytes(ramTotal) : 'Unknown';
+  }
+  document.getElementById('sys-uptime').textContent = fmtUptime(d.uptime_seconds || 0);
+
   pushPt(cpuChart, d.cpu_avg);
   document.getElementById('stat-cpu').textContent = d.cpu_avg.toFixed(1)+'%';
   if (barEls.length !== d.cpu_per.length) buildBars(d.cpu_per.length);
@@ -1727,7 +1828,7 @@ es.onmessage = e => {
 
   // Bridge throughput
   if (d.net && Object.keys(d.net).length) {
-    _updateBridgeSelect(d.net);
+    _updateBridgeSelect(d.net, d.bridge_iface || '');
     const stats = d.net[bridgeIface];
     if (stats) {
       bridgeChart.data.datasets[0].data.push(stats.rx_mbps);
@@ -1755,6 +1856,47 @@ async function serviceAction(a) {
   const d = await r.json();
   toast(d.ok ? `Service ${a}ed` : d.error, d.ok);
   setTimeout(checkService, 1500);
+}
+
+async function restartUbuntuHost() {
+  const ok = confirm('Restart Ubuntu host now? This will disconnect the web UI.');
+  if (!ok) return;
+  const r = await fetch('/api/system/restart', {method:'POST'});
+  const d = await r.json();
+  if (d.ok) {
+    toast('Ubuntu restart requested. Device will reboot shortly.', true);
+  } else {
+    toast(d.error || 'Failed to restart Ubuntu host', false);
+  }
+}
+
+async function loadMikrotikResource() {
+  const box = document.getElementById('mt-compact-list');
+  if (!box) return;
+  try {
+    const r = await fetch('/api/dashboard/mikrotik/resource');
+    const d = await r.json();
+    if (!d.ok || !Array.isArray(d.routers)) {
+      box.innerHTML = '<div class="mt-mini offline"><div class="name">Unavailable</div></div>';
+      return;
+    }
+    if (!d.routers.length) {
+      box.innerHTML = '<div class="mt-mini offline"><div class="name">No routers in config.json</div></div>';
+      return;
+    }
+    box.innerHTML = d.routers.map(rt => {
+      const title = rt.identity || rt.router || `Router ${Number(rt.index || 0) + 1}`;
+      if (!rt.ok) {
+        return `<div class="mt-mini offline"><div class="name">${title}</div><div class="row"><span>Offline</span><span class="pct">—</span></div></div>`;
+      }
+      const cpu = Number(rt.cpu_percent || 0).toFixed(1);
+      const ram = Number(rt.ram_percent || 0).toFixed(1);
+      const uptime = (rt.uptime || '').toString().trim() || '—';
+      return `<div class="mt-mini"><div class="name">${title}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div><div class="row"><span>Uptime</span><span class="pct">${uptime}</span></div></div>`;
+    }).join('');
+  } catch (_e) {
+    box.innerHTML = '<div class="mt-mini offline"><div class="name">Unavailable</div></div>';
+  }
 }
 // checkService called via initApp after auth
 
@@ -2740,10 +2882,17 @@ async function loadMgmt() {
   if (id.ok) {
     const sel = document.getElementById('mgmt-iface');
     const prev = sel.value;
+    const interfaces = id.interfaces.filter(i => i.name !== 'lo');
     sel.innerHTML = id.interfaces
       .filter(i => i.name !== 'lo')
       .map(i => `<option value="${i.name}" ${i.name===prev?'selected':''}>${i.name}${i.is_up?' ●':''}</option>`)
       .join('');
+    // Auto-select the currently active interface with an assigned IP.
+    const best = interfaces.find(i => i.is_up && (i.addresses || []).length)
+      || interfaces.find(i => (i.addresses || []).length)
+      || interfaces.find(i => i.is_up)
+      || interfaces[0];
+    if (best) sel.value = best.name;
     renderMgmtStatus(id.interfaces);
   }
 
@@ -2804,7 +2953,12 @@ function parseMgmtYaml(text) {
   const ifaceMatch = text.match(/ethernets:\s*\n\s+(\S+):/);
   if (ifaceMatch) {
     const sel = document.getElementById('mgmt-iface');
-    if ([...sel.options].some(o => o.value === ifaceMatch[1])) sel.value = ifaceMatch[1];
+    const activeOpt = [...sel.options].find(o => o.value === sel.value);
+    // Keep active interface selection if present; otherwise fall back to YAML interface.
+    if ((!activeOpt || !String(activeOpt.textContent).includes('●'))
+        && [...sel.options].some(o => o.value === ifaceMatch[1])) {
+      sel.value = ifaceMatch[1];
+    }
   }
   // Detect mode
   const isDhcp = /dhcp4:\s*(yes|true)/i.test(text);
@@ -3386,7 +3540,9 @@ function initApp() {
   loadYaml('libreqos');
   loadTroubleshooting();
   loadDevices();
+  loadMikrotikResource();
   setInterval(loadDevices, 30000);
+  setInterval(loadMikrotikResource, 15000);
   checkService();
   setInterval(checkService, 10000);
   startSSE();

@@ -124,6 +124,43 @@ def build_comment(source, rate_str, rate_failed, scan_time):
     return f"{source} | {rate_label} | {ts}"
 
 
+def extract_first_rate(text):
+    """
+    Return the first X/X rate token found in a free-form string, or '' if none.
+    Handles comma/space separated lists and MikroTik rate-limit strings.
+    """
+    if not text:
+        return ''
+    for token in re.split(r'[\s,]+', text.strip()):
+        token = token.strip()
+        if token and parse_rate(token):
+            return token
+    return ''
+
+
+def resolve_rate_with_fallback(list_name, comment_str, rate_limit_str, default_dl, default_ul):
+    """
+    Rate resolution fallback chain:
+      1. address-list name  (e.g. '50M/50M')
+      2. comment field
+      3. rate-limit / rate field
+      4. config default
+    Returns (rx_max, tx_max, rx_min, tx_min, rate_failed, rate_source, rate_str_used).
+    """
+    for source, raw in [
+        ('address_list', list_name),
+        ('comment',      comment_str),
+        ('rate_limit',   rate_limit_str),
+    ]:
+        token = extract_first_rate(raw)
+        if token:
+            rx_max, tx_max, rx_min, tx_min, failed = resolve_rates(token, default_dl, default_ul)
+            return rx_max, tx_max, rx_min, tx_min, failed, source, token
+
+    rx_max, tx_max, rx_min, tx_min, _ = resolve_rates('', default_dl, default_ul)
+    return rx_max, tx_max, rx_min, tx_min, True, 'default', ''
+
+
 def resolve_rates(rate_str, default_dl, default_ul):
     """
     Try to parse rate_str. If valid, apply MAX/MIN multipliers.
@@ -643,18 +680,21 @@ def process_pppoe_users(api, conn, router, ip_to_list, parent_node, scan_time):
         address   = session.get('address', '')
         caller_id = session.get('caller-id', '')
 
-        if address not in ip_to_list:
-            logger.debug(f"PPPoE skip {name}: IP={address} not in address list")
+        if not address:
             continue
 
         mac  = caller_id.upper()
         code = f"PPP-{name}"
 
-        list_name = ip_to_list.get(address, '')
-        rx_max, tx_max, rx_min, tx_min, rate_failed = resolve_rates(list_name, default_dl, default_ul)
-        logger.debug(f"PPPoE {code}: IP={address} list='{list_name}' → {rx_max}/{tx_max} Mbps")
+        list_name      = ip_to_list.get(address, '')
+        comment_field  = session.get('comment', '')
+        rate_limit_str = session.get('rate', '')
 
-        comment = build_comment('pppoe', list_name, rate_failed, scan_time)
+        rx_max, tx_max, rx_min, tx_min, rate_failed, rate_src, rate_used = \
+            resolve_rate_with_fallback(list_name, comment_field, rate_limit_str, default_dl, default_ul)
+        logger.debug(f"PPPoE {code}: IP={address} src={rate_src} rate='{rate_used}' → {rx_max}/{tx_max} Mbps")
+
+        comment = build_comment('pppoe', rate_used or list_name, rate_failed, scan_time)
 
         if upsert_device(conn, code, parent_node, mac, address,
                          comment, 'pppoe', router_name,
@@ -689,18 +729,21 @@ def process_hotspot_users(api, conn, router, ip_to_list, parent_node, scan_time)
         if not username and not mac:
             continue
 
-        if address not in ip_to_list:
-            logger.debug(f"Hotspot skip {username or mac}: IP={address} not in address list")
+        if not address:
             continue
 
         mac_clean = mac.replace(':', '')
         code = f"HS-{mac_clean}" if mac_clean else f"HS-{username}"
 
-        list_name = ip_to_list.get(address, '')
-        rx_max, tx_max, rx_min, tx_min, rate_failed = resolve_rates(list_name, default_dl, default_ul)
-        logger.debug(f"Hotspot {code}: IP={address} list='{list_name}' → {rx_max}/{tx_max} Mbps")
+        list_name      = ip_to_list.get(address, '')
+        comment_field  = user.get('comment', '')
+        rate_limit_str = user.get('rate', '')
 
-        comment = build_comment('hotspot', list_name, rate_failed, scan_time)
+        rx_max, tx_max, rx_min, tx_min, rate_failed, rate_src, rate_used = \
+            resolve_rate_with_fallback(list_name, comment_field, rate_limit_str, default_dl, default_ul)
+        logger.debug(f"Hotspot {code}: IP={address} src={rate_src} rate='{rate_used}' → {rx_max}/{tx_max} Mbps")
+
+        comment = build_comment('hotspot', rate_used or list_name, rate_failed, scan_time)
 
         if upsert_device(conn, code, parent_node, mac, address,
                          comment, 'hotspot', router_name,
@@ -737,26 +780,16 @@ def process_dhcp_leases(api, conn, router, ip_to_list, parent_node, scan_time):
 
         # address-list field on the lease (e.g. "50M/50M")
         addr_list_field = lease.get('address-list', lease.get('address-lists', ''))
+        comment_field   = lease.get('comment', '')
+        rate_limit_str  = lease.get('rate-limit', '')
 
-        # Pick first valid rate token from the field (may be comma/space separated)
-        rate_name = ''
-        for token in re.split(r'[,\s]+', addr_list_field):
-            token = token.strip()
-            if token and parse_rate(token):
-                rate_name = token
-                break
-
-        # Skip leases without a valid rate format or whose IP isn't in the address list
-        if not rate_name or address not in ip_to_list:
-            logger.debug(f"DHCP skip {mac} (IP={address}): rate='{rate_name}' in_addr_list={address in ip_to_list}")
-            continue
-
-        rx_max, tx_max, rx_min, tx_min, rate_failed = resolve_rates(rate_name, default_dl, default_ul)
-        logger.debug(f"DHCP {mac}: address-list='{rate_name}' → {rx_max}/{tx_max} Mbps")
+        rx_max, tx_max, rx_min, tx_min, rate_failed, rate_src, rate_used = \
+            resolve_rate_with_fallback(addr_list_field, comment_field, rate_limit_str, default_dl, default_ul)
+        logger.debug(f"DHCP {mac}: IP={address} src={rate_src} rate='{rate_used}' → {rx_max}/{tx_max} Mbps")
 
         mac_clean = mac.replace(':', '')
         code    = f"DHCP-{hostname}" if hostname else f"DHCP-{mac_clean}"
-        comment = build_comment('dhcp', rate_name, rate_failed, scan_time)
+        comment = build_comment('dhcp', rate_used or addr_list_field, rate_failed, scan_time)
 
         if upsert_device(conn, code, parent_node, mac, address,
                          comment, 'dhcp', router_name,

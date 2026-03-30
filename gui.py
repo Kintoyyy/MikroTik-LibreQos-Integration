@@ -11,6 +11,7 @@ import hashlib
 import secrets
 import functools
 import socket
+import re
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 
@@ -138,6 +139,144 @@ _metric_listeners: list = []
 _metric_lock = threading.Lock()
 _prev_net: dict = {}          # {iface: (bytes_recv, bytes_sent, ts)}
 _BRIDGE_EXCLUDE = {"lo"}      # interfaces to skip from the bridge graph
+_lqos_conf_cache = {"mtime": None, "to_internet": ""}
+_system_profile_cache = None
+
+
+def _get_bridge_iface_from_lqos() -> str:
+    """Read to_internet from lqos.conf, with mtime-based caching."""
+    try:
+        st = LQOS_CONF_PATH.stat()
+    except Exception:
+        return ""
+
+    mtime = st.st_mtime
+    if _lqos_conf_cache["mtime"] == mtime:
+        return _lqos_conf_cache["to_internet"]
+
+    to_internet = ""
+    try:
+        for raw in LQOS_CONF_PATH.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            line = line.split("#", 1)[0].strip()
+            m = re.match(r'^to_internet\s*=\s*"([^"]+)"\s*$', line)
+            if m:
+                to_internet = m.group(1).strip()
+                break
+    except Exception:
+        to_internet = ""
+
+    _lqos_conf_cache["mtime"] = mtime
+    _lqos_conf_cache["to_internet"] = to_internet
+    return to_internet
+
+
+def _detect_ram_type() -> str:
+    """Best-effort detection of RAM DDR generation."""
+    for cmd in (["dmidecode", "-t", "memory"], ["lshw", "-class", "memory"]):
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+            text = (proc.stdout or "") + "\n" + (proc.stderr or "")
+            m = re.search(r"\bDDR\d\b", text, re.IGNORECASE)
+            if m:
+                return m.group(0).upper()
+        except Exception:
+            continue
+    return "Unknown"
+
+
+def _get_system_profile() -> dict:
+    """Collect host hardware/platform details once, then reuse."""
+    global _system_profile_cache
+    if _system_profile_cache is not None:
+        return _system_profile_cache
+
+    cpu_model = "Unknown"
+    try:
+        for raw in Path("/proc/cpuinfo").read_text().splitlines():
+            if raw.lower().startswith("model name"):
+                cpu_model = raw.split(":", 1)[1].strip()
+                break
+    except Exception:
+        pass
+
+    cpu_clock_ghz = 0.0
+    try:
+        if HAS_PSUTIL:
+            f = psutil.cpu_freq()
+            if f and f.current:
+                cpu_clock_ghz = round(float(f.current) / 1000.0, 2)
+    except Exception:
+        pass
+
+    if cpu_clock_ghz <= 0:
+        try:
+            for raw in Path("/proc/cpuinfo").read_text().splitlines():
+                if raw.lower().startswith("cpu mhz"):
+                    mhz = float(raw.split(":", 1)[1].strip())
+                    cpu_clock_ghz = round(mhz / 1000.0, 2)
+                    break
+        except Exception:
+            pass
+
+    os_pretty_name = "Linux"
+    try:
+        os_release = Path("/etc/os-release").read_text().splitlines()
+        for raw in os_release:
+            if raw.startswith("PRETTY_NAME="):
+                os_pretty_name = raw.split("=", 1)[1].strip().strip('"')
+                break
+    except Exception:
+        pass
+
+    kernel_release = "Unknown"
+    arch = "Unknown"
+    try:
+        un = os.uname()
+        kernel_release = un.release
+        arch = un.machine
+    except Exception:
+        pass
+
+    logical_cores = 0
+    physical_cores = 0
+    mem_total = 0
+    try:
+        if HAS_PSUTIL:
+            logical_cores = int(psutil.cpu_count(logical=True) or 0)
+            physical_cores = int(psutil.cpu_count(logical=False) or 0)
+            mem_total = int(psutil.virtual_memory().total)
+    except Exception:
+        pass
+
+    _system_profile_cache = {
+        "hostname": socket.gethostname(),
+        "os": os_pretty_name,
+        "kernel": kernel_release,
+        "arch": arch,
+        "cpu_model": cpu_model,
+        "cpu_clock_ghz": cpu_clock_ghz,
+        "cpu_cores_physical": physical_cores,
+        "cpu_cores_logical": logical_cores,
+        "ram_type": _detect_ram_type(),
+        "ram_total": mem_total,
+    }
+    return _system_profile_cache
+
+
+def _uptime_seconds() -> int:
+    """Best-effort system uptime in seconds."""
+    try:
+        if HAS_PSUTIL:
+            return max(0, int(time.time() - psutil.boot_time()))
+    except Exception:
+        pass
+    try:
+        return max(0, int(float(Path("/proc/uptime").read_text().split()[0])))
+    except Exception:
+        return 0
 
 def _net_throughput():
     """Return {iface: {rx_mbps, tx_mbps}} using delta from previous sample."""
@@ -203,6 +342,8 @@ def _broadcast_loop():
             cpu_avg  = sum(cpu_per) / len(cpu_per)
             mem      = psutil.virtual_memory()
             net      = _net_throughput()
+            bridge_iface = _get_bridge_iface_from_lqos()
+            sys_profile = _get_system_profile()
             payload  = json.dumps({
                 "cpu_per":    cpu_per,
                 "cpu_avg":    round(cpu_avg, 1),
@@ -210,6 +351,9 @@ def _broadcast_loop():
                 "mem_total":  mem.total,
                 "mem_percent": mem.percent,
                 "net":        net,
+                "bridge_iface": bridge_iface,
+                "system":     sys_profile,
+                "uptime_seconds": _uptime_seconds(),
             })
         else:
             payload = json.dumps({"error": "psutil not installed"})
@@ -554,6 +698,19 @@ def service_action(action):
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/system/restart", methods=["POST"])
+@require_auth
+def restart_ubuntu_host():
+    """Schedule host reboot through systemd."""
+    try:
+        result = _systemctl("reboot", capture_output=True, text=True)
+        if result.returncode != 0:
+            return jsonify({"ok": False, "error": result.stderr.strip() or "reboot failed"}), 500
+        return jsonify({"ok": True, "message": "Ubuntu restart requested"})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ---------------------------------------------------------------------------
 # Multi-service management
 # ---------------------------------------------------------------------------
@@ -798,6 +955,64 @@ def troubleshoot_mt_connect():
                 pass
 
 
+@app.route("/api/dashboard/mikrotik/resource")
+@require_auth
+def dashboard_mikrotik_resource():
+    """Return compact CPU/RAM percentages for all routers in config.json."""
+    try:
+        cfg = _load_config()
+        routers = cfg.get("routers") or []
+        result = []
+
+        for idx, router in enumerate(routers):
+            pool = None
+            try:
+                router_copy = dict(router)
+                router_copy["port"] = int(router_copy.get("port", 8728) or 8728)
+                pool = _connect_router_api(router_copy)
+                api = pool.get_api()
+
+                resource_rows = api.get_resource("/system/resource").get()
+                identity_rows = api.get_resource("/system/identity").get()
+                resource = resource_rows[0] if resource_rows else {}
+                identity = identity_rows[0] if identity_rows else {}
+
+                total_mem = int(resource.get("total-memory", 0) or 0)
+                free_mem = int(resource.get("free-memory", 0) or 0)
+                used_mem = max(total_mem - free_mem, 0)
+                ram_percent = round((used_mem / total_mem * 100.0), 1) if total_mem > 0 else 0.0
+
+                result.append({
+                    "index": idx,
+                    "router": router_copy.get("name") or router_copy.get("address") or f"Router {idx + 1}",
+                    "identity": identity.get("name", ""),
+                    "cpu_percent": float(resource.get("cpu-load", 0) or 0),
+                    "ram_percent": ram_percent,
+                    "uptime": str(resource.get("uptime", "") or ""),
+                    "ok": True,
+                })
+            except Exception as re:
+                result.append({
+                    "index": idx,
+                    "router": router.get("name") or router.get("address") or f"Router {idx + 1}",
+                    "cpu_percent": None,
+                    "ram_percent": None,
+                    "uptime": None,
+                    "ok": False,
+                    "error": str(re),
+                })
+            finally:
+                if pool is not None:
+                    try:
+                        pool.disconnect()
+                    except Exception:
+                        pass
+
+        return jsonify({"ok": True, "count": len(result), "routers": result})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/troubleshoot/mt/permissions", methods=["POST"])
 @require_auth
 def troubleshoot_mt_permissions():
@@ -917,6 +1132,40 @@ def _extract_array(text: str, section: str | None, key: str) -> list:
 def _toml_update(text: str, section: str | None, key: str, value) -> str:
     """Return TOML text with the given key updated to value."""
     import re
+
+    def _update_key_in_scope(scope_text: str) -> str:
+        """Replace a key assignment inside a section/top-level text block."""
+        lines = scope_text.splitlines(keepends=True)
+        key_re = re.compile(rf'^(\s*)({re.escape(key)})(\s*=\s*)(.*?)(\r?\n?)$')
+
+        for i, line in enumerate(lines):
+            m = key_re.match(line)
+            if not m:
+                continue
+
+            indent, _, eq_ws, rhs, line_end = m.groups()
+            if not line_end:
+                line_end = "\n"
+
+            new_line = f"{indent}{key}{eq_ws}{v_str}{line_end}"
+            rhs_stripped = rhs.strip()
+
+            # If this assignment is a multiline array, remove the full old block.
+            if rhs_stripped.startswith("[") and "]" not in rhs_stripped:
+                j = i + 1
+                while j < len(lines):
+                    if "]" in lines[j]:
+                        j += 1
+                        break
+                    j += 1
+                lines[i:j] = [new_line]
+            else:
+                lines[i] = new_line
+
+            return "".join(lines)
+
+        return scope_text
+
     if isinstance(value, bool):
         v_str = 'true' if value else 'false'
     elif isinstance(value, str):
@@ -926,8 +1175,6 @@ def _toml_update(text: str, section: str | None, key: str, value) -> str:
         v_str = f'[{items}]'
     else:
         v_str = str(value)
-
-    pattern = rf'^({re.escape(key)}\s*=\s*).*$'
 
     if section:
         sec_m = re.search(rf'^\[{re.escape(section)}\]', text, re.MULTILINE)
@@ -939,13 +1186,13 @@ def _toml_update(text: str, section: str | None, key: str, value) -> str:
         body_end = next_sec.start() if next_sec else len(after)
         body = after[:body_end]
         rest = after[body_end:]
-        body = re.sub(pattern, rf'\g<1>{v_str}', body, flags=re.MULTILINE)
+        body = _update_key_in_scope(body)
         return before + body + rest
     else:
         first_sec = re.search(r'^\[', text, re.MULTILINE)
         top_end = first_sec.start() if first_sec else len(text)
         top = text[:top_end]
-        top = re.sub(pattern, rf'\g<1>{v_str}', top, flags=re.MULTILINE)
+        top = _update_key_in_scope(top)
         return top + text[top_end:]
 
 @app.route("/api/lqos", methods=["GET"])
