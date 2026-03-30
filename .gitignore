@@ -8,3 +8,4 @@ lqos.conf
 venv/lib64
 network.json
 __pycache__/database.cpython-312.pyc
+*.bak
