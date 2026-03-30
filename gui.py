@@ -352,9 +352,10 @@ def save_yaml(name):
         netplan_out = None
         if apply:
             try:
-                subprocess.run(["chmod", "600", str(path)], check=True)
+                os.chmod(str(path), 0o600)
+                netplan_bin = _which("netplan") or "/usr/sbin/netplan"
                 result = subprocess.run(
-                    ["netplan", "apply"],
+                    [netplan_bin, "apply"],
                     capture_output=True, text=True, timeout=15
                 )
                 netplan_out = result.stdout.strip() or result.stderr.strip() or "applied"
