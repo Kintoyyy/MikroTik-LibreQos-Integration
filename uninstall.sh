@@ -8,47 +8,70 @@ NC='\033[0m'
 
 LIBREQOS_DIR="/opt/libreqos"
 SRC_DIR="$LIBREQOS_DIR/src"
-PYTHON_SCRIPT="$SRC_DIR/updatecsv.py"
-CONFIG_JSON="$SRC_DIR/config.json"
 SERVICE_FILE="/etc/systemd/system/updatecsv.service"
+GUI_SERVICE_FILE="/etc/systemd/system/gui.service"
 
 DELETED_FILES=()
 
-log_deleted_file() {
-    if [ -f "$1" ] || [ -d "$1" ]; then
-        rm -f "$1"
-        DELETED_FILES+=("$1")
+log_delete() {
+    local path="$1"
+    if [ -f "$path" ] || [ -d "$path" ]; then
+        rm -rf "$path"
+        DELETED_FILES+=("$path")
     fi
 }
 
 if [[ $EUID -ne 0 ]]; then
-   printf "${RED}✘ This script must be run as root. Use sudo.${NC}\n"
-   exit 1
+    printf "${RED}✘ This script must be run as root. Use sudo.${NC}\n"
+    exit 1
 fi
 
-printf "${BLUE}➜ Stopping LibreQoS update service...${NC}\n"
-systemctl stop updatecsv.service 2>/dev/null
-systemctl disable updatecsv.service 2>/dev/null
+# ── Stop and disable services ─────────────────────────────────────────────
 
-log_deleted_file "$PYTHON_SCRIPT"
-log_deleted_file "$CONFIG_JSON"
-log_deleted_file "$CONFIG_JSON.bak"
-log_deleted_file "$SERVICE_FILE"
+printf "${BLUE}➜ Stopping and disabling services...${NC}\n"
+for svc in updatecsv.service gui.service; do
+    systemctl stop "$svc"    2>/dev/null
+    systemctl disable "$svc" 2>/dev/null
+done
+
+# ── Remove installed files ────────────────────────────────────────────────
+
+printf "${BLUE}➜ Removing installed files...${NC}\n"
+
+log_delete "$SRC_DIR/updatecsv.py"
+log_delete "$SRC_DIR/gui.py"
+log_delete "$SRC_DIR/templates"
+log_delete "$SRC_DIR/config.json"
+log_delete "$SRC_DIR/config.json.bak"
+log_delete "$SRC_DIR/devices.db"
+log_delete "$SRC_DIR/gui_auth.json"
+log_delete "$SRC_DIR/network.json"
+log_delete "$SRC_DIR/ShapedDevices.csv"
+log_delete "$SERVICE_FILE"
+log_delete "$GUI_SERVICE_FILE"
+
+# ── Remove Python venv ────────────────────────────────────────────────────
 
 if [ -d "$LIBREQOS_DIR/venv" ]; then
-    printf "${BLUE}➜ Removing Python dependencies...${NC}\n"
-    "$LIBREQOS_DIR/venv/bin/pip" freeze | xargs "$LIBREQOS_DIR/venv/bin/pip" uninstall -y
+    printf "${BLUE}➜ Removing Python virtual environment...${NC}\n"
+    rm -rf "$LIBREQOS_DIR/venv"
+    DELETED_FILES+=("$LIBREQOS_DIR/venv")
 fi
+
+# ── Reload systemd ────────────────────────────────────────────────────────
+
+systemctl daemon-reload
+
+# ── Summary ───────────────────────────────────────────────────────────────
 
 if [ ${#DELETED_FILES[@]} -gt 0 ]; then
-    printf "\n${GREEN}✔ Deleted Files:${NC}\n"
-    for file in "${DELETED_FILES[@]}"; do
-        printf "${YELLOW}  • $file${NC}\n"
+    printf "\n${GREEN}✔ Deleted:${NC}\n"
+    for f in "${DELETED_FILES[@]}"; do
+        printf "${YELLOW}  • $f${NC}\n"
     done
-    printf "\n${GREEN}✔ Total files deleted: ${#DELETED_FILES[@]}${NC}\n"
+    printf "\n${GREEN}✔ Total removed: ${#DELETED_FILES[@]}${NC}\n"
 else
-    printf "${YELLOW}➜ No files were deleted.${NC}\n"
+    printf "${YELLOW}➜ Nothing to remove — files not found.${NC}\n"
 fi
 
-printf "${GREEN}✔ LibreQoS uninstallation process complete.${NC}\n"
-printf "${BLUE}➜ Please adjust your ShapedDevice.csv and network.json to avoid sanity errors${NC}\n"
+printf "${GREEN}✔ LQ-Sync uninstall complete.${NC}\n"
