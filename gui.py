@@ -94,7 +94,7 @@ def _find_lqos_conf():
 
 YAML_FILES = {
     "libreqos":      NETPLAN_DIR / "libreqos.yaml",
-    "lqos":          OPT_DIR / "lqos.conf",
+    "lqos":          LQOS_CONF_PATH,
     "network_json":  OPT_DIR / "network.json",
     "config_json":   OPT_DIR / "config.json",
     "shaped_devices": OPT_DIR / "ShapedDevices.csv",
@@ -117,8 +117,11 @@ def _systemctl(*args, **kwargs):
     """Run systemctl with the given args. Returns CompletedProcess or raises RuntimeError."""
     bin_ = _which("systemctl")
     if not bin_:
-        raise RuntimeError("systemctl not found — is this a systemd system?")
-    return subprocess.run([bin_] + list(args), **kwargs)
+        raise RuntimeError("systemctl not available on this system")
+    try:
+        return subprocess.run([bin_] + list(args), **kwargs)
+    except (FileNotFoundError, OSError) as e:
+        raise RuntimeError(f"systemctl not available on this system: {e}")
 
 # ---------------------------------------------------------------------------
 # SSE metrics broadcaster
@@ -584,11 +587,14 @@ def _get_service_info(name):
 @app.route("/api/services")
 @require_auth
 def get_services():
-    try:
-        result = [_get_service_info(n) for n in MANAGED_SERVICES]
-        return jsonify({"ok": True, "services": result})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    result = []
+    for n in MANAGED_SERVICES:
+        try:
+            result.append(_get_service_info(n))
+        except Exception:
+            result.append({"name": n, "active": "unknown", "sub": "unknown",
+                           "pid": "0", "started": "", "loaded": "not-found"})
+    return jsonify({"ok": True, "services": result})
 
 @app.route("/api/services/<name>/<action>", methods=["POST"])
 @require_auth
@@ -650,6 +656,45 @@ def lqusers_reset():
         return jsonify({"ok": True, "removed": removed})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/troubleshoot/flush", methods=["POST"])
+@require_auth
+def flush_data():
+    results = {}
+    errors = []
+
+    # Clear devices.db
+    try:
+        if DB_PATH.exists():
+            con = sqlite3.connect(str(DB_PATH))
+            con.execute("DELETE FROM devices")
+            con.commit()
+            con.close()
+            results["devices_db"] = "cleared"
+        else:
+            results["devices_db"] = "not found"
+    except Exception as e:
+        errors.append(f"devices.db: {e}")
+
+    # Clear ShapedDevices.csv (write header only)
+    shaped_path = OPT_DIR / "ShapedDevices.csv"
+    try:
+        header = "Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment\n"
+        shaped_path.write_text(header)
+        results["ShapedDevices.csv"] = "cleared"
+    except Exception as e:
+        errors.append(f"ShapedDevices.csv: {e}")
+
+    # Clear network.json (write empty object)
+    network_path = OPT_DIR / "network.json"
+    try:
+        network_path.write_text("{}\n")
+        results["network.json"] = "cleared"
+    except Exception as e:
+        errors.append(f"network.json: {e}")
+
+    return jsonify({"ok": not errors, "results": results, "errors": errors})
 
 
 @app.route("/api/troubleshoot/routers")

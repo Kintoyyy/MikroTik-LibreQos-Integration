@@ -71,47 +71,25 @@ deactivate
 
 # ── Copy scripts ──────────────────────────────────────────────────────────
 
-if [ -f "updatecsv.py" ]; then
-    printf "${YELLOW}➜ Copying updatecsv.py...${NC}\n"
-    cp "updatecsv.py" "$PYTHON_SCRIPT"
-    chmod +x "$PYTHON_SCRIPT"
-else
-    printf "${YELLOW}➜ updatecsv.py not found in repository. Skipping...${NC}\n"
-fi
+printf "${YELLOW}➜ Copying updatecsv.py...${NC}\n"
+cp "updatecsv.py" "$PYTHON_SCRIPT"
+chmod +x "$PYTHON_SCRIPT"
 
-if [ -f "gui.py" ]; then
-    printf "${YELLOW}➜ Copying gui.py...${NC}\n"
-    cp "gui.py" "$GUI_SCRIPT"
-    chmod +x "$GUI_SCRIPT"
-else
-    printf "${YELLOW}➜ gui.py not found in repository. Skipping...${NC}\n"
-fi
+printf "${YELLOW}➜ Copying gui.py...${NC}\n"
+cp "gui.py" "$GUI_SCRIPT"
+chmod +x "$GUI_SCRIPT"
 
-if [ -d "templates" ]; then
-    printf "${YELLOW}➜ Copying templates/...${NC}\n"
-    cp -r templates/. "$TEMPLATES_DIR/"
-else
-    printf "${YELLOW}➜ templates/ not found in repository. Skipping...${NC}\n"
-fi
+printf "${YELLOW}➜ Copying templates/...${NC}\n"
+cp -r templates/. "$TEMPLATES_DIR/"
 
 # ── config.json ───────────────────────────────────────────────────────────
 
-if [ -f "config.json" ]; then
-    if jq empty config.json >/dev/null 2>&1; then
-        printf "${YELLOW}➜ Copying config.json...${NC}\n"
-        cp "config.json" "$CONFIG_JSON"
-        chmod 640 "$CONFIG_JSON"
-    else
-        printf "${RED}✘ Error: Invalid JSON in local config.json.${NC}\n"
-        if [ -f "$CONFIG_JSON" ] && jq empty "$CONFIG_JSON" >/dev/null 2>&1; then
-            printf "${YELLOW}➜ Keeping existing installed config at $CONFIG_JSON.${NC}\n"
-        else
-            printf "${YELLOW}➜ Falling back to default configuration.${NC}\n"
-            rm -f "$CONFIG_JSON"
-        fi
-    fi
+if [ -f "config.json" ] && jq empty config.json >/dev/null 2>&1; then
+    printf "${YELLOW}➜ Copying config.json...${NC}\n"
+    cp "config.json" "$CONFIG_JSON"
+    chmod 640 "$CONFIG_JSON"
 else
-    printf "${YELLOW}➜ Creating default config.json...${NC}\n"
+    printf "${YELLOW}➜ config.json missing or invalid — keeping existing or writing default.${NC}\n"
 fi
 
 if [ ! -s "$CONFIG_JSON" ]; then

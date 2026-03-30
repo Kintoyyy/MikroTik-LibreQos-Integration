@@ -721,6 +721,27 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
   </div>
 
+  <!-- Flush Data -->
+  <div class="card" style="margin-top:1rem;border-color:#ef444433">
+    <div class="card-hd" style="background:#1a0808">
+      <span style="display:flex;align-items:center;gap:.6rem">
+        <i class="bi bi-trash3-fill" style="color:var(--red);font-size:1rem"></i>
+        <span>Flush All Sync Data</span>
+      </span>
+    </div>
+    <div class="card-bd">
+      <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 .9rem">
+        Clears the device database, <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">ShapedDevices.csv</code>,
+        and <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">network.json</code>.
+        The next sync cycle will repopulate everything from scratch. Use this to fix stale or corrupt data.
+      </p>
+      <div id="flush-result" style="display:none;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem"></div>
+      <button class="btn-danger-ghost" onclick="confirmFlushData()" id="btn-flush-data" style="padding:.45rem 1rem">
+        <i class="bi bi-trash3"></i> Flush All Data
+      </button>
+    </div>
+  </div>
+
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -1190,6 +1211,15 @@ code { font-size: .8rem; color: #94a3b8; }
       <button class="btn-ghost" onclick="loadLqosConf()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
       <button class="btn-primary" onclick="saveLqosConf()"><i class="bi bi-floppy-fill"></i> Save Changes</button>
     </div>
+  </div>
+
+  <!-- Apply note -->
+  <div style="display:flex;align-items:flex-start;gap:.6rem;background:#0d1a0d;border:1px solid #22c55e33;border-radius:10px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.8rem;color:#86efac;line-height:1.6">
+    <i class="bi bi-info-circle-fill" style="margin-top:.1rem;flex-shrink:0"></i>
+    <span>
+      Changes to <code style="background:#0a1a0a;padding:.1em .35em;border-radius:4px;color:#4ade80">qoo_profiles.json</code> are picked up automatically.<br>
+      If you change <code style="background:#0a1a0a;padding:.1em .35em;border-radius:4px;color:#4ade80">/etc/lqos.conf</code>, you must restart <strong>lqosd</strong> for changes to take effect.
+    </span>
   </div>
 
   <!-- General -->
@@ -2217,13 +2247,41 @@ let ifaceList = [];
 let netplanCM = null;
 
 async function loadInterfaces() {
-  const r = await fetch('/api/interfaces');
-  const d = await r.json();
+  const [ir, yr] = await Promise.all([
+    fetch('/api/interfaces'),
+    fetch('/api/yaml/libreqos'),
+  ]);
+  const d = await ir.json();
   if (!d.ok) { toast(d.error, false); return; }
   ifaceList = d.interfaces;
   renderIfaceCards(d.interfaces);
   populateIfaceSelects(d.interfaces);
-  updateNetplanPreview();
+
+  // Load current libreqos.yaml and pre-select option + interfaces
+  const yd = await yr.json();
+  if (yd.ok && yd.content) {
+    const yaml = yd.content;
+    const hasbridge = /^\s+bridges:/m.test(yaml);
+    // detect interface names from yaml: lines like "    eth0:" under ethernets
+    const ifaceMatches = [...yaml.matchAll(/^        (\S+):\s*$/gm)].map(m => m[1]);
+    if (hasbridge) {
+      selectNetplan('a');
+    } else if (ifaceMatches.length) {
+      selectNetplan('b');
+    }
+    if (ifaceMatches.length >= 1) {
+      const s1 = document.getElementById('iface1');
+      if ([...s1.options].some(o => o.value === ifaceMatches[0])) s1.value = ifaceMatches[0];
+    }
+    if (ifaceMatches.length >= 2) {
+      const s2 = document.getElementById('iface2');
+      if ([...s2.options].some(o => o.value === ifaceMatches[1])) s2.value = ifaceMatches[1];
+    }
+    // Show actual saved file in preview instead of regenerated yaml
+    if (netplanCM) netplanCM.setValue(yaml);
+  } else {
+    updateNetplanPreview();
+  }
 }
 
 function renderIfaceCards(ifaces) {
@@ -2363,11 +2421,15 @@ const SVC_LABELS = {
 let logDrawerService = null;
 
 async function loadServices() {
-  const r = await fetch('/api/services');
-  const d = await r.json();
-  if (!d.ok) { toast(d.error, false); return; }
-  renderServiceCards(d.services);
-  if (logDrawerService) refreshDrawerLogs();
+  try {
+    const r = await fetch('/api/services');
+    const d = await r.json();
+    if (!d.ok) { toast(d.error, false); return; }
+    renderServiceCards(d.services);
+    if (logDrawerService) refreshDrawerLogs();
+  } catch(e) {
+    toast('Failed to load services: ' + e.message, false);
+  }
 }
 
 function renderServiceCards(services) {
@@ -2407,20 +2469,17 @@ function renderServiceCards(services) {
 async function svcAction(name, action) {
   const card = document.getElementById(`svc-card-${name}`);
   if (card) card.style.opacity = '.5';
-  const r = await fetch(`/api/services/${name}/${action}`, { method: 'POST' });
-  const d = await r.json();
-  if (card) card.style.opacity = '1';
-  if (!d.ok) { toast(d.error, false); return; }
-  toast(`${name} ${action}ed`);
-  if (d.service) renderServiceCards(
-    document.querySelectorAll('.svc-card').length > 0
-      ? [...document.querySelectorAll('.svc-card')].map(c => {
-          const n = c.id.replace('svc-card-','');
-          return n === name ? d.service : { name: n, active:'unknown', sub:'', pid:'0', started:'', loaded:'' };
-        })
-      : [d.service]
-  );
-  loadServices();
+  try {
+    const r = await fetch(`/api/services/${name}/${action}`, { method: 'POST' });
+    const d = await r.json();
+    if (card) card.style.opacity = '1';
+    if (!d.ok) { toast(d.error, false); return; }
+    toast(`${name} ${action}ed`);
+    loadServices();
+  } catch(e) {
+    if (card) card.style.opacity = '1';
+    toast('Request failed: ' + e.message, false);
+  }
 }
 
 async function openLogDrawer(name) {
@@ -2627,6 +2686,46 @@ async function confirmResetUsers() {
     loadServices();
   } else {
     toast(d.error, false);
+  }
+}
+
+async function confirmFlushData() {
+  const confirmed = confirm(
+    'WARNING: This will permanently clear all synced device data:\n\n' +
+    '  • devices.db  (all rows deleted)\n' +
+    '  • ShapedDevices.csv  (reset to header only)\n' +
+    '  • network.json  (reset to {})\n\n' +
+    'The next sync cycle will repopulate from MikroTik.\n\nAre you sure?'
+  );
+  if (!confirmed) return;
+  const btn = document.getElementById('btn-flush-data');
+  const res = document.getElementById('flush-result');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Flushing…';
+  try {
+    const r = await fetch('/api/troubleshoot/flush', { method: 'POST' });
+    const d = await r.json();
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash3"></i> Flush All Data';
+    res.style.display = 'block';
+    if (d.ok) {
+      const lines = Object.entries(d.results).map(([k,v]) => `✔ ${k}: ${v}`).join('\n');
+      res.style.color = 'var(--green)';
+      res.textContent = lines;
+      toast('All sync data flushed successfully');
+    } else {
+      const lines = [
+        ...Object.entries(d.results).map(([k,v]) => `✔ ${k}: ${v}`),
+        ...d.errors.map(e => `✘ ${e}`)
+      ].join('\n');
+      res.style.color = 'var(--yellow)';
+      res.textContent = lines;
+      toast('Flush completed with errors', false);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-trash3"></i> Flush All Data';
+    toast('Request failed: ' + e.message, false);
   }
 }
 
@@ -3199,7 +3298,11 @@ async function saveLqosConf() {
     body: JSON.stringify({updates})
   });
   const d = await r.json();
-  toast(d.ok ? 'lqos.conf saved' : (d.error || 'Save failed'), d.ok);
+  if (!d.ok) { toast(d.error || 'Save failed', false); return; }
+  toast('lqos.conf saved — restarting lqosd…');
+  const rs = await fetch('/api/services/lqosd/restart', { method: 'POST' });
+  const rd = await rs.json();
+  toast(rd.ok ? 'lqosd restarted' : ('lqosd restart failed: ' + rd.error), rd.ok);
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
