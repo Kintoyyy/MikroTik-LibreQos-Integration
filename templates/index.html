@@ -645,36 +645,65 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
 
-    <!-- WAN Assignment -->
-    <div class="card" style="margin-bottom:1rem" id="wan-assignment-card">
-      <div class="card-hd"><i class="bi bi-arrow-left-right"></i> WAN Assignment</div>
-      <div class="card-bd">
-        <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-bottom:1rem">
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="toggle-wan-enabled" onchange="_onWanEnabledToggle()"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.875rem">Enable WAN Assignment</span>
-          </label>
-        </div>
-        <div id="wan-assignment-opts" style="display:flex;gap:2rem;flex-wrap:wrap">
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="toggle-wan-hotspot"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.875rem">Include Hotspot <span style="font-size:.72rem;color:var(--muted)">(default: off)</span></span>
-          </label>
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="toggle-wan-dhcp"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.875rem">Include DHCP <span style="font-size:.72rem;color:var(--muted)">(default: off)</span></span>
-          </label>
-        </div>
-      </div>
-    </div>
+
 
     <!-- Routers -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem">
-      <div style="font-weight:600;font-size:.95rem">Routers <span id="router-count-badge" style="background:#1d3fbb33;color:#60a5fa;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.4rem">0</span></div>
+      <div style="font-weight:600;font-size:.95rem">BRAS / Access Concentrator <span id="router-count-badge" style="background:#1d3fbb33;color:#60a5fa;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.4rem">0</span></div>
       <button class="btn-ghost" onclick="addRouter()"><i class="bi bi-plus-lg"></i> Add Router</button>
     </div>
     <div id="routers-list"></div>
 
+    <!-- Core Routers -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;margin-top:1.5rem">
+      <div>
+        <span style="font-weight:600;font-size:.95rem">CORE / Load Balancer</span>
+        <span id="core-count-badge" style="background:#4c1d9533;color:#a78bfa;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.4rem">0</span>
+        <div style="font-size:.75rem;color:var(--muted);margin-top:.2rem">Core MikroTik routers for WAN address-list assignment</div>
+      </div>
+      <button class="btn-ghost" onclick="addCore()"><i class="bi bi-plus-lg"></i> Add Core</button>
+    </div>
+    <div id="cores-list"></div>
+    <!-- WAN Assignment -->
+    <div class="card"
+      style="margin-bottom:1rem"
+      id="wan-assignment-card">
+      <div class="card-hd"><i class="bi bi-arrow-left-right"></i> WAN Assignment</div>
+      <div class="card-bd">
+        <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-bottom:1rem">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox"
+                id="toggle-wan-enabled"
+                onchange="_onWanEnabledToggle()">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Enable WAN Assignment</span>
+          </label>
+        </div>
+        <div id="wan-assignment-opts"
+          style="display:flex;gap:2rem;flex-wrap:wrap">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox"
+                id="toggle-wan-hotspot">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Include Hotspot <span style="font-size:.72rem;color:var(--muted)">(default:
+                off)</span></span>
+          </label>
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox"
+                id="toggle-wan-dhcp">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Include DHCP <span style="font-size:.72rem;color:var(--muted)">(default:
+                off)</span></span>
+          </label>
+        </div>
+      </div>
+    </div>
   </div><!-- /form-config-panel -->
 </div>
 
@@ -2210,6 +2239,11 @@ function renderConfig() {
   list.innerHTML = '';
   (configData.bras || []).forEach((rt, idx) => list.appendChild(buildRouterCard(rt, idx)));
   document.getElementById('router-count-badge').textContent = (configData.bras||[]).length;
+  // cores
+  const coreList = document.getElementById('cores-list');
+  coreList.innerHTML = '';
+  (configData.cores || []).forEach((c, idx) => coreList.appendChild(buildCoreCard(c, idx)));
+  document.getElementById('core-count-badge').textContent = (configData.cores||[]).length;
 }
 
 function _onWanEnabledToggle() {
@@ -2410,6 +2444,160 @@ function removeRouter(e, idx) {
   renderConfig();
 }
 
+// ── Core card builder ─────────────────────────────────────────────────────
+function buildCoreCard(core, idx) {
+  const wrap = document.createElement('div');
+  wrap.className = 'router-card';
+  wrap.id = `core-card-${idx}`;
+  const wansHtml = (core.wans || []).map((w, wi) => buildCoreWanRow(idx, wi, w)).join('');
+  wrap.innerHTML = `
+    <div class="router-hd" onclick="toggleCore(${idx})">
+      <div class="router-num" style="background:#4c1d95">${idx+1}</div>
+      <div class="router-title">
+        <div class="router-name" id="cname-display-${idx}">${core.name||'New Core'}</div>
+        <div class="router-addr">${core.address||''}${core.port?':'+core.port:''}</div>
+      </div>
+      <button class="btn-danger-ghost" onclick="removeCore(event,${idx})" title="Remove core">
+        <i class="bi bi-trash3"></i>
+      </button>
+      <i class="bi bi-chevron-down" style="color:var(--muted);margin-left:.25rem;transition:transform .2s" id="core-chevron-${idx}"></i>
+    </div>
+    <div class="router-body" id="core-body-${idx}">
+
+      <!-- Connection -->
+      <div style="margin-bottom:1rem">
+        <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.6rem">Connection</div>
+        <div class="form-row form-row-2" style="margin-bottom:.6rem">
+          <div>
+            <label class="form-label">Core Name</label>
+            <input class="form-input" value="${esc(core.name||'')}"
+              oninput="setCoreField(${idx},'name',this.value);document.getElementById('cname-display-${idx}').textContent=this.value||'New Core'">
+          </div>
+          <div>
+            <label class="form-label">IP Address</label>
+            <input class="form-input" placeholder="192.168.88.1" value="${esc(core.address||'')}"
+              oninput="setCoreField(${idx},'address',this.value)">
+          </div>
+        </div>
+        <div class="form-row form-row-3">
+          <div>
+            <label class="form-label">API Port</label>
+            <input class="form-input" type="number" value="${core.port||8728}"
+              oninput="setCoreField(${idx},'port',+this.value)">
+          </div>
+          <div>
+            <label class="form-label">Username</label>
+            <input class="form-input" value="${esc(core.username||'')}"
+              oninput="setCoreField(${idx},'username',this.value)">
+          </div>
+          <div>
+            <label class="form-label">Password</label>
+            <div class="form-input-group">
+              <input class="form-input" type="password" id="cpwd-${idx}" value="${esc(core.password||'')}"
+                oninput="setCoreField(${idx},'password',this.value)">
+              <button class="input-suffix btn-icon" style="border:1px solid var(--border);border-left:none;border-radius:0 8px 8px 0;padding:0 .65rem;background:#0d1117"
+                onclick="toggleCorePwd(${idx})" type="button">
+                <i class="bi bi-eye" id="ceye-${idx}"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- WANs -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.6rem">
+          <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">WAN Interfaces</div>
+          <button class="btn-ghost" style="font-size:.75rem;padding:.2rem .6rem" onclick="addCoreWan(${idx})"><i class="bi bi-plus-lg"></i> Add WAN</button>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:.6rem">Each WAN is assigned as address-list <strong>WAN1</strong>, <strong>WAN2</strong>… in order. Devices are load-balanced proportionally by capacity.</div>
+        <div id="core-wans-${idx}" style="display:flex;flex-direction:column;gap:.5rem">
+          ${wansHtml}
+        </div>
+        ${(core.wans||[]).length === 0 ? `<div style="font-size:.78rem;color:var(--muted);text-align:center;padding:.75rem;border:1px dashed var(--border);border-radius:8px">No WANs configured. Click <strong>Add WAN</strong> to add one.</div>` : ''}
+      </div>
+
+    </div>
+  `;
+  return wrap;
+}
+
+function buildCoreWanRow(coreIdx, wanIdx, w) {
+  return `
+  <div class="source-section" id="core-wan-row-${coreIdx}-${wanIdx}" style="border-radius:8px">
+    <div style="display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;background:#0d1117;border-radius:8px;border:1px solid var(--border)">
+      <div style="font-size:.72rem;font-weight:700;color:#a78bfa;min-width:2.5rem">WAN${wanIdx+1}</div>
+      <div style="flex:1">
+        <label class="form-label" style="margin-bottom:.2rem">Label (optional)</label>
+        <input class="form-input" style="font-size:.8rem" placeholder="e.g. ISP1" value="${esc(w.name||'')}"
+          oninput="setCoreWanField(${coreIdx},${wanIdx},'name',this.value)">
+      </div>
+      <div style="width:160px">
+        <label class="form-label" style="margin-bottom:.2rem">Download</label>
+        <div class="form-input-group">
+          <input class="form-input" type="number" min="1" style="font-size:.8rem" value="${w.download_limit||1000}"
+            oninput="setCoreWanField(${coreIdx},${wanIdx},'download_limit',+this.value)">
+          <span class="input-suffix" style="font-size:.72rem">Mbps</span>
+        </div>
+      </div>
+      <div style="width:160px">
+        <label class="form-label" style="margin-bottom:.2rem">Upload</label>
+        <div class="form-input-group">
+          <input class="form-input" type="number" min="1" style="font-size:.8rem" value="${w.upload_limit||1000}"
+            oninput="setCoreWanField(${coreIdx},${wanIdx},'upload_limit',+this.value)">
+          <span class="input-suffix" style="font-size:.72rem">Mbps</span>
+        </div>
+      </div>
+      <button class="btn-danger-ghost" style="padding:.3rem .5rem;margin-top:1.1rem" onclick="removeCoreWan(${coreIdx},${wanIdx})" title="Remove WAN">
+        <i class="bi bi-trash3"></i>
+      </button>
+    </div>
+  </div>`;
+}
+
+// ── Core mutations ────────────────────────────────────────────────────────
+function setCoreField(idx, field, val) {
+  if (!configData.cores) return;
+  configData.cores[idx][field] = val;
+}
+function setCoreWanField(coreIdx, wanIdx, field, val) {
+  if (!configData.cores || !configData.cores[coreIdx]) return;
+  configData.cores[coreIdx].wans[wanIdx][field] = val;
+}
+function addCore() {
+  if (!configData) return;
+  configData.cores = configData.cores || [];
+  configData.cores.push({ name:'New Core', address:'', port:8728, username:'admin', password:'', wans:[] });
+  renderConfig();
+  const idx = configData.cores.length - 1;
+  const body = document.getElementById(`core-body-${idx}`);
+  if (body) body.classList.add('open');
+  document.getElementById(`core-card-${idx}`).scrollIntoView({behavior:'smooth',block:'start'});
+}
+function removeCore(e, idx) {
+  e.stopPropagation();
+  if (!confirm(`Remove core #${idx+1}?`)) return;
+  configData.cores.splice(idx, 1);
+  renderConfig();
+}
+function addCoreWan(coreIdx) {
+  if (!configData.cores || !configData.cores[coreIdx]) return;
+  configData.cores[coreIdx].wans = configData.cores[coreIdx].wans || [];
+  configData.cores[coreIdx].wans.push({ name:'', download_limit:1000, upload_limit:1000 });
+  renderConfig();
+  // reopen the card body after re-render
+  const body = document.getElementById(`core-body-${coreIdx}`);
+  if (body) body.classList.add('open');
+  document.getElementById(`core-card-${coreIdx}`).scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function removeCoreWan(coreIdx, wanIdx) {
+  if (!configData.cores || !configData.cores[coreIdx]) return;
+  configData.cores[coreIdx].wans.splice(wanIdx, 1);
+  renderConfig();
+  const body = document.getElementById(`core-body-${coreIdx}`);
+  if (body) body.classList.add('open');
+}
+
 // ── UI helpers ────────────────────────────────────────────────────────────
 function toggleRouter(idx) {
   const body    = document.getElementById(`router-body-${idx}`);
@@ -2425,6 +2613,18 @@ function toggleSource(e, id) {
 function togglePwd(idx) {
   const inp = document.getElementById(`pwd-${idx}`);
   const eye = document.getElementById(`eye-${idx}`);
+  if (inp.type === 'password') { inp.type='text';  eye.className='bi bi-eye-slash'; }
+  else                         { inp.type='password'; eye.className='bi bi-eye'; }
+}
+function toggleCore(idx) {
+  const body    = document.getElementById(`core-body-${idx}`);
+  const chevron = document.getElementById(`core-chevron-${idx}`);
+  const open = body.classList.toggle('open');
+  chevron.style.transform = open ? 'rotate(180deg)' : '';
+}
+function toggleCorePwd(idx) {
+  const inp = document.getElementById(`cpwd-${idx}`);
+  const eye = document.getElementById(`ceye-${idx}`);
   if (inp.type === 'password') { inp.type='text';  eye.className='bi bi-eye-slash'; }
   else                         { inp.type='password'; eye.className='bi bi-eye'; }
 }
