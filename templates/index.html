@@ -3147,64 +3147,130 @@ function renderTopology() {
   topoMode === 'overview' ? _renderOverview(devices, parents) : _renderDetail(devices, parents, limit);
 }
 
-// ── Overview: Router → Parent Node → Source bucket ────────────────────────
+// ── Overview: Core → WAN → BRAS → CPU/Parent → Source ────────────────────
+const CORE_COLORS = ['#6366f1','#8b5cf6','#a855f7','#d946ef','#7c3aed','#4f46e5'];
+const WAN_COLORS  = ['#0ea5e9','#06b6d4','#14b8a6','#84cc16','#eab308','#f97316','#ef4444','#ec4899'];
+
 function _renderOverview(devices, parents) {
   const nodes = [];
   const links = [];
   const nodeSet = new Set();
 
-  // Collect routers
-  const routers = [...new Set(devices.map(d => d.router).filter(Boolean))];
-  const hasRouters = routers.length > 0;
-
-  // Build aggregated bandwidth: router→parent and parent→source
-  const rpMap  = {};  // "router|parent" → bw
-  const psMap  = {};  // "parent|source" → bw
-
-  devices.forEach(d => {
-    const p = d.parent_node;
-    const s = d.source || 'unknown';
-    const r = d.router  || '(no router)';
-    const bw = (d.download_max_mbps || 0) + (d.upload_max_mbps || 0);
-
-    if (hasRouters) {
-      const rk = `${r}|||${p}`;
-      rpMap[rk] = (rpMap[rk] || 0) + bw;
-    }
-    const pk = `${p}|||${s}`;
-    psMap[pk] = (psMap[pk] || 0) + bw;
-  });
-
-  // Add nodes
   const addNode = (name, color) => {
     if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
   };
 
+  // Determine which levels are present
+  const coreList = [...new Set(devices.map(d => d.core_name).filter(Boolean))];
+  const wanList  = [...new Set(devices.map(d => d.wan_name).filter(Boolean))];
+  const brasList = [...new Set(devices.map(d => d.router).filter(Boolean))];
+  const hasCores = coreList.length > 0;
+  const hasWans  = wanList.length > 0;
+  const hasBras  = brasList.length > 0;
+
+  // Color maps
+  const coreColorMap = {};
+  coreList.forEach((c, i) => { coreColorMap[c] = CORE_COLORS[i % CORE_COLORS.length]; });
+  const wanColorMap = {};
+  wanList.forEach((w, i) => { wanColorMap[w] = WAN_COLORS[i % WAN_COLORS.length]; });
+  const brasColorMap = {};
+  brasList.forEach((r, i) => { brasColorMap[r] = NODE_COLORS[(i + 3) % NODE_COLORS.length]; });
   const parentColorMap = {};
   parents.forEach((p, i) => { parentColorMap[p] = NODE_COLORS[i % NODE_COLORS.length]; });
 
-  if (hasRouters) {
-    routers.forEach((r, i) => addNode(r, NODE_COLORS[(i + 5) % NODE_COLORS.length]));
-  }
-  parents.forEach(p => addNode(p, parentColorMap[p]));
-  Object.keys(SRC_COLORS).forEach(s => {
-    if (devices.some(d => d.source === s))
-      addNode(_srcLabel(s), SRC_COLORS[s]);
+  // Aggregation maps (use \x00 as separator — safe since names won't contain it)
+  const cwMap  = {};  // core → wan    → bw
+  const wbMap  = {};  // wan  → bras   → bw
+  const brMap  = {};  // bras → parent → bw
+  const wpMap  = {};  // wan  → parent → bw  (no bras)
+  const cbMap  = {};  // core → bras   → bw  (no wan)
+  const cpMap  = {};  // core → parent → bw  (no wan, no bras)
+  const psMap  = {};  // parent → source → bw
+
+  devices.forEach(d => {
+    const core = d.core_name || null;
+    const wan  = d.wan_name  || null;
+    const bras = d.router    || null;
+    const p    = d.parent_node;
+    const s    = d.source || 'unknown';
+    const bw   = (d.download_max_mbps || 0) + (d.upload_max_mbps || 0);
+
+    // core → wan
+    if (hasCores && hasWans && core && wan) {
+      const k = `${core}\x00${wan}`;
+      cwMap[k] = (cwMap[k] || 0) + bw;
+    }
+    // wan → bras
+    if (hasWans && hasBras && wan && bras) {
+      const k = `${wan}\x00${bras}`;
+      wbMap[k] = (wbMap[k] || 0) + bw;
+    }
+    // wan → parent (no bras)
+    if (hasWans && !hasBras && wan) {
+      const k = `${wan}\x00${p}`;
+      wpMap[k] = (wpMap[k] || 0) + bw;
+    }
+    // core → bras (no wan)
+    if (hasCores && !hasWans && hasBras && core && bras) {
+      const k = `${core}\x00${bras}`;
+      cbMap[k] = (cbMap[k] || 0) + bw;
+    }
+    // core → parent (no wan, no bras)
+    if (hasCores && !hasWans && !hasBras && core) {
+      const k = `${core}\x00${p}`;
+      cpMap[k] = (cpMap[k] || 0) + bw;
+    }
+    // bras → parent
+    if (hasBras && bras) {
+      const k = `${bras}\x00${p}`;
+      brMap[k] = (brMap[k] || 0) + bw;
+    }
+    // parent → source (always)
+    const pk = `${p}\x00${s}`;
+    psMap[pk] = (psMap[pk] || 0) + bw;
   });
 
-  // Add links
-  if (hasRouters) {
-    Object.entries(rpMap).forEach(([k, bw]) => {
-      const [r, p] = k.split('|||');
-      links.push({ source: r, target: p, value: Math.max(bw, 1) });
-    });
-  }
+  // ── Add nodes in left-to-right order ──────────────────────────────────────
+  if (hasCores) coreList.forEach(c => addNode(c, coreColorMap[c]));
+  if (hasWans)  wanList.forEach(w  => addNode(w, wanColorMap[w]));
+  if (hasBras)  brasList.forEach(r => addNode(r, brasColorMap[r]));
+  parents.forEach(p => addNode(p, parentColorMap[p]));
+  Object.keys(SRC_COLORS).forEach(s => {
+    if (devices.some(d => d.source === s)) addNode(_srcLabel(s), SRC_COLORS[s]);
+  });
+
+  // ── Add links ─────────────────────────────────────────────────────────────
+  Object.entries(cwMap).forEach(([k, bw]) => {
+    const [core, wan] = k.split('\x00');
+    links.push({ source: core, target: wan, value: Math.max(bw, 1) });
+  });
+  Object.entries(wbMap).forEach(([k, bw]) => {
+    const [wan, bras] = k.split('\x00');
+    links.push({ source: wan, target: bras, value: Math.max(bw, 1) });
+  });
+  Object.entries(wpMap).forEach(([k, bw]) => {
+    const [wan, p] = k.split('\x00');
+    links.push({ source: wan, target: p, value: Math.max(bw, 1) });
+  });
+  Object.entries(cbMap).forEach(([k, bw]) => {
+    const [core, bras] = k.split('\x00');
+    links.push({ source: core, target: bras, value: Math.max(bw, 1) });
+  });
+  Object.entries(cpMap).forEach(([k, bw]) => {
+    const [core, p] = k.split('\x00');
+    links.push({ source: core, target: p, value: Math.max(bw, 1) });
+  });
+  Object.entries(brMap).forEach(([k, bw]) => {
+    const [bras, p] = k.split('\x00');
+    links.push({ source: bras, target: p, value: Math.max(bw, 1) });
+  });
   Object.entries(psMap).forEach(([k, bw]) => {
-    const [p, s] = k.split('|||');
+    const [p, s] = k.split('\x00');
     links.push({ source: p, target: _srcLabel(s), value: Math.max(bw, 1) });
   });
 
-  _drawSankey(nodes, links, 3);
+  const levels = 2 + (hasCores?1:0) + (hasWans?1:0) + (hasBras?1:0);
+  _drawSankey(nodes, links, levels);
 }
 
 // ── Detail: Parent Node → Device ──────────────────────────────────────────

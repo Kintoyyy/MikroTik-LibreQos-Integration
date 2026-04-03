@@ -585,7 +585,8 @@ def get_devices():
             SELECT code, circuit_id, device_id, parent_node, mac, ipv4, ipv6,
                    download_min_mbps, upload_min_mbps,
                    download_max_mbps, upload_max_mbps,
-                   comment, source, router, last_seen, is_static, weight
+                   comment, source, router, last_seen, is_static, weight,
+                   core_name, wan_name
             FROM devices ORDER BY last_seen DESC
         """)
         rows = [dict(r) for r in cur.fetchall()]
@@ -620,8 +621,9 @@ def add_device():
             INSERT INTO devices
               (code, circuit_id, device_id, parent_node, mac, ipv4, ipv6,
                download_min_mbps, upload_min_mbps, download_max_mbps, upload_max_mbps,
-               comment, source, router, last_seen, is_static, weight)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)
+               comment, source, router, last_seen, is_static, weight,
+               core_name, wan_name)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)
         """, (
             code, cid, did,
             d.get("parent_node", ""),
@@ -633,6 +635,8 @@ def add_device():
             d.get("router", ""),
             time.time(),
             dl + ul,
+            d.get("core_name", ""),
+            d.get("wan_name", ""),
         ))
         con.commit()
         con.close()
@@ -660,7 +664,8 @@ def update_device(code):
               parent_node=?, mac=?, ipv4=?, ipv6=?,
               download_min_mbps=?, upload_min_mbps=?,
               download_max_mbps=?, upload_max_mbps=?,
-              comment=?, source=?, router=?, weight=?
+              comment=?, source=?, router=?, weight=?,
+              core_name=?, wan_name=?
             WHERE code=?
         """, (
             d.get("parent_node", ""),
@@ -671,6 +676,8 @@ def update_device(code):
             d.get("source", "address_list"),
             d.get("router", ""),
             dl + ul,
+            d.get("core_name", ""),
+            d.get("wan_name", ""),
             code,
         ))
         con.commit()

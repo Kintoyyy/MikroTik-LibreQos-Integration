@@ -192,6 +192,7 @@ def read_config_json():
         with open(CONFIG_JSON, 'r') as f:
             config = json.load(f)
         routers = config.get('bras', [])
+        cores = config.get('cores', [])
         promote_to_root = config.get('promote_to_root', False)
 
         # Strategy resolution
@@ -225,17 +226,17 @@ def read_config_json():
             else:
                 seen_names[base] = 1
 
-        logger.info(f"Read {len(routers)} routers from {CONFIG_JSON} (strategy={strategy})")
-        return routers, strategy, queues, promote_to_root
+        logger.info(f"Read {len(routers)} routers, {len(cores)} cores from {CONFIG_JSON} (strategy={strategy})")
+        return routers, strategy, queues, promote_to_root, cores
     except FileNotFoundError:
         logger.error(f"Config file not found: {CONFIG_JSON}")
-        return [], STRATEGY_CPU, None, False
+        return [], STRATEGY_CPU, None, False, []
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config: {e}")
-        return [], STRATEGY_CPU, None, False
+        return [], STRATEGY_CPU, None, False, []
     except Exception as e:
         logger.error(f"Error reading config: {e}")
-        return [], STRATEGY_CPU, None, False
+        return [], STRATEGY_CPU, None, False, []
 
 
 # ── Network JSON ─────────────────────────────────────────────────────────────
@@ -291,6 +292,153 @@ def assign_cpu_nodes(conn, cpu_count):
     conn.commit()
     logger.info(f"Assigned {len(devices)} devices across {cpu_count} CPUs")
     return {k: tuple(v) for k, v in cpu_totals.items()}
+
+
+def assign_wan_nodes(conn, cores):
+    """
+    Distribute all devices across WANs (across all cores) using greedy bin-packing
+    weighted by WAN capacity. Assigns core_name and wan_name for each device.
+    Returns {(core_name, wan_name): (total_dl_mbps, total_ul_mbps)}.
+    """
+    # Collect all WANs with their capacities
+    wans = []
+    for core in cores:
+        core_name = core['name']
+        for wan in core.get('wans', []):
+            wans.append({
+                'core': core_name,
+                'wan':  wan['name'],
+                'dl_limit': wan.get('download_limit', 1000),
+                'ul_limit': wan.get('upload_limit', 1000),
+                'used_dl': 0,
+                'used_ul': 0,
+            })
+
+    if not wans:
+        logger.info("No cores/WANs defined — skipping WAN assignment")
+        return {}
+
+    devices = conn.execute(
+        "SELECT code, download_max_mbps, upload_max_mbps FROM devices ORDER BY weight DESC"
+    ).fetchall()
+
+    def _utilization(w):
+        """Fraction of capacity used (0.0–∞). Lower = more headroom."""
+        cap = w['dl_limit'] + w['ul_limit']
+        return (w['used_dl'] + w['used_ul']) / cap if cap > 0 else float('inf')
+
+    # Min-heap: (utilization_ratio, wan_index) — WAN with most proportional
+    # headroom gets the next device, so high-capacity WANs absorb more devices.
+    heap = [(_utilization(w), i) for i, w in enumerate(wans)]
+    heapq.heapify(heap)
+
+    assignments = []
+    for code, dl, ul in devices:
+        ratio, idx = heapq.heappop(heap)
+        wan = wans[idx]
+        assignments.append((wan['core'], wan['wan'], code))
+        wan['used_dl'] += dl
+        wan['used_ul'] += ul
+        heapq.heappush(heap, (_utilization(wan), idx))
+
+    conn.executemany(
+        "UPDATE devices SET core_name = ?, wan_name = ? WHERE code = ?",
+        assignments
+    )
+    conn.commit()
+    logger.info(f"Assigned {len(devices)} devices across {len(wans)} WAN(s)")
+
+    totals = {}
+    for w in wans:
+        totals[(w['core'], w['wan'])] = (w['used_dl'], w['used_ul'])
+    return totals
+
+
+def check_wan_capacity(wan_totals, cores):
+    """
+    Warn if any WAN's assigned load exceeds its configured limit.
+    wan_totals: {(core_name, wan_name): (total_dl, total_ul)}
+    """
+    wan_limits = {}
+    for core in cores:
+        for wan in core.get('wans', []):
+            wan_limits[(core['name'], wan['name'])] = (
+                wan.get('download_limit', 1000),
+                wan.get('upload_limit', 1000),
+            )
+    for (core_name, wan_name), (dl, ul) in wan_totals.items():
+        dl_limit, ul_limit = wan_limits.get((core_name, wan_name), (0, 0))
+        if dl_limit and dl > dl_limit:
+            logger.warning(
+                f"WAN OVERLOAD: {core_name}/{wan_name} DL {dl:.0f} Mbps > limit {dl_limit} Mbps"
+            )
+        if ul_limit and ul > ul_limit:
+            logger.warning(
+                f"WAN OVERLOAD: {core_name}/{wan_name} UL {ul:.0f} Mbps > limit {ul_limit} Mbps"
+            )
+
+
+def sync_wan_address_lists(conn, cores):
+    """
+    For each core router: connect via RouterOS API and ensure address-list entries
+    match the current WAN assignment in the DB.
+    - Creates address-list entries for newly assigned IPs
+    - Removes entries for IPs no longer assigned to that WAN
+    """
+    for core in cores:
+        api = connect_to_router(core)
+        if api is None:
+            logger.warning(f"Skipping core {core['name']} — connection failed.")
+            continue
+
+        try:
+            addr_list_resource = api.get_resource('/ip/firewall/address-list')
+
+            # Fetch all existing entries on this core once
+            existing_entries = get_resource_data(api, '/ip/firewall/address-list')
+            # Map: (list_name, ip) → entry_id
+            existing_map = {
+                (e.get('list', ''), e.get('address', '')): e['.id']
+                for e in existing_entries
+                if e.get('list') and e.get('address')
+            }
+
+            for wan in core.get('wans', []):
+                wan_name = wan['name']
+
+                # IPs that should be in this WAN list
+                rows = conn.execute(
+                    "SELECT ipv4 FROM devices WHERE core_name = ? AND wan_name = ? AND ipv4 IS NOT NULL",
+                    (core['name'], wan_name)
+                ).fetchall()
+                target_ips = {row[0] for row in rows}
+
+                # IPs currently in this list on the core
+                current_ips = {
+                    ip for (lst, ip) in existing_map if lst == wan_name
+                }
+
+                # Remove IPs that moved away from this WAN
+                for ip in current_ips - target_ips:
+                    entry_id = existing_map.get((wan_name, ip))
+                    if entry_id:
+                        try:
+                            addr_list_resource.remove(id=entry_id)
+                            logger.info(f"Removed {ip} from {wan_name} on {core['name']}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove {ip} from {wan_name} on {core['name']}: {e}")
+
+                # Add IPs newly assigned to this WAN
+                for ip in target_ips - current_ips:
+                    try:
+                        addr_list_resource.add(list=wan_name, address=ip, comment='libreqos-managed')
+                        logger.info(f"Added {ip} to {wan_name} on {core['name']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to add {ip} to {wan_name} on {core['name']}: {e}")
+
+            logger.info(f"Synced WAN address lists on core {core['name']}")
+        except Exception as e:
+            logger.error(f"Error syncing address lists on {core['name']}: {e}")
 
 
 def backup_files():
@@ -507,7 +655,9 @@ _CREATE_DEVICES_SQL = """
         router          TEXT DEFAULT '',
         last_seen       REAL DEFAULT 0,
         is_static       INTEGER DEFAULT 0,
-        weight          INT NOT NULL DEFAULT 0
+        weight          INT NOT NULL DEFAULT 0,
+        core_name       TEXT DEFAULT '',
+        wan_name        TEXT DEFAULT ''
     )
 """
 
@@ -545,12 +695,18 @@ def open_db():
     else:
         conn.execute(_CREATE_DEVICES_SQL)
 
-    # Add weight column if missing (non-destructive ALTER TABLE)
+    # Add missing columns non-destructively
     cols = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
     if 'weight' not in cols:
         conn.execute("ALTER TABLE devices ADD COLUMN weight INT NOT NULL DEFAULT 0")
         conn.execute("UPDATE devices SET weight = download_max_mbps + upload_max_mbps")
         logger.info("Added weight column to devices table")
+    if 'core_name' not in cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN core_name TEXT DEFAULT ''")
+        logger.info("Added core_name column to devices table")
+    if 'wan_name' not in cols:
+        conn.execute("ALTER TABLE devices ADD COLUMN wan_name TEXT DEFAULT ''")
+        logger.info("Added wan_name column to devices table")
 
     conn.commit()
     return conn
@@ -845,7 +1001,7 @@ def main():
 
     while True:
         try:
-            routers, strategy, queues, promote_to_root = read_config_json()
+            routers, strategy, queues, promote_to_root, cores = read_config_json()
 
             scan_time   = time.time()
             any_changes = False
@@ -932,6 +1088,12 @@ def main():
                     else:
                         # queues: false — skip network.json
                         logger.info("Skipping network.json (queues=false)")
+
+                # ── WAN assignment across cores ─────────────────────────────
+                if cores:
+                    wan_totals = assign_wan_nodes(conn, cores)
+                    check_wan_capacity(wan_totals, cores)
+                    sync_wan_address_lists(conn, cores)
 
                 export_to_csv(conn)
                 try:
