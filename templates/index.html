@@ -3467,6 +3467,11 @@ function renderTopology() {
 const CORE_COLORS = ['#6366f1','#8b5cf6','#a855f7','#d946ef','#7c3aed','#4f46e5'];
 const WAN_COLORS  = ['#0ea5e9','#06b6d4','#14b8a6','#84cc16','#eab308','#f97316','#ef4444','#ec4899'];
 
+function _wanScopeLabel(coreName, wanName) {
+  if (!wanName) return '';
+  return coreName ? `${coreName} / ${wanName}` : wanName;
+}
+
 function _renderOverview(devices, parents) {
   const nodes = [];
   const links = [];
@@ -3478,7 +3483,7 @@ function _renderOverview(devices, parents) {
 
   // Determine which levels are present
   const coreList = [...new Set(devices.map(d => d.core_name).filter(Boolean))];
-  const wanList  = [...new Set(devices.map(d => d.wan_name).filter(Boolean))];
+  const wanList  = [...new Set(devices.map(d => _wanScopeLabel(d.core_name, d.wan_name)).filter(Boolean))];
   const brasList = [...new Set(devices.map(d => d.router).filter(Boolean))];
   const hasCores = coreList.length > 0;
   const hasWans  = wanList.length > 0;
@@ -3505,7 +3510,7 @@ function _renderOverview(devices, parents) {
 
   devices.forEach(d => {
     const core = d.core_name || null;
-    const wan  = d.wan_name  || null;
+    const wan  = _wanScopeLabel(d.core_name, d.wan_name) || null;
     const bras = d.router    || null;
     const p    = d.parent_node;
     const s    = d.source || 'unknown';
@@ -3605,7 +3610,7 @@ function _renderDetail(devices, parents, limit) {
   const links = [];
   const nodeSet = new Set();
 
-  const wanList = [...new Set(sorted.map(d => d.wan_name).filter(Boolean))];
+  const wanList = [...new Set(sorted.map(d => _wanScopeLabel(d.core_name, d.wan_name)).filter(Boolean))];
   const hasWans = wanList.length > 0;
 
   const wanColorMap  = {};
@@ -3627,8 +3632,9 @@ function _renderDetail(devices, parents, limit) {
   if (hasWans) {
     const wpMap = {};
     sorted.forEach(d => {
-      if (!d.wan_name) return;
-      const k = `${d.wan_name}\x00${d.parent_node}`;
+      const wan = _wanScopeLabel(d.core_name, d.wan_name);
+      if (!wan) return;
+      const k = `${wan}\x00${d.parent_node}`;
       wpMap[k] = (wpMap[k] || 0) + (d.download_max_mbps || 0) + (d.upload_max_mbps || 0);
     });
     Object.entries(wpMap).forEach(([k, bw]) => {
@@ -3691,8 +3697,6 @@ function _renderDetail(devices, parents, limit) {
 function _renderWanDevice(devices, limit) {
   // Filter to devices with a WAN assignment, sort by bw desc, apply limit
   let withWan = devices.filter(d => d.wan_name);
-  let noWan   = devices.filter(d => !d.wan_name);
-
   withWan.sort((a,b) => (b.download_max_mbps + b.upload_max_mbps) - (a.download_max_mbps + a.upload_max_mbps));
   if (limit > 0) withWan = withWan.slice(0, limit);
 
@@ -3704,7 +3708,7 @@ function _renderWanDevice(devices, limit) {
   const links = [];
   const nodeSet = new Set();
 
-  const wanList = [...new Set(withWan.map(d => d.wan_name))];
+  const wanList = [...new Set(withWan.map(d => _wanScopeLabel(d.core_name, d.wan_name)).filter(Boolean))];
   const wanColorMap = {};
   wanList.forEach((w, i) => { wanColorMap[w] = WAN_COLORS[i % WAN_COLORS.length]; });
 
@@ -3719,8 +3723,10 @@ function _renderWanDevice(devices, limit) {
 
   // Links: WAN → device
   withWan.forEach(d => {
+    const wan = _wanScopeLabel(d.core_name, d.wan_name);
+    if (!wan) return;
     const bw = (d.download_max_mbps || 1) + (d.upload_max_mbps || 1);
-    links.push({ source: d.wan_name, target: 'dev::' + d.code, value: Math.max(bw, 1) });
+    links.push({ source: wan, target: 'dev::' + d.code, value: Math.max(bw, 1) });
   });
 
   const labelFn = d => {
