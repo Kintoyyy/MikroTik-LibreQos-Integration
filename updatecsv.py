@@ -38,7 +38,8 @@ STRATEGY_AP_SITE = 'ap_site'  # Devices grouped under site → router hierarchy
 STRATEGY_FULL    = 'full'     # Full path shaping; pair with promote_to_root if single-core saturates
 STRATEGY_CPU     = 'cpu'      # Greedy bin-pack across CPU nodes (current default)
 
-TC_U16_WARN_THRESHOLD = 60_000  # Warn before approaching TC classifier u16 overflow (~65535)
+TC_U16_WARN_THRESHOLD   = 60_000  # Warn before approaching TC classifier u16 overflow (~65535)
+WAN_REBALANCE_THRESHOLD = 1.10    # Trigger full WAN rebalance when any WAN load exceeds 110% of its limit
 
 # Compiled once at module level
 RE_LIST_RATE = re.compile(r'(\d+(?:\.\d+)?[kmgKMG])/(\d+(?:\.\d+)?[kmgKMG])')
@@ -226,17 +227,23 @@ def read_config_json():
             else:
                 seen_names[base] = 1
 
+        wan_cfg = config.get('wan_assignment', {})
+        wan_sources = {
+            'include_hotspot': wan_cfg.get('include_hotspot', False),
+            'include_dhcp':    wan_cfg.get('include_dhcp',    False),
+        }
+
         logger.info(f"Read {len(routers)} routers, {len(cores)} cores from {CONFIG_JSON} (strategy={strategy})")
-        return routers, strategy, queues, promote_to_root, cores
+        return routers, strategy, queues, promote_to_root, cores, wan_sources
     except FileNotFoundError:
         logger.error(f"Config file not found: {CONFIG_JSON}")
-        return [], STRATEGY_CPU, None, False, []
+        return [], STRATEGY_CPU, None, False, [], {}
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config: {e}")
-        return [], STRATEGY_CPU, None, False, []
+        return [], STRATEGY_CPU, None, False, [], {}
     except Exception as e:
         logger.error(f"Error reading config: {e}")
-        return [], STRATEGY_CPU, None, False, []
+        return [], STRATEGY_CPU, None, False, [], {}
 
 
 # ── Network JSON ─────────────────────────────────────────────────────────────
@@ -294,46 +301,103 @@ def assign_cpu_nodes(conn, cpu_count):
     return {k: tuple(v) for k, v in cpu_totals.items()}
 
 
-def assign_wan_nodes(conn, cores):
+def assign_wan_nodes(conn, cores, wan_sources=None):
     """
-    Distribute all devices across WANs (across all cores) using greedy bin-packing
-    weighted by WAN capacity. Assigns core_name and wan_name for each device.
+    Assign only NEW (unassigned) devices to WANs using greedy bin-packing
+    weighted by WAN capacity. Existing assignments are never touched, so the
+    address lists on core routers only receive incremental adds/removes.
     Returns {(core_name, wan_name): (total_dl_mbps, total_ul_mbps)}.
     """
-    # Collect all WANs with their capacities
     wans = []
     for core in cores:
         core_name = core['name']
-        for wan in core.get('wans', []):
+        for i, wan in enumerate(core.get('wans', []), start=1):
             wans.append({
-                'core': core_name,
-                'wan':  wan['name'],
+                'core':     core_name,
+                'wan':      f"WAN{i}",
                 'dl_limit': wan.get('download_limit', 1000),
                 'ul_limit': wan.get('upload_limit', 1000),
-                'used_dl': 0,
-                'used_ul': 0,
+                'used_dl':  0,
+                'used_ul':  0,
             })
 
     if not wans:
         logger.info("No cores/WANs defined — skipping WAN assignment")
         return {}
 
-    devices = conn.execute(
-        "SELECT code, download_max_mbps, upload_max_mbps FROM devices ORDER BY weight DESC"
+    # Seed each WAN's current load from the DB so new devices are balanced
+    # against what is already assigned, not from zero.
+    for w in wans:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(download_max_mbps),0), COALESCE(SUM(upload_max_mbps),0) "
+            "FROM devices WHERE core_name=? AND wan_name=?",
+            (w['core'], w['wan'])
+        ).fetchone()
+        w['used_dl'], w['used_ul'] = row[0], row[1]
+
+    if wan_sources is None:
+        wan_sources = {}
+    excluded = []
+    if not wan_sources.get('include_hotspot', False):
+        excluded.append('hotspot')
+    if not wan_sources.get('include_dhcp', False):
+        excluded.append('dhcp')
+
+    excl_sql = ""
+    if excluded:
+        placeholders = ','.join('?' * len(excluded))
+        excl_sql = f" AND (source NOT IN ({placeholders}) OR source IS NULL)"
+
+    # Only process devices that have not been assigned yet
+    new_devices = conn.execute(
+        "SELECT code, download_max_mbps, upload_max_mbps FROM devices "
+        "WHERE (core_name IS NULL OR core_name = '' OR wan_name IS NULL OR wan_name = '')"
+        + excl_sql + " ORDER BY weight DESC",
+        excluded
     ).fetchall()
 
+    totals = {(w['core'], w['wan']): (w['used_dl'], w['used_ul']) for w in wans}
+
+    if not new_devices:
+        # Check if any WAN is overloaded beyond the rebalance threshold
+        rebalance_needed = False
+        for w in wans:
+            cap = w['dl_limit'] + w['ul_limit']
+            if cap > 0:
+                util = (w['used_dl'] + w['used_ul']) / cap
+                if util > WAN_REBALANCE_THRESHOLD:
+                    logger.info(
+                        f"WAN {w['wan']} on {w['core']} utilization {util:.0%} exceeds "
+                        f"threshold {WAN_REBALANCE_THRESHOLD:.0%} — triggering rebalance"
+                    )
+                    rebalance_needed = True
+                    break
+
+        if not rebalance_needed:
+            return totals
+
+        # Full rebalance: clear all WAN assignments so every device gets reassigned
+        logger.info("Rebalancing all WAN assignments...")
+        conn.execute("UPDATE devices SET core_name='', wan_name=''")
+        conn.commit()
+        for w in wans:
+            w['used_dl'] = w['used_ul'] = 0
+        new_devices = conn.execute(
+            "SELECT code, download_max_mbps, upload_max_mbps FROM devices"
+            + (excl_sql.replace("AND (source", "WHERE (source") if excl_sql else "")
+            + " ORDER BY weight DESC",
+            excluded
+        ).fetchall()
+
     def _utilization(w):
-        """Fraction of capacity used (0.0–∞). Lower = more headroom."""
         cap = w['dl_limit'] + w['ul_limit']
         return (w['used_dl'] + w['used_ul']) / cap if cap > 0 else float('inf')
 
-    # Min-heap: (utilization_ratio, wan_index) — WAN with most proportional
-    # headroom gets the next device, so high-capacity WANs absorb more devices.
     heap = [(_utilization(w), i) for i, w in enumerate(wans)]
     heapq.heapify(heap)
 
     assignments = []
-    for code, dl, ul in devices:
+    for code, dl, ul in new_devices:
         ratio, idx = heapq.heappop(heap)
         wan = wans[idx]
         assignments.append((wan['core'], wan['wan'], code))
@@ -342,16 +406,13 @@ def assign_wan_nodes(conn, cores):
         heapq.heappush(heap, (_utilization(wan), idx))
 
     conn.executemany(
-        "UPDATE devices SET core_name = ?, wan_name = ? WHERE code = ?",
+        "UPDATE devices SET core_name=?, wan_name=? WHERE code=?",
         assignments
     )
     conn.commit()
-    logger.info(f"Assigned {len(devices)} devices across {len(wans)} WAN(s)")
+    logger.info(f"Assigned {len(new_devices)} new device(s) across {len(wans)} WAN(s)")
 
-    totals = {}
-    for w in wans:
-        totals[(w['core'], w['wan'])] = (w['used_dl'], w['used_ul'])
-    return totals
+    return {(w['core'], w['wan']): (w['used_dl'], w['used_ul']) for w in wans}
 
 
 def check_wan_capacity(wan_totals, cores):
@@ -361,8 +422,8 @@ def check_wan_capacity(wan_totals, cores):
     """
     wan_limits = {}
     for core in cores:
-        for wan in core.get('wans', []):
-            wan_limits[(core['name'], wan['name'])] = (
+        for i, wan in enumerate(core.get('wans', []), start=1):
+            wan_limits[(core['name'], f"WAN{i}")] = (
                 wan.get('download_limit', 1000),
                 wan.get('upload_limit', 1000),
             )
@@ -378,67 +439,95 @@ def check_wan_capacity(wan_totals, cores):
             )
 
 
+# Per-core cache: {core_address: {(list_name, ip): entry_id}}
+# Populated on first contact, updated incrementally — avoids re-fetching every cycle.
+_wan_cache: dict = {}
+
+
+def _build_wan_cache(api, core):
+    """Fetch current WAN address-list entries from the router and return a cache dict."""
+    cache = {}
+    wan_names = [f"WAN{i}" for i in range(1, len(core.get('wans', [])) + 1)]
+    resource = api.get_resource('/ip/firewall/address-list')
+    for wan_name in wan_names:
+        try:
+            for e in resource.get(list=wan_name):
+                if e.get('address') and '.id' in e:
+                    cache[(wan_name, e['address'])] = e['.id']
+        except Exception as ex:
+            logger.warning(f"Cache init {wan_name} on {core['name']}: {ex}")
+    logger.info(f"WAN cache built for {core['name']}: {len(cache)} entries")
+    return cache
+
+
 def sync_wan_address_lists(conn, cores):
     """
-    For each core router: connect via RouterOS API and ensure address-list entries
-    match the current WAN assignment in the DB.
-    - Creates address-list entries for newly assigned IPs
-    - Removes entries for IPs no longer assigned to that WAN
+    Sync address-list entries on each core router.
+    Uses an in-memory cache so the router is only queried once per process start.
+    Subsequent cycles only push actual deltas (add/remove).
     """
+    global _wan_cache
+
     for core in cores:
+        core_key = core['address']
         api = connect_to_router(core)
         if api is None:
             logger.warning(f"Skipping core {core['name']} — connection failed.")
+            _wan_cache.pop(core_key, None)   # invalidate so next success re-fetches
             continue
 
         try:
-            addr_list_resource = api.get_resource('/ip/firewall/address-list')
+            resource = api.get_resource('/ip/firewall/address-list')
 
-            # Fetch all existing entries on this core once
-            existing_entries = get_resource_data(api, '/ip/firewall/address-list')
-            # Map: (list_name, ip) → entry_id
-            existing_map = {
-                (e.get('list', ''), e.get('address', '')): e['.id']
-                for e in existing_entries
-                if e.get('list') and e.get('address')
-            }
+            # Build cache on first contact with this core
+            if core_key not in _wan_cache:
+                _wan_cache[core_key] = _build_wan_cache(api, core)
+            cache = _wan_cache[core_key]
 
-            for wan in core.get('wans', []):
-                wan_name = wan['name']
-
-                # IPs that should be in this WAN list
-                rows = conn.execute(
-                    "SELECT ipv4 FROM devices WHERE core_name = ? AND wan_name = ? AND ipv4 IS NOT NULL",
+            # Build target state from DB: {(wan_name, ip)}
+            target = set()
+            for i, _ in enumerate(core.get('wans', []), start=1):
+                wan_name = f"WAN{i}"
+                for (ip,) in conn.execute(
+                    "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
                     (core['name'], wan_name)
-                ).fetchall()
-                target_ips = {row[0] for row in rows}
+                ):
+                    target.add((wan_name, ip))
 
-                # IPs currently in this list on the core
-                current_ips = {
-                    ip for (lst, ip) in existing_map if lst == wan_name
-                }
+            current = set(cache)
+            to_add    = target  - current
+            to_remove = current - target
 
-                # Remove IPs that moved away from this WAN
-                for ip in current_ips - target_ips:
-                    entry_id = existing_map.get((wan_name, ip))
-                    if entry_id:
-                        try:
-                            addr_list_resource.remove(id=entry_id)
-                            logger.info(f"Removed {ip} from {wan_name} on {core['name']}")
-                        except Exception as e:
-                            logger.warning(f"Failed to remove {ip} from {wan_name} on {core['name']}: {e}")
+            # Remove stale entries
+            for key in to_remove:
+                list_name, ip = key
+                try:
+                    resource.remove(id=cache[key])
+                    logger.info(f"Removed {ip} from {list_name} on {core['name']}")
+                except Exception as ex:
+                    logger.warning(f"Failed to remove {ip} from {list_name}: {ex}")
+                cache.pop(key, None)
 
-                # Add IPs newly assigned to this WAN
-                for ip in target_ips - current_ips:
-                    try:
-                        addr_list_resource.add(list=wan_name, address=ip, comment='libreqos-managed')
-                        logger.info(f"Added {ip} to {wan_name} on {core['name']}")
-                    except Exception as e:
-                        logger.warning(f"Failed to add {ip} to {wan_name} on {core['name']}: {e}")
+            # Add new entries
+            for key in to_add:
+                list_name, ip = key
+                try:
+                    new_id = resource.add(list=list_name, address=ip, comment='libreqos-managed')
+                    cache[key] = new_id
+                    logger.info(f"Added {ip} to {list_name} on {core['name']}")
+                except Exception as ex:
+                    if 'already have such entry' in str(ex):
+                        cache[key] = None   # exists on router, mark in cache to skip next time
+                        logger.debug(f"Already exists: {ip} in {list_name} — cached")
+                    else:
+                        logger.warning(f"Failed to add {ip} to {list_name}: {ex}")
 
-            logger.info(f"Synced WAN address lists on core {core['name']}")
-        except Exception as e:
-            logger.error(f"Error syncing address lists on {core['name']}: {e}")
+            if to_add or to_remove:
+                logger.info(f"{core['name']} WAN sync: +{len(to_add)} / -{len(to_remove)}")
+
+        except Exception as ex:
+            logger.error(f"Error syncing address lists on {core['name']}: {ex}")
+            _wan_cache.pop(core_key, None)   # invalidate cache so next cycle re-fetches
 
 
 def backup_files():
@@ -1001,7 +1090,7 @@ def main():
 
     while True:
         try:
-            routers, strategy, queues, promote_to_root, cores = read_config_json()
+            routers, strategy, queues, promote_to_root, cores, wan_sources = read_config_json()
 
             scan_time   = time.time()
             any_changes = False
@@ -1091,7 +1180,7 @@ def main():
 
                 # ── WAN assignment across cores ─────────────────────────────
                 if cores:
-                    wan_totals = assign_wan_nodes(conn, cores)
+                    wan_totals = assign_wan_nodes(conn, cores, wan_sources)
                     check_wan_capacity(wan_totals, cores)
                     sync_wan_address_lists(conn, cores)
 
