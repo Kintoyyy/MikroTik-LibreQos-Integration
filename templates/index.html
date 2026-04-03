@@ -1158,10 +1158,11 @@ code { font-size: .8rem; color: #94a3b8; }
     <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
       <!-- View mode -->
       <div style="display:flex;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <button id="topo-btn-overview"   class="topo-mode-btn active" onclick="setTopoMode('overview')">Overview</button>
-        <button id="topo-btn-detail"     class="topo-mode-btn"        onclick="setTopoMode('detail')">Detail</button>
-        <button id="topo-btn-wan-device" class="topo-mode-btn"        onclick="setTopoMode('wan-device')">WAN → Device</button>
-        <button id="topo-btn-cpu-device" class="topo-mode-btn"        onclick="setTopoMode('cpu-device')">CPU → Device</button>
+        <button id="topo-btn-overview"       class="topo-mode-btn active" onclick="setTopoMode('overview')">Overview</button>
+        <button id="topo-btn-detail"         class="topo-mode-btn"        onclick="setTopoMode('detail')">Detail</button>
+        <button id="topo-btn-wan-device"     class="topo-mode-btn"        onclick="setTopoMode('wan-device')">WAN → Device</button>
+        <button id="topo-btn-cpu-device"     class="topo-mode-btn"        onclick="setTopoMode('cpu-device')">CPU → Device</button>
+        <button id="topo-btn-traffic-share"  class="topo-mode-btn"        onclick="setTopoMode('traffic-share')">Traffic Share</button>
       </div>
       <!-- Source filter -->
       <select class="search-input" id="topo-src-filter" onchange="renderTopology()" style="font-size:.78rem">
@@ -1192,7 +1193,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <!-- WAN stats (hidden if wan_assignment disabled) -->
   <div id="wan-stats-wrap" style="display:none;margin-bottom:1rem">
     <div class="card">
-      <div class="card-hd"><span><i class="bi bi-arrow-left-right"></i> WAN Assignment</span><button class="btn-ghost" style="font-size:.75rem" onclick="loadWanStats()"><i class="bi bi-arrow-clockwise"></i></button></div>
+      <div class="card-hd"><span><i class="bi bi-arrow-left-right"></i> WAN Assignment</span><span style="display:flex;gap:.4rem"><button class="btn-ghost" style="font-size:.75rem" onclick="loadWanStats()"><i class="bi bi-arrow-clockwise"></i></button><button class="btn-ghost" id="wan-rebalance-btn" style="font-size:.75rem" title="Force full WAN rebalance" onclick="rebalanceWan()"><i class="bi bi-shuffle"></i> Rebalance</button></span></div>
       <div class="card-bd" style="padding:.75rem">
         <div id="wan-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.6rem"></div>
       </div>
@@ -1200,8 +1201,16 @@ code { font-size: .8rem; color: #94a3b8; }
   </div>
 
   <!-- Chart -->
-  <div class="card" style="padding:0">
-    <div id="topo-chart" style="width:100%;height:75vh"></div>
+  <div class="card" style="padding:0;overflow:hidden;position:relative">
+    <div id="topo-chart-wrap" style="width:100%;max-height:75vh;overflow:auto;position:relative">
+      <div id="topo-chart" style="width:100%;height:75vh"></div>
+    </div>
+    <!-- Zoom controls -->
+    <div style="position:absolute;bottom:.75rem;right:.75rem;z-index:10;display:flex;flex-direction:column;gap:.25rem">
+      <button onclick="_topoZoomIn()"    title="Zoom in"    style="width:30px;height:30px;border-radius:6px;border:1px solid var(--border);background:#161b27;color:#cbd5e1;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center"><i class="bi bi-plus-lg"></i></button>
+      <button onclick="_topoZoomReset()" title="Reset zoom" style="width:30px;height:30px;border-radius:6px;border:1px solid var(--border);background:#161b27;color:#cbd5e1;font-size:.75rem;cursor:pointer;display:flex;align-items:center;justify-content:center"><i class="bi bi-fullscreen-exit"></i></button>
+      <button onclick="_topoZoomOut()"   title="Zoom out"   style="width:30px;height:30px;border-radius:6px;border:1px solid var(--border);background:#161b27;color:#cbd5e1;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center"><i class="bi bi-dash-lg"></i></button>
+    </div>
     <div id="topo-empty" style="display:none;height:300px;align-items:center;justify-content:center;flex-direction:column;gap:.5rem;color:var(--muted)">
       <i class="bi bi-diagram-3" style="font-size:2.5rem"></i>
       <span>No devices to display</span>
@@ -1236,7 +1245,7 @@ code { font-size: .8rem; color: #94a3b8; }
           <tr>
             <th>Code</th><th>IPv4</th><th>MAC</th>
             <th>Source</th><th>Router</th><th>Parent</th>
-            <th style="text-align:right">DL Max</th><th style="text-align:right">UL Max</th>
+            <th style="text-align:right">DL % WAN</th><th style="text-align:right">UL % WAN</th>
             <th>Comment</th><th style="text-align:center">Static</th>
             <th style="text-align:center">Actions</th>
           </tr>
@@ -1989,12 +1998,16 @@ async function loadDevices() {
   srcChart.data.datasets[0].data = [counts.pppoe,counts.hotspot,counts.dhcp,counts.address_list];
   srcChart.update();
   const top = [...allDevices].sort((a,b)=>b.download_max_mbps-a.download_max_mbps).slice(0,10);
+  const topWanLookup = {};
+  topoWanStats.forEach(w => {
+    topWanLookup[`${w.core_name||''}|${w.wan_name||''}`] = { dl: w.dl_limit||0, ul: w.ul_limit||0 };
+  });
   document.getElementById('top-bw-body').innerHTML = top.map(r=>`
     <tr>
       <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${r.code}</td>
       <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
-      <td style="text-align:right">${r.download_max_mbps}</td>
-      <td style="text-align:right">${r.upload_max_mbps}</td>
+      <td style="text-align:right">${_fmtPctOfWan(r, topWanLookup, 'dl')}</td>
+      <td style="text-align:right">${_fmtPctOfWan(r, topWanLookup, 'ul')}</td>
     </tr>`).join('');
   filterDevices();
 }
@@ -2003,6 +2016,10 @@ function filterDevices() {
   const src = document.getElementById('device-source-filter').value;
   const rows = allDevices.filter(r =>
     (!src || r.source===src) && (!q || JSON.stringify(r).toLowerCase().includes(q)));
+  const wanLookup = {};
+  topoWanStats.forEach(w => {
+    wanLookup[`${w.core_name||''}|${w.wan_name||''}`] = { dl: w.dl_limit||0, ul: w.ul_limit||0 };
+  });
   document.getElementById('devices-body').innerHTML = rows.map(r=>`
     <tr>
       <td style="font-weight:500">${r.code}</td>
@@ -2011,8 +2028,8 @@ function filterDevices() {
       <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
       <td>${r.router}</td>
       <td>${r.parent_node}</td>
-      <td style="text-align:right">${r.download_max_mbps}</td>
-      <td style="text-align:right">${r.upload_max_mbps}</td>
+      <td style="text-align:right">${_fmtPctOfWan(r, wanLookup, 'dl')}</td>
+      <td style="text-align:right">${_fmtPctOfWan(r, wanLookup, 'ul')}</td>
       <td style="color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">${r.comment}</td>
       <td style="text-align:center">${r.is_static?'<i class="bi bi-lock-fill" style="color:#f59e0b"></i>':''}</td>
       <td style="text-align:center;white-space:nowrap">
@@ -2169,22 +2186,10 @@ function syncFromRaw() {
 
 // ── WAN Stats ─────────────────────────────────────────────────────────────
 function _buildWanCard(w) {
-  const dlPct = w.dl_limit > 0 ? Math.min(100, Math.round(w.total_dl / w.dl_limit * 100)) : null;
-  const ulPct = w.ul_limit > 0 ? Math.min(100, Math.round(w.total_ul / w.ul_limit * 100)) : null;
-  const barColor = pct => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
-  const bar = (pct, color) => pct !== null
-    ? `<div style="background:#1e2535;border-radius:4px;height:5px;margin-top:3px">
-         <div style="width:${pct}%;background:${color};height:5px;border-radius:4px;transition:width .4s"></div>
-       </div><div style="font-size:.68rem;color:var(--muted);text-align:right">${pct}%</div>`
-    : '';
   return `<div style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem">
     <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">${esc(w.core_name)}</div>
     <div style="font-size:.95rem;font-weight:700;margin:.1rem 0">${esc(w.wan_label || w.wan_name)}</div>
-    <div style="font-size:.82rem;color:#60a5fa;margin-bottom:.4rem"><i class="bi bi-hdd-network-fill"></i> ${w.device_count} device${w.device_count!==1?'s':''}</div>
-    <div style="font-size:.72rem;color:var(--muted)">DL ${_fmtBw(w.total_dl)}${w.dl_limit?' / '+_fmtBw(w.dl_limit):''}</div>
-    ${bar(dlPct, barColor(dlPct))}
-    <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">UL ${_fmtBw(w.total_ul)}${w.ul_limit?' / '+_fmtBw(w.ul_limit):''}</div>
-    ${bar(ulPct, barColor(ulPct))}
+    <div style="font-size:.82rem;color:#60a5fa"><i class="bi bi-hdd-network-fill"></i> ${w.device_count} device${w.device_count!==1?'s':''}</div>
   </div>`;
 }
 
@@ -2192,6 +2197,8 @@ async function loadWanStats() {
   const r = await fetch('/api/wan/stats');
   const d = await r.json();
   if (!d.ok) return;
+  topoWanStats = d.wans || [];
+  if (allDevices.length) filterDevices();
 
   const html = d.enabled && d.wans.length ? d.wans.map(_buildWanCard).join('') : '';
 
@@ -2209,6 +2216,26 @@ async function loadWanStats() {
     dashCard.style.display = (d.enabled && d.wans.length) ? '' : 'none';
     const g = document.getElementById('dash-wan-stats-grid');
     if (g) g.innerHTML = html;
+  }
+}
+
+async function rebalanceWan() {
+  const btn = document.getElementById('wan-rebalance-btn');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Rebalancing…'; }
+  try {
+    const r = await fetch('/api/wan/rebalance', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      toast(`WAN rebalanced — ${d.assigned} device(s) reassigned`);
+      await loadWanStats();
+      if (topoMode === 'traffic-share') loadTopology();
+    } else {
+      toast(d.error || 'Rebalance failed', false);
+    }
+  } catch(e) {
+    toast('Rebalance request failed: ' + e.message, false);
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-shuffle"></i> Rebalance'; }
   }
 }
 
@@ -3388,6 +3415,7 @@ async function applyMgmt() {
 let topoChart   = null;
 let topoMode    = 'overview';   // 'overview' | 'detail'
 let topoDevices = [];
+let topoWanStats = [];
 
 const SRC_COLORS = {
   pppoe:        '#3b82f6',
@@ -3421,10 +3449,11 @@ async function loadTopology() {
 
 function setTopoMode(m) {
   topoMode = m;
-  document.getElementById('topo-btn-overview').classList.toggle('active',   m==='overview');
-  document.getElementById('topo-btn-detail').classList.toggle('active',     m==='detail');
-  document.getElementById('topo-btn-wan-device').classList.toggle('active', m==='wan-device');
-  document.getElementById('topo-btn-cpu-device').classList.toggle('active', m==='cpu-device');
+  document.getElementById('topo-btn-overview').classList.toggle('active',       m==='overview');
+  document.getElementById('topo-btn-detail').classList.toggle('active',         m==='detail');
+  document.getElementById('topo-btn-wan-device').classList.toggle('active',     m==='wan-device');
+  document.getElementById('topo-btn-cpu-device').classList.toggle('active',     m==='cpu-device');
+  document.getElementById('topo-btn-traffic-share').classList.toggle('active',  m==='traffic-share');
   document.getElementById('topo-limit').style.display = (m==='detail' || m==='wan-device' || m==='cpu-device') ? '' : 'none';
   renderTopology();
 }
@@ -3441,12 +3470,10 @@ function renderTopology() {
   );
 
   // Summary pills
-  const totalBW = devices.reduce((s,d) => s + d.download_max_mbps + d.upload_max_mbps, 0);
   const parents  = [...new Set(devices.map(d => d.parent_node))];
   document.getElementById('topo-summary').innerHTML = [
     `<span class="topo-pill" style="background:#1d3fbb22;color:#60a5fa"><i class="bi bi-diagram-3"></i> ${parents.length} parent nodes</span>`,
     `<span class="topo-pill" style="background:#14532d22;color:#4ade80"><i class="bi bi-hdd-network-fill"></i> ${devices.length} devices</span>`,
-    `<span class="topo-pill" style="background:#3b076422;color:#c4b5fd"><i class="bi bi-speedometer2"></i> ${(totalBW/1000).toFixed(1)} Gbps total</span>`,
   ].join('');
 
   if (!devices.length) {
@@ -3457,9 +3484,16 @@ function renderTopology() {
   document.getElementById('topo-chart').style.display = 'block';
   document.getElementById('topo-empty').style.display  = 'none';
 
-  if (topoMode === 'overview')   return _renderOverview(devices, parents);
-  if (topoMode === 'wan-device') return _renderWanDevice(devices, limit);
-  if (topoMode === 'cpu-device') return _renderCpuDevice(devices, parents, limit);
+  if (topoMode === 'overview')       return _renderOverview(devices, parents);
+  if (topoMode === 'traffic-share') {
+    // Include all devices (hotspot, address-list, etc.) regardless of parent_node
+    const allFiltered = topoDevices.filter(d =>
+      (!srcF || d.source === srcF) && (!routerF || d.router === routerF)
+    );
+    return _renderTrafficShare(allFiltered);
+  }
+  if (topoMode === 'wan-device')     return _renderWanDevice(devices, limit);
+  if (topoMode === 'cpu-device')     return _renderCpuDevice(devices, parents, limit);
   _renderDetail(devices, parents, limit);
 }
 
@@ -3592,6 +3626,89 @@ function _renderOverview(devices, parents) {
 
   const levels = 2 + (hasCores?1:0) + (hasWans?1:0) + (hasBras?1:0);
   _drawSankey(nodes, links, levels);
+}
+
+// ── Traffic Share: WAN → Source type (percentage of devices) ─────────────
+function _renderTrafficShare(devices) {
+  const total = devices.length || 1;
+
+  // --- Aggregation: all devices, "Unassigned" WAN for those without wan_name ---
+  const wTotalMap = {};   // wan_label → device count (for % labels)
+  const wbMap     = {};   // wan \x00 bras   → count
+  const bpMap     = {};   // bras \x00 parent → count
+  const psMap     = {};   // parent \x00 source → count
+
+  devices.forEach(d => {
+    const wan  = _wanScopeLabel(d.core_name, d.wan_name) || 'Unassigned';
+    const bras = d.router      || '(no BRAS)';
+    const p    = d.parent_node || '(no CPU)';
+    const src  = d.source      || 'unknown';
+
+    wTotalMap[wan] = (wTotalMap[wan] || 0) + 1;
+    const wb = `${wan}\x00${bras}`;  wbMap[wb] = (wbMap[wb] || 0) + 1;
+    const bp = `${bras}\x00${p}`;    bpMap[bp] = (bpMap[bp] || 0) + 1;
+    const ps = `${p}\x00${src}`;     psMap[ps] = (psMap[ps] || 0) + 1;
+  });
+
+  // WAN node label includes its traffic share percentage
+  const wanNodeName = {};
+  Object.keys(wTotalMap).forEach(w => {
+    const pct = Math.round(wTotalMap[w] / total * 100);
+    wanNodeName[w] = `${w} (${pct}%)`;
+  });
+
+  // --- Color maps ---
+  const wanList    = Object.keys(wTotalMap);
+  const brasList   = [...new Set(devices.map(d => d.router      || '(no BRAS)'))];
+  const parentList = [...new Set(devices.map(d => d.parent_node || '(no CPU)'))];
+
+  const wanColorMap    = {};
+  wanList.forEach((w, i) => {
+    wanColorMap[w] = w === 'Unassigned' ? '#64748b' : WAN_COLORS[i % WAN_COLORS.length];
+  });
+  const brasColorMap   = {}; brasList.forEach((b, i)   => { brasColorMap[b]   = NODE_COLORS[(i + 3) % NODE_COLORS.length]; });
+  const parentColorMap = {}; parentList.forEach((p, i) => { parentColorMap[p] = NODE_COLORS[i % NODE_COLORS.length]; });
+
+  // --- Nodes ---
+  const nodes   = [];
+  const links   = [];
+  const nodeSet = new Set();
+  const addNode = (name, color) => {
+    if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
+  };
+
+  wanList.forEach(w    => addNode(wanNodeName[w], wanColorMap[w]));
+  brasList.forEach(b   => addNode(b,              brasColorMap[b]));
+  parentList.forEach(p => addNode(p,              parentColorMap[p]));
+  Object.keys(SRC_COLORS).forEach(s => {
+    if (devices.some(d => d.source === s)) addNode(_srcLabel(s), SRC_COLORS[s]);
+  });
+  if (devices.some(d => !SRC_COLORS[d.source || ''])) addNode('Other', '#64748b');
+
+  // --- Links ---
+  Object.entries(wbMap).forEach(([k, count]) => {
+    const [wan, bras] = k.split('\x00');
+    links.push({ source: wanNodeName[wan], target: bras, value: Math.max(count, 1) });
+  });
+  Object.entries(bpMap).forEach(([k, count]) => {
+    const [bras, p] = k.split('\x00');
+    links.push({ source: bras, target: p, value: Math.max(count, 1) });
+  });
+  Object.entries(psMap).forEach(([k, count]) => {
+    const [p, src] = k.split('\x00');
+    links.push({ source: p, target: SRC_COLORS[src] ? _srcLabel(src) : 'Other', value: Math.max(count, 1) });
+  });
+
+  const tooltipFn = p => {
+    if (p.dataType === 'edge') {
+      const pct = Math.round(p.data.value / total * 100);
+      return `<b>${p.data.source}</b> → <b>${p.data.target}</b><br>${p.data.value} devices (${pct}%)`;
+    }
+    const pct = Math.round(p.value / total * 100);
+    return `<b>${p.name}</b><br>${p.value} devices — ${pct}%`;
+  };
+
+  _drawSankey(nodes, links, 4, null, tooltipFn);
 }
 
 // ── Detail: WAN → Parent → Device ─────────────────────────────────────────
@@ -3846,10 +3963,76 @@ function _srcLabel(s) {
   return { pppoe:'PPPoE', hotspot:'Hotspot', dhcp:'DHCP / IPoE', address_list:'Address List' }[s] || s;
 }
 
+// ── Sankey zoom state ─────────────────────────────────────────────────────
+let _topoZoom   = 1.0;
+let _topoBaseH  = 0;
+let _topoBaseW  = 0;
+
+function _topoApplyZoom() {
+  const el   = document.getElementById('topo-chart');
+  const wrap = document.getElementById('topo-chart-wrap');
+  if (!el || !wrap || !topoChart) return;
+  const newH = Math.round(_topoBaseH * _topoZoom);
+  const newW = Math.max(wrap.clientWidth, Math.round(_topoBaseW * _topoZoom));
+  el.style.height = newH + 'px';
+  el.style.width  = newW + 'px';
+  topoChart.resize();
+}
+function _topoZoomIn()    { _topoZoom = Math.min(5, parseFloat((_topoZoom * 1.25).toFixed(3))); _topoApplyZoom(); }
+function _topoZoomOut()   { _topoZoom = Math.max(0.2, parseFloat((_topoZoom / 1.25).toFixed(3))); _topoApplyZoom(); }
+function _topoZoomReset() { _topoZoom = 1.0; _topoApplyZoom(); }
+
+// compute deepest level's node count via BFS to size the chart height
+function _maxColSize(nodes, links) {
+  const outEdges = {};
+  const inDegree = {};
+  nodes.forEach(n => { outEdges[n.name] = []; inDegree[n.name] = 0; });
+  links.forEach(l => {
+    if (outEdges[l.source]) outEdges[l.source].push(l.target);
+    inDegree[l.target] = (inDegree[l.target] || 0) + 1;
+  });
+  const level = {};
+  const queue = nodes.filter(n => !inDegree[n.name]).map(n => n.name);
+  queue.forEach(n => { level[n] = 0; });
+  let i = 0;
+  while (i < queue.length) {
+    const curr = queue[i++];
+    (outEdges[curr] || []).forEach(next => {
+      if (level[next] === undefined) { level[next] = level[curr] + 1; queue.push(next); }
+    });
+  }
+  const counts = {};
+  Object.values(level).forEach(l => { counts[l] = (counts[l] || 0) + 1; });
+  return Math.max(...Object.values(counts), 1);
+}
+
 function _drawSankey(nodes, links, levels, labelFn, tooltipFn) {
+  const el   = document.getElementById('topo-chart');
+  const wrap = document.getElementById('topo-chart-wrap');
+
+  // Auto-size height: each node needs at least 30px of vertical space
+  const maxCol  = _maxColSize(nodes, links);
+  const minH    = Math.max(window.innerHeight * 0.75, maxCol * 30 + 80);
+  _topoBaseH    = minH;
+  _topoBaseW    = wrap ? wrap.clientWidth : el.clientWidth;
+  _topoZoom     = 1.0;
+  el.style.height = minH + 'px';
+  el.style.width  = '100%';
+
   if (!topoChart) {
-    topoChart = echarts.init(document.getElementById('topo-chart'), null, { renderer: 'canvas' });
-    window.addEventListener('resize', () => topoChart && topoChart.resize());
+    topoChart = echarts.init(el, null, { renderer: 'canvas' });
+    window.addEventListener('resize', () => {
+      if (!topoChart) return;
+      _topoBaseW = wrap ? wrap.clientWidth : el.clientWidth;
+      topoChart.resize();
+    });
+    // Ctrl+wheel or trackpad pinch → zoom
+    wrap && wrap.addEventListener('wheel', e => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        e.deltaY < 0 ? _topoZoomIn() : _topoZoomOut();
+      }
+    }, { passive: false });
   }
 
   const defaultTooltip = p => {
@@ -3902,6 +4085,18 @@ function _drawSankey(nodes, links, levels, labelFn, tooltipFn) {
 
 function _fmtBw(mbps) {
   return mbps >= 1000 ? (mbps/1000).toFixed(2)+' Gbps' : Math.round(mbps)+' Mbps';
+}
+
+function _fmtPctOfWan(device, wanLookup, dir) {
+  const key = `${device.core_name||''}|${device.wan_name||''}`;
+  const lim = wanLookup[key];
+  if (!lim || !device.wan_name) {
+    return dir === 'dl' ? `${device.download_max_mbps} Mbps` : `${device.upload_max_mbps} Mbps`;
+  }
+  const cap = dir === 'dl' ? lim.dl : lim.ul;
+  if (!cap) return '—';
+  const val = dir === 'dl' ? device.download_max_mbps : device.upload_max_mbps;
+  return (val / cap * 100).toFixed(1) + '%';
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────

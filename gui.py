@@ -656,6 +656,85 @@ def wan_stats():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/wan/rebalance", methods=["POST"])
+@require_auth
+def wan_rebalance():
+    """Force a full WAN rebalance — clears all assignments and redistributes via greedy bin-packing."""
+    try:
+        import heapq as _heapq
+        cfg = _load_config()
+        wan_cfg = cfg.get("wan_assignment", {})
+        if not wan_cfg.get("enabled", True):
+            return jsonify({"ok": False, "error": "WAN assignment is disabled"}), 400
+
+        cores = cfg.get("cores", [])
+        wans = []
+        for core in cores:
+            core_name = core["name"]
+            for i, wan in enumerate(core.get("wans", []), start=1):
+                wans.append({
+                    "core":     core_name,
+                    "wan":      f"WAN{i}",
+                    "dl_limit": wan.get("download_limit", 1000),
+                    "ul_limit": wan.get("upload_limit", 1000),
+                    "used_dl":  0,
+                    "used_ul":  0,
+                })
+
+        if not wans:
+            return jsonify({"ok": False, "error": "No WANs configured in cores"}), 400
+
+        excluded = []
+        if not wan_cfg.get("include_hotspot", False):
+            excluded.append("hotspot")
+        if not wan_cfg.get("include_dhcp", False):
+            excluded.append("dhcp")
+
+        excl_sql = ""
+        if excluded:
+            placeholders = ",".join("?" * len(excluded))
+            excl_sql = f" WHERE (source NOT IN ({placeholders}) OR source IS NULL)"
+
+        con = sqlite3.connect(str(DB_PATH))
+        try:
+            con.execute("UPDATE devices SET core_name='', wan_name=''")
+            con.commit()
+
+            devices = con.execute(
+                "SELECT code, download_max_mbps, upload_max_mbps FROM devices"
+                + excl_sql + " ORDER BY weight DESC",
+                excluded,
+            ).fetchall()
+
+            def _util(w):
+                cap = w["dl_limit"] + w["ul_limit"]
+                return (w["used_dl"] + w["used_ul"]) / cap if cap > 0 else float("inf")
+
+            heap = [(_util(w), i) for i, w in enumerate(wans)]
+            _heapq.heapify(heap)
+
+            assignments = []
+            for code, dl, ul in devices:
+                _, idx = _heapq.heappop(heap)
+                wan = wans[idx]
+                assignments.append((wan["core"], wan["wan"], code))
+                wan["used_dl"] += dl
+                wan["used_ul"] += ul
+                _heapq.heappush(heap, (_util(wan), idx))
+
+            con.executemany(
+                "UPDATE devices SET core_name=?, wan_name=? WHERE code=?",
+                assignments,
+            )
+            con.commit()
+        finally:
+            con.close()
+
+        return jsonify({"ok": True, "assigned": len(assignments)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/devices", methods=["POST"])
 @require_auth
 def add_device():
