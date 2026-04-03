@@ -377,10 +377,9 @@ def assign_wan_nodes(conn, cores, wan_sources=None):
         if not rebalance_needed:
             return totals
 
-        # Full rebalance: clear all WAN assignments so every device gets reassigned
-        logger.info("Rebalancing all WAN assignments...")
-        conn.execute("UPDATE devices SET core_name='', wan_name=''")
-        conn.commit()
+        # Full rebalance without wiping assignments first: recompute all placements,
+        # then update rows in place.
+        logger.info("Rebalancing all WAN assignments (delta update mode)...")
         for w in wans:
             w['used_dl'] = w['used_ul'] = 0
         new_devices = conn.execute(

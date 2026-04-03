@@ -656,12 +656,100 @@ def wan_stats():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _sync_core_wan_address_lists(con, cfg: dict) -> dict:
+    """
+    Sync core WAN address-lists by delta only (add/remove differences).
+    Returns a summary with per-core changes and errors.
+    """
+    cores = cfg.get("cores", []) or []
+    summary = {
+        "ok": True,
+        "cores": [],
+        "total_added": 0,
+        "total_removed": 0,
+        "errors": [],
+    }
+
+    for core in cores:
+        core_name = core.get("name", "")
+        core_result = {"core": core_name, "added": 0, "removed": 0, "error": ""}
+        wans = core.get("wans", []) or []
+        if not wans:
+            summary["cores"].append(core_result)
+            continue
+
+        pool = None
+        try:
+            pool = _connect_router_api(core)
+            api = pool.get_api()
+            resource = api.get_resource("/ip/firewall/address-list")
+
+            target = set()
+            for i, _wan in enumerate(wans, start=1):
+                wan_name = f"WAN{i}"
+                rows = con.execute(
+                    "SELECT ipv4 FROM devices "
+                    "WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL AND ipv4 != ''",
+                    (core_name, wan_name),
+                ).fetchall()
+                for (ip,) in rows:
+                    target.add((wan_name, ip))
+
+            current = {}
+            for i, _wan in enumerate(wans, start=1):
+                wan_name = f"WAN{i}"
+                entries = resource.get(list=wan_name)
+                for e in entries:
+                    ip = e.get("address")
+                    eid = e.get(".id")
+                    if ip and eid:
+                        current[(wan_name, ip)] = eid
+
+            to_add = target - set(current.keys())
+            to_remove = set(current.keys()) - target
+
+            for wan_name, ip in to_remove:
+                try:
+                    resource.remove(id=current[(wan_name, ip)])
+                    core_result["removed"] += 1
+                except Exception:
+                    # Keep going; one bad row should not block the rest.
+                    pass
+
+            for wan_name, ip in to_add:
+                try:
+                    resource.add(list=wan_name, address=ip, comment="libreqos-managed")
+                    core_result["added"] += 1
+                except Exception as ex:
+                    if "already have such entry" not in str(ex):
+                        raise
+
+            summary["total_added"] += core_result["added"]
+            summary["total_removed"] += core_result["removed"]
+
+        except Exception as ex:
+            core_result["error"] = str(ex)
+            summary["ok"] = False
+            summary["errors"].append(f"{core_name}: {ex}")
+        finally:
+            if pool is not None:
+                try:
+                    pool.disconnect()
+                except Exception:
+                    pass
+
+        summary["cores"].append(core_result)
+
+    return summary
+
+
 @app.route("/api/wan/rebalance", methods=["POST"])
 @require_auth
 def wan_rebalance():
-    """Force a full WAN rebalance — clears all assignments and redistributes via greedy bin-packing."""
+    """Rebalance active devices across WANs with delta DB updates (no table wipe)."""
     try:
         import heapq as _heapq
+
         cfg = _load_config()
         wan_cfg = cfg.get("wan_assignment", {})
         if not wan_cfg.get("enabled", True):
@@ -670,15 +758,15 @@ def wan_rebalance():
         cores = cfg.get("cores", [])
         wans = []
         for core in cores:
-            core_name = core["name"]
+            core_name = core.get("name", "")
             for i, wan in enumerate(core.get("wans", []), start=1):
                 wans.append({
-                    "core":     core_name,
-                    "wan":      f"WAN{i}",
-                    "dl_limit": wan.get("download_limit", 1000),
-                    "ul_limit": wan.get("upload_limit", 1000),
-                    "used_dl":  0,
-                    "used_ul":  0,
+                    "core": core_name,
+                    "wan": f"WAN{i}",
+                    "dl_limit": float(wan.get("download_limit", 1000) or 1000),
+                    "ul_limit": float(wan.get("upload_limit", 1000) or 1000),
+                    "used_dl": 0.0,
+                    "used_ul": 0.0,
                 })
 
         if not wans:
@@ -693,18 +781,36 @@ def wan_rebalance():
         excl_sql = ""
         if excluded:
             placeholders = ",".join("?" * len(excluded))
-            excl_sql = f" WHERE (source NOT IN ({placeholders}) OR source IS NULL)"
+            excl_sql = f"(source NOT IN ({placeholders}) OR source IS NULL) AND "
+
+        # Consider stale dynamic rows as offline for manual rebalance cleanup.
+        active_cutoff = time.time() - 1200
 
         con = sqlite3.connect(str(DB_PATH))
         try:
-            con.execute("UPDATE devices SET core_name='', wan_name=''")
-            con.commit()
-
             devices = con.execute(
-                "SELECT code, download_max_mbps, upload_max_mbps FROM devices"
-                + excl_sql + " ORDER BY weight DESC",
-                excluded,
+                "SELECT code, download_max_mbps, upload_max_mbps, "
+                "       COALESCE(core_name, ''), COALESCE(wan_name, '') "
+                "FROM devices "
+                "WHERE " + excl_sql + "(is_static = 1 OR last_seen >= ?) "
+                "ORDER BY weight DESC",
+                excluded + [active_cutoff],
             ).fetchall()
+
+            stale_rows = con.execute(
+                "SELECT code FROM devices "
+                "WHERE " + excl_sql
+                + "is_static = 0 AND last_seen < ? "
+                "AND COALESCE(core_name, '') != '' AND COALESCE(wan_name, '') != ''",
+                excluded + [active_cutoff],
+            ).fetchall()
+            stale_codes = [r[0] for r in stale_rows]
+
+            if stale_codes:
+                con.executemany(
+                    "UPDATE devices SET core_name='', wan_name='' WHERE code=?",
+                    [(code,) for code in stale_codes],
+                )
 
             def _util(w):
                 cap = w["dl_limit"] + w["ul_limit"]
@@ -713,24 +819,36 @@ def wan_rebalance():
             heap = [(_util(w), i) for i, w in enumerate(wans)]
             _heapq.heapify(heap)
 
-            assignments = []
-            for code, dl, ul in devices:
+            changed = []
+            for code, dl, ul, old_core, old_wan in devices:
                 _, idx = _heapq.heappop(heap)
                 wan = wans[idx]
-                assignments.append((wan["core"], wan["wan"], code))
-                wan["used_dl"] += dl
-                wan["used_ul"] += ul
+                new_core = wan["core"]
+                new_wan = wan["wan"]
+                if new_core != old_core or new_wan != old_wan:
+                    changed.append((new_core, new_wan, code))
+                wan["used_dl"] += float(dl or 0)
+                wan["used_ul"] += float(ul or 0)
                 _heapq.heappush(heap, (_util(wan), idx))
 
-            con.executemany(
-                "UPDATE devices SET core_name=?, wan_name=? WHERE code=?",
-                assignments,
-            )
+            if changed:
+                con.executemany(
+                    "UPDATE devices SET core_name=?, wan_name=? WHERE code=?",
+                    changed,
+                )
+
             con.commit()
+            sync_summary = _sync_core_wan_address_lists(con, cfg)
         finally:
             con.close()
 
-        return jsonify({"ok": True, "assigned": len(assignments)})
+        return jsonify({
+            "ok": True,
+            "assigned": len(changed),
+            "updated": len(changed),
+            "offline_cleared": len(stale_codes),
+            "synced": sync_summary,
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -739,20 +857,21 @@ def wan_rebalance():
 @require_auth
 def add_device():
     try:
-        d   = request.get_json(force=True)
-        dl  = int(d.get("download_max_mbps", 100))
-        ul  = int(d.get("upload_max_mbps",   100))
+        d = request.get_json(force=True)
+        dl = int(d.get("download_max_mbps", 100))
+        ul = int(d.get("upload_max_mbps", 100))
         dl_min = max(1, int(dl * 0.5))
         ul_min = max(1, int(ul * 0.5))
-        code   = d.get("code", "").strip()
+        code = d.get("code", "").strip()
         if not code:
             return jsonify({"ok": False, "error": "Code is required"}), 400
         ipv4 = d.get("ipv4", "").strip() or None
         ipv6 = d.get("ipv6", "").strip() or None
-        con  = _db_con()
+        con = _db_con()
         # generate unique IDs
         while True:
-            cid = _random_id(); did = _random_id()
+            cid = _random_id()
+            did = _random_id()
             row = con.execute("SELECT 1 FROM devices WHERE circuit_id=? OR device_id=?", (cid, did)).fetchone()
             if not row:
                 break
@@ -790,14 +909,14 @@ def add_device():
 @require_auth
 def update_device(code):
     try:
-        d   = request.get_json(force=True)
-        dl  = int(d.get("download_max_mbps", 100))
-        ul  = int(d.get("upload_max_mbps",   100))
+        d = request.get_json(force=True)
+        dl = int(d.get("download_max_mbps", 100))
+        ul = int(d.get("upload_max_mbps", 100))
         dl_min = max(1, int(dl * 0.5))
         ul_min = max(1, int(ul * 0.5))
         ipv4 = d.get("ipv4", "").strip() or None
         ipv6 = d.get("ipv6", "").strip() or None
-        con  = _db_con()
+        con = _db_con()
         con.execute("""
             UPDATE devices SET
               parent_node=?, mac=?, ipv4=?, ipv6=?,
