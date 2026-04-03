@@ -549,6 +549,17 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
 
+    <!-- WAN Assignment stats — full width, hidden if disabled -->
+    <div class="card" id="dash-wan-stats-card" style="grid-column:1/-1;display:none">
+      <div class="card-hd">
+        <span><i class="bi bi-arrow-left-right"></i> WAN Assignment</span>
+        <button class="btn-ghost" style="font-size:.75rem" onclick="loadWanStats()"><i class="bi bi-arrow-clockwise"></i></button>
+      </div>
+      <div class="card-bd" style="padding:.75rem">
+        <div id="dash-wan-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.6rem"></div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -2128,33 +2139,48 @@ function syncFromRaw() {
 }
 
 // ── WAN Stats ─────────────────────────────────────────────────────────────
+function _buildWanCard(w) {
+  const dlPct = w.dl_limit > 0 ? Math.min(100, Math.round(w.total_dl / w.dl_limit * 100)) : null;
+  const ulPct = w.ul_limit > 0 ? Math.min(100, Math.round(w.total_ul / w.ul_limit * 100)) : null;
+  const barColor = pct => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
+  const bar = (pct, color) => pct !== null
+    ? `<div style="background:#1e2535;border-radius:4px;height:5px;margin-top:3px">
+         <div style="width:${pct}%;background:${color};height:5px;border-radius:4px;transition:width .4s"></div>
+       </div><div style="font-size:.68rem;color:var(--muted);text-align:right">${pct}%</div>`
+    : '';
+  return `<div style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem">
+    <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">${esc(w.core_name)}</div>
+    <div style="font-size:.95rem;font-weight:700;margin:.1rem 0">${esc(w.wan_label || w.wan_name)}</div>
+    <div style="font-size:.82rem;color:#60a5fa;margin-bottom:.4rem"><i class="bi bi-hdd-network-fill"></i> ${w.device_count} device${w.device_count!==1?'s':''}</div>
+    <div style="font-size:.72rem;color:var(--muted)">DL ${_fmtBw(w.total_dl)}${w.dl_limit?' / '+_fmtBw(w.dl_limit):''}</div>
+    ${bar(dlPct, barColor(dlPct))}
+    <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">UL ${_fmtBw(w.total_ul)}${w.ul_limit?' / '+_fmtBw(w.ul_limit):''}</div>
+    ${bar(ulPct, barColor(ulPct))}
+  </div>`;
+}
+
 async function loadWanStats() {
   const r = await fetch('/api/wan/stats');
   const d = await r.json();
   if (!d.ok) return;
+
+  const html = d.enabled && d.wans.length ? d.wans.map(_buildWanCard).join('') : '';
+
+  // Topology page widget
   const wrap = document.getElementById('wan-stats-wrap');
-  if (!d.enabled || !d.wans.length) { wrap.style.display = 'none'; return; }
-  wrap.style.display = 'block';
-  const grid = document.getElementById('wan-stats-grid');
-  grid.innerHTML = d.wans.map(w => {
-    const dlPct = w.dl_limit > 0 ? Math.min(100, Math.round(w.total_dl / w.dl_limit * 100)) : null;
-    const ulPct = w.ul_limit > 0 ? Math.min(100, Math.round(w.total_ul / w.ul_limit * 100)) : null;
-    const barColor = pct => pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#22c55e';
-    const bar = (pct, color) => pct !== null
-      ? `<div style="background:#1e2535;border-radius:4px;height:5px;margin-top:3px">
-           <div style="width:${pct}%;background:${color};height:5px;border-radius:4px;transition:width .4s"></div>
-         </div><div style="font-size:.68rem;color:var(--muted);text-align:right">${pct}%</div>`
-      : '';
-    return `<div style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem">
-      <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">${esc(w.core_name)}</div>
-      <div style="font-size:.95rem;font-weight:700;margin:.1rem 0">${esc(w.wan_label || w.wan_name)}</div>
-      <div style="font-size:.82rem;color:#60a5fa;margin-bottom:.4rem"><i class="bi bi-hdd-network-fill"></i> ${w.device_count} device${w.device_count!==1?'s':''}</div>
-      <div style="font-size:.72rem;color:var(--muted)">DL ${_fmtBw(w.total_dl)}${w.dl_limit?' / '+_fmtBw(w.dl_limit):''}</div>
-      ${bar(dlPct, barColor(dlPct))}
-      <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">UL ${_fmtBw(w.total_ul)}${w.ul_limit?' / '+_fmtBw(w.ul_limit):''}</div>
-      ${bar(ulPct, barColor(ulPct))}
-    </div>`;
-  }).join('');
+  if (wrap) {
+    wrap.style.display = (d.enabled && d.wans.length) ? 'block' : 'none';
+    const g = document.getElementById('wan-stats-grid');
+    if (g) g.innerHTML = html;
+  }
+
+  // Dashboard card
+  const dashCard = document.getElementById('dash-wan-stats-card');
+  if (dashCard) {
+    dashCard.style.display = (d.enabled && d.wans.length) ? '' : 'none';
+    const g = document.getElementById('dash-wan-stats-grid');
+    if (g) g.innerHTML = html;
+  }
 }
 
 // ── Strategy ──────────────────────────────────────────────────────────────
@@ -3914,8 +3940,10 @@ function initApp() {
   loadTroubleshooting();
   loadDevices();
   loadMikrotikResource();
+  loadWanStats();
   setInterval(loadDevices, 30000);
   setInterval(loadMikrotikResource, 15000);
+  setInterval(loadWanStats, 60000);
   checkService();
   setInterval(checkService, 10000);
   startSSE();
