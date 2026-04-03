@@ -11,3 +11,6 @@ __pycache__/database.cpython-312.pyc
 *.bak
 *pyc
 *.pyo
+devices.db-shm
+devices.db-wal
+devices.db
