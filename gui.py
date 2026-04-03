@@ -839,6 +839,17 @@ def wan_rebalance():
 
             con.commit()
             sync_summary = _sync_core_wan_address_lists(con, cfg)
+
+            # Rebalance is only fully successful when router API sync succeeds.
+            if not sync_summary.get("ok", False):
+                return jsonify({
+                    "ok": False,
+                    "error": "Rebalance applied to DB, but MikroTik API sync failed",
+                    "assigned": len(changed),
+                    "updated": len(changed),
+                    "offline_cleared": len(stale_codes),
+                    "synced": sync_summary,
+                }), 502
         finally:
             con.close()
 

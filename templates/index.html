@@ -2226,7 +2226,15 @@ async function rebalanceWan() {
     const r = await fetch('/api/wan/rebalance', { method: 'POST' });
     const d = await r.json();
     if (d.ok) {
-      toast(`WAN rebalanced — ${d.assigned} device(s) reassigned`);
+      const moved = Number(d.updated ?? d.assigned ?? 0);
+      const offlineCleared = Number(d.offline_cleared ?? 0);
+      const addCount = Number(d.synced?.total_added ?? 0);
+      const removeCount = Number(d.synced?.total_removed ?? 0);
+      let msg = `WAN rebalanced - moved ${moved}, offline cleared ${offlineCleared}, list +${addCount}/-${removeCount}`;
+      if (d.synced && d.synced.ok === false && Array.isArray(d.synced.errors) && d.synced.errors.length) {
+        msg += ` (sync warnings: ${d.synced.errors.length})`;
+      }
+      toast(msg, !(d.synced && d.synced.ok === false));
       await loadWanStats();
       if (topoMode === 'traffic-share') loadTopology();
     } else {
