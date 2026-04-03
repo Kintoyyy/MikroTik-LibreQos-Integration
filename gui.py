@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 import string
 import subprocess
+import tempfile
 import time
 import threading
 import hashlib
@@ -492,16 +493,43 @@ def save_yaml(name):
         data    = request.get_json(force=True)
         content = data.get("content", "")
         apply   = data.get("apply_netplan", False)
-        path.write_text(content)
+
+        # Files under /etc/netplan are root-owned; use sudo to write them.
+        # Other files (under /opt/libreqos) are writable directly by www-data.
+        needs_sudo = Path(str(path)).parent == Path("/etc/netplan")
+
+        if needs_sudo:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            try:
+                mv = subprocess.run(
+                    ["sudo", "/bin/mv", tmp_path, str(path)],
+                    capture_output=True, text=True, timeout=10
+                )
+                if mv.returncode != 0:
+                    return jsonify({"ok": False, "error": mv.stderr.strip() or "mv failed"}), 500
+                # sudoers allows this exact command only for libreqos.yaml
+                if str(path) == "/etc/netplan/libreqos.yaml":
+                    subprocess.run(
+                        ["sudo", "/bin/chmod", "600", str(path)],
+                        capture_output=True, text=True, timeout=10
+                    )
+            except Exception as e:
+                return jsonify({"ok": False, "error": str(e)}), 500
+        else:
+            path.write_text(content)
+
         netplan_out = None
         if apply:
             try:
-                os.chmod(str(path), 0o600)
-                netplan_bin = _which("netplan") or "/usr/sbin/netplan"
                 result = subprocess.run(
-                    [netplan_bin, "apply"],
+                    ["sudo", "/usr/sbin/netplan", "apply"],
                     capture_output=True, text=True, timeout=15
                 )
+                if result.returncode != 0:
+                    err_output = result.stderr.strip() or result.stdout.strip() or ""
+                    return jsonify({"ok": True, "netplan_error": err_output or "netplan apply failed"})
                 netplan_out = result.stdout.strip() or result.stderr.strip() or "applied"
             except Exception as ne:
                 return jsonify({"ok": True, "netplan_error": str(ne)})
