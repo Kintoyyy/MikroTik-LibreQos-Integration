@@ -1,33 +1,59 @@
 {
-    "strategy": "cpu",
     "promote_to_root": false,
     "queues": true,
+    "strategy": "cpu",
     "bras": [
         {
-            "name": "Mikrotik 1",
-            "address": "192.168.88.1",
-            "port": 8728,
+            "address": "192.168.88.2",
+            "name": "BRAS",
             "username": "admin",
-            "password": "",
-            "pppoe": {
-                "enabled": true,
-                "default_download_limit": 1000,
-                "default_upload_limit": 1000
-            },
-            "hotspot": {
-                "enabled": true,
-                "default_download_limit": 1000,
-                "default_upload_limit": 1000
-            },
-            "dhcp": {
-                "enabled": true,
-                "default_download_limit": 1000,
-                "default_upload_limit": 1000
-            },
+            "password": "password",
+            "port": 8728,
             "address_list": {
                 "default_download_limit": 100,
                 "default_upload_limit": 100
+            },
+            "dhcp": {
+                "default_download_limit": 1000,
+                "default_upload_limit": 1000,
+                "enabled": false
+            },
+            "hotspot": {
+                "default_download_limit": 1000,
+                "default_upload_limit": 1000,
+                "enabled": true
+            },
+            "pppoe": {
+                "default_download_limit": 1000,
+                "default_upload_limit": 1000,
+                "enabled": true
             }
         }
-    ]
+    ],
+    "cores": [
+        {
+            "address": "192.168.88.2",
+            "name": "CORE",
+            "username": "admin",
+            "password": "password",
+            "port": 8728,
+            "wans": [
+                {
+                    "download_limit": 1000,
+                    "name": "ISP1",
+                    "upload_limit": 1000
+                },
+                {
+                    "download_limit": 1000,
+                    "name": "ISP2",
+                    "upload_limit": 1000
+                }
+            ]
+        }
+    ],
+    "wan_assignment": {
+        "enabled": false,
+        "include_hotspot": false,
+        "include_dhcp": false
+    }
 }

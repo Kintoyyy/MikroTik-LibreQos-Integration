@@ -229,6 +229,7 @@ def read_config_json():
 
         wan_cfg = config.get('wan_assignment', {})
         wan_sources = {
+            'enabled':         wan_cfg.get('enabled',         True),
             'include_hotspot': wan_cfg.get('include_hotspot', False),
             'include_dhcp':    wan_cfg.get('include_dhcp',    False),
         }
@@ -1179,7 +1180,7 @@ def main():
                         logger.info("Skipping network.json (queues=false)")
 
                 # ── WAN assignment across cores ─────────────────────────────
-                if cores:
+                if cores and wan_sources.get('enabled', True):
                     wan_totals = assign_wan_nodes(conn, cores, wan_sources)
                     check_wan_capacity(wan_totals, cores)
                     sync_wan_address_lists(conn, cores)
