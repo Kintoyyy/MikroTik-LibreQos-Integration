@@ -1118,8 +1118,10 @@ code { font-size: .8rem; color: #94a3b8; }
     <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
       <!-- View mode -->
       <div style="display:flex;background:#0d1117;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-        <button id="topo-btn-overview" class="topo-mode-btn active" onclick="setTopoMode('overview')">Overview</button>
-        <button id="topo-btn-detail"   class="topo-mode-btn"        onclick="setTopoMode('detail')">Detail</button>
+        <button id="topo-btn-overview"   class="topo-mode-btn active" onclick="setTopoMode('overview')">Overview</button>
+        <button id="topo-btn-detail"     class="topo-mode-btn"        onclick="setTopoMode('detail')">Detail</button>
+        <button id="topo-btn-wan-device" class="topo-mode-btn"        onclick="setTopoMode('wan-device')">WAN → Device</button>
+        <button id="topo-btn-cpu-device" class="topo-mode-btn"        onclick="setTopoMode('cpu-device')">CPU → Device</button>
       </div>
       <!-- Source filter -->
       <select class="search-input" id="topo-src-filter" onchange="renderTopology()" style="font-size:.78rem">
@@ -1133,7 +1135,7 @@ code { font-size: .8rem; color: #94a3b8; }
       <select class="search-input" id="topo-router-filter" onchange="renderTopology()" style="font-size:.78rem">
         <option value="">All routers</option>
       </select>
-      <!-- Detail limit -->
+      <!-- Limit (detail + wan-device modes) -->
       <select class="search-input" id="topo-limit" onchange="renderTopology()" style="font-size:.78rem;display:none">
         <option value="50">Top 50</option>
         <option value="100">Top 100</option>
@@ -3193,9 +3195,11 @@ async function loadTopology() {
 
 function setTopoMode(m) {
   topoMode = m;
-  document.getElementById('topo-btn-overview').classList.toggle('active', m==='overview');
-  document.getElementById('topo-btn-detail').classList.toggle('active',   m==='detail');
-  document.getElementById('topo-limit').style.display = m==='detail' ? '' : 'none';
+  document.getElementById('topo-btn-overview').classList.toggle('active',   m==='overview');
+  document.getElementById('topo-btn-detail').classList.toggle('active',     m==='detail');
+  document.getElementById('topo-btn-wan-device').classList.toggle('active', m==='wan-device');
+  document.getElementById('topo-btn-cpu-device').classList.toggle('active', m==='cpu-device');
+  document.getElementById('topo-limit').style.display = (m==='detail' || m==='wan-device' || m==='cpu-device') ? '' : 'none';
   renderTopology();
 }
 
@@ -3227,7 +3231,10 @@ function renderTopology() {
   document.getElementById('topo-chart').style.display = 'block';
   document.getElementById('topo-empty').style.display  = 'none';
 
-  topoMode === 'overview' ? _renderOverview(devices, parents) : _renderDetail(devices, parents, limit);
+  if (topoMode === 'overview')   return _renderOverview(devices, parents);
+  if (topoMode === 'wan-device') return _renderWanDevice(devices, limit);
+  if (topoMode === 'cpu-device') return _renderCpuDevice(devices, parents, limit);
+  _renderDetail(devices, parents, limit);
 }
 
 // ── Overview: Core → WAN → BRAS → CPU/Parent → Source ────────────────────
@@ -3356,16 +3363,27 @@ function _renderOverview(devices, parents) {
   _drawSankey(nodes, links, levels);
 }
 
-// ── Detail: Parent Node → Device ──────────────────────────────────────────
+// ── Detail: WAN → Parent → Device ─────────────────────────────────────────
+let _detailDevMap = {};  // 'dev::code' → device row — used by rich tooltip
+
 function _renderDetail(devices, parents, limit) {
-  // Sort by bandwidth desc, apply limit
   let sorted = [...devices].sort((a,b) =>
     (b.download_max_mbps + b.upload_max_mbps) - (a.download_max_mbps + a.upload_max_mbps));
   if (limit > 0) sorted = sorted.slice(0, limit);
 
+  // Build lookup for rich tooltips
+  _detailDevMap = {};
+  sorted.forEach(d => { _detailDevMap['dev::' + d.code] = d; });
+
   const nodes = [];
   const links = [];
   const nodeSet = new Set();
+
+  const wanList = [...new Set(sorted.map(d => d.wan_name).filter(Boolean))];
+  const hasWans = wanList.length > 0;
+
+  const wanColorMap  = {};
+  wanList.forEach((w, i) => { wanColorMap[w] = WAN_COLORS[i % WAN_COLORS.length]; });
   const parentColorMap = {};
   parents.forEach((p, i) => { parentColorMap[p] = NODE_COLORS[i % NODE_COLORS.length]; });
 
@@ -3373,33 +3391,249 @@ function _renderDetail(devices, parents, limit) {
     if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
   };
 
-  // Parent nodes
+  // Nodes left → right: WAN, Parent, Device
+  if (hasWans) wanList.forEach(w => addNode(w, wanColorMap[w]));
   [...new Set(sorted.map(d => d.parent_node))].forEach(p =>
     addNode(p, parentColorMap[p] || '#3b82f6'));
+  sorted.forEach(d => addNode('dev::' + d.code, SRC_COLORS[d.source || 'address_list'] || '#94a3b8'));
 
-  // Device nodes (prefix to avoid collision with parent names)
-  sorted.forEach(d => {
-    const src = d.source || 'address_list';
-    addNode('dev::' + d.code, SRC_COLORS[src] || '#94a3b8');
-  });
+  // Links: WAN → parent (aggregated)
+  if (hasWans) {
+    const wpMap = {};
+    sorted.forEach(d => {
+      if (!d.wan_name) return;
+      const k = `${d.wan_name}\x00${d.parent_node}`;
+      wpMap[k] = (wpMap[k] || 0) + (d.download_max_mbps || 0) + (d.upload_max_mbps || 0);
+    });
+    Object.entries(wpMap).forEach(([k, bw]) => {
+      const [wan, p] = k.split('\x00');
+      links.push({ source: wan, target: p, value: Math.max(bw, 1) });
+    });
+  }
 
+  // Links: parent → device
   sorted.forEach(d => {
     const bw = (d.download_max_mbps || 1) + (d.upload_max_mbps || 1);
     links.push({ source: d.parent_node, target: 'dev::' + d.code, value: Math.max(bw, 1) });
   });
 
-  _drawSankey(nodes, links, 2, d => d.name.startsWith('dev::') ? d.name.slice(5) : d.name);
+  const labelFn = d => {
+    if (!d.name.startsWith('dev::')) return d.name;
+    const dev = _detailDevMap[d.name];
+    const label = dev ? (dev.ipv4 || dev.code) : d.name.slice(5);
+    return label.length > 20 ? label.slice(0, 19) + '…' : label;
+  };
+
+  const tooltipFn = p => {
+    const _strip = name => name.startsWith('dev::') ? name.slice(5) : name;
+    if (p.dataType === 'edge') {
+      const src = p.data.source.startsWith('dev::')
+        ? (_detailDevMap[p.data.source]?.ipv4 || _strip(p.data.source))
+        : p.data.source;
+      const tgt = p.data.target.startsWith('dev::')
+        ? (_detailDevMap[p.data.target]?.ipv4 || _strip(p.data.target))
+        : p.data.target;
+      return `<b>${src}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+    }
+    if (p.name.startsWith('dev::')) {
+      const d = _detailDevMap[p.name];
+      if (!d) return `<b>${_strip(p.name)}</b>`;
+      const tag = (label, val) =>
+        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${val}</b>`;
+      const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
+      return [
+        `<b style="color:#e2e8f0">${d.code}</b>`,
+        sep,
+        d.ipv4    ? tag('IP',     d.ipv4)                          : '',
+        d.mac     ? tag('MAC',    d.mac)                           : '',
+        tag('Source', _srcLabel(d.source || '')),
+        sep,
+        `<span style="color:#4ade80">↓ DL</span> <b>${_fmtBw(d.download_max_mbps)}</b> &nbsp; <span style="color:#60a5fa">↑ UL</span> <b>${_fmtBw(d.upload_max_mbps)}</b>`,
+        sep,
+        d.wan_name  ? tag('WAN',  `${d.core_name ? d.core_name + ' › ' : ''}${d.wan_name}`) : '',
+        d.router    ? tag('BRAS', d.router)                        : '',
+        d.parent_node ? tag('CPU', d.parent_node)                  : '',
+      ].filter(Boolean).join('<br>');
+    }
+    return `<b>${p.name}</b><br>${_fmtBw(p.value)}`;
+  };
+
+  _drawSankey(nodes, links, hasWans ? 3 : 2, labelFn, tooltipFn);
+}
+
+// ── WAN → Device (direct, top N by bandwidth) ─────────────────────────────
+function _renderWanDevice(devices, limit) {
+  // Filter to devices with a WAN assignment, sort by bw desc, apply limit
+  let withWan = devices.filter(d => d.wan_name);
+  let noWan   = devices.filter(d => !d.wan_name);
+
+  withWan.sort((a,b) => (b.download_max_mbps + b.upload_max_mbps) - (a.download_max_mbps + a.upload_max_mbps));
+  if (limit > 0) withWan = withWan.slice(0, limit);
+
+  // Build lookup for rich tooltips (reuse _detailDevMap)
+  _detailDevMap = {};
+  withWan.forEach(d => { _detailDevMap['dev::' + d.code] = d; });
+
+  const nodes = [];
+  const links = [];
+  const nodeSet = new Set();
+
+  const wanList = [...new Set(withWan.map(d => d.wan_name))];
+  const wanColorMap = {};
+  wanList.forEach((w, i) => { wanColorMap[w] = WAN_COLORS[i % WAN_COLORS.length]; });
+
+  const addNode = (name, color) => {
+    if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
+  };
+
+  // WAN nodes
+  wanList.forEach(w => addNode(w, wanColorMap[w]));
+  // Device nodes
+  withWan.forEach(d => addNode('dev::' + d.code, SRC_COLORS[d.source || 'address_list'] || '#94a3b8'));
+
+  // Links: WAN → device
+  withWan.forEach(d => {
+    const bw = (d.download_max_mbps || 1) + (d.upload_max_mbps || 1);
+    links.push({ source: d.wan_name, target: 'dev::' + d.code, value: Math.max(bw, 1) });
+  });
+
+  const labelFn = d => {
+    if (!d.name.startsWith('dev::')) return d.name;
+    const dev = _detailDevMap[d.name];
+    const label = dev ? (dev.ipv4 || dev.code) : d.name.slice(5);
+    return label.length > 20 ? label.slice(0, 19) + '…' : label;
+  };
+
+  const tooltipFn = p => {
+    if (p.dataType === 'edge') {
+      const tgt = p.data.target.startsWith('dev::')
+        ? (_detailDevMap[p.data.target]?.ipv4 || p.data.target.slice(5))
+        : p.data.target;
+      return `<b>${p.data.source}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+    }
+    if (p.name.startsWith('dev::')) {
+      const d = _detailDevMap[p.name];
+      if (!d) return `<b>${p.name.slice(5)}</b>`;
+      const tag = (label, val) =>
+        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${val}</b>`;
+      const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
+      return [
+        `<b style="color:#e2e8f0">${d.code}</b>`,
+        sep,
+        d.ipv4 ? tag('IP',     d.ipv4)                          : '',
+        d.mac  ? tag('MAC',    d.mac)                           : '',
+        tag('Source', _srcLabel(d.source || '')),
+        sep,
+        `<span style="color:#4ade80">↓ DL</span> <b>${_fmtBw(d.download_max_mbps)}</b> &nbsp; <span style="color:#60a5fa">↑ UL</span> <b>${_fmtBw(d.upload_max_mbps)}</b>`,
+        sep,
+        d.wan_name    ? tag('WAN',  `${d.core_name ? d.core_name + ' › ' : ''}${d.wan_name}`) : '',
+        d.router      ? tag('BRAS', d.router)                   : '',
+        d.parent_node ? tag('CPU',  d.parent_node)              : '',
+      ].filter(Boolean).join('<br>');
+    }
+    // WAN node tooltip — show total
+    return `<b>${p.name}</b><br>${_fmtBw(p.value)}`;
+  };
+
+  _drawSankey(nodes, links, 2, labelFn, tooltipFn);
+}
+
+// ── CPU → Device (direct, top N by bandwidth) ─────────────────────────────
+function _renderCpuDevice(devices, parents, limit) {
+  let sorted = [...devices].sort((a,b) =>
+    (b.download_max_mbps + b.upload_max_mbps) - (a.download_max_mbps + a.upload_max_mbps));
+  if (limit > 0) sorted = sorted.slice(0, limit);
+
+  _detailDevMap = {};
+  sorted.forEach(d => { _detailDevMap['dev::' + d.code] = d; });
+
+  const nodes = [];
+  const links = [];
+  const nodeSet = new Set();
+
+  const parentColorMap = {};
+  parents.forEach((p, i) => { parentColorMap[p] = NODE_COLORS[i % NODE_COLORS.length]; });
+
+  const addNode = (name, color) => {
+    if (!nodeSet.has(name)) { nodeSet.add(name); nodes.push({ name, itemStyle: { color } }); }
+  };
+
+  // CPU/parent nodes
+  [...new Set(sorted.map(d => d.parent_node).filter(Boolean))].forEach(p =>
+    addNode(p, parentColorMap[p] || '#3b82f6'));
+  // Device nodes
+  sorted.forEach(d => addNode('dev::' + d.code, SRC_COLORS[d.source || 'address_list'] || '#94a3b8'));
+
+  // Links: parent → device
+  sorted.forEach(d => {
+    const bw = (d.download_max_mbps || 1) + (d.upload_max_mbps || 1);
+    if (d.parent_node) links.push({ source: d.parent_node, target: 'dev::' + d.code, value: Math.max(bw, 1) });
+  });
+
+  const labelFn = d => {
+    if (!d.name.startsWith('dev::')) return d.name;
+    const dev = _detailDevMap[d.name];
+    const label = dev ? (dev.ipv4 || dev.code) : d.name.slice(5);
+    return label.length > 20 ? label.slice(0, 19) + '…' : label;
+  };
+
+  const tooltipFn = p => {
+    if (p.dataType === 'edge') {
+      const tgt = p.data.target.startsWith('dev::')
+        ? (_detailDevMap[p.data.target]?.ipv4 || p.data.target.slice(5))
+        : p.data.target;
+      return `<b>${p.data.source}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+    }
+    if (p.name.startsWith('dev::')) {
+      const d = _detailDevMap[p.name];
+      if (!d) return `<b>${p.name.slice(5)}</b>`;
+      const tag = (label, val) =>
+        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${val}</b>`;
+      const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
+      return [
+        `<b style="color:#e2e8f0">${d.code}</b>`,
+        sep,
+        d.ipv4 ? tag('IP',     d.ipv4)                          : '',
+        d.mac  ? tag('MAC',    d.mac)                           : '',
+        tag('Source', _srcLabel(d.source || '')),
+        sep,
+        `<span style="color:#4ade80">↓ DL</span> <b>${_fmtBw(d.download_max_mbps)}</b> &nbsp; <span style="color:#60a5fa">↑ UL</span> <b>${_fmtBw(d.upload_max_mbps)}</b>`,
+        sep,
+        d.parent_node ? tag('CPU',  d.parent_node)              : '',
+        d.wan_name    ? tag('WAN',  `${d.core_name ? d.core_name + ' › ' : ''}${d.wan_name}`) : '',
+        d.router      ? tag('BRAS', d.router)                   : '',
+      ].filter(Boolean).join('<br>');
+    }
+    return `<b>${p.name}</b><br>${_fmtBw(p.value)}`;
+  };
+
+  _drawSankey(nodes, links, 2, labelFn, tooltipFn);
 }
 
 function _srcLabel(s) {
   return { pppoe:'PPPoE', hotspot:'Hotspot', dhcp:'DHCP / IPoE', address_list:'Address List' }[s] || s;
 }
 
-function _drawSankey(nodes, links, levels, labelFn) {
+function _drawSankey(nodes, links, levels, labelFn, tooltipFn) {
   if (!topoChart) {
     topoChart = echarts.init(document.getElementById('topo-chart'), null, { renderer: 'canvas' });
     window.addEventListener('resize', () => topoChart && topoChart.resize());
   }
+
+  const defaultTooltip = p => {
+    if (p.dataType === 'edge') {
+      const src = p.data.source.startsWith('dev::') ? p.data.source.slice(5) : p.data.source;
+      const tgt = p.data.target.startsWith('dev::') ? p.data.target.slice(5) : p.data.target;
+      return `<b>${src}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+    }
+    const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
+    return `<b>${name}</b><br>${_fmtBw(p.value)}`;
+  };
+
+  const defaultLabel = p => {
+    const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
+    return name.length > 22 ? name.slice(0, 21) + '…' : name;
+  };
 
   topoChart.setOption({
     backgroundColor: 'transparent',
@@ -3407,16 +3641,10 @@ function _drawSankey(nodes, links, levels, labelFn) {
       trigger: 'item',
       backgroundColor: '#1a2035',
       borderColor: '#2a3350',
+      borderRadius: 8,
+      padding: [8, 12],
       textStyle: { color: '#e2e8f0', fontSize: 12 },
-      formatter: p => {
-        if (p.dataType === 'edge') {
-          const src  = p.data.source.startsWith('dev::') ? p.data.source.slice(5) : p.data.source;
-          const tgt  = p.data.target.startsWith('dev::') ? p.data.target.slice(5) : p.data.target;
-          return `<b>${src}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
-        }
-        const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
-        return `<b>${name}</b><br>${_fmtBw(p.value)}`;
-      }
+      formatter: tooltipFn || defaultTooltip,
     },
     series: [{
       type: 'sankey',
@@ -3431,10 +3659,7 @@ function _drawSankey(nodes, links, levels, labelFn) {
       label: {
         color: '#cbd5e1',
         fontSize: 11,
-        formatter: p => {
-          const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
-          return name.length > 22 ? name.slice(0, 21) + '…' : name;
-        },
+        formatter: labelFn ? p => labelFn(p) : defaultLabel,
       },
       lineStyle: { color: 'gradient', opacity: 0.35, curveness: 0.5 },
       itemStyle: { borderWidth: 0, borderRadius: 3 },
