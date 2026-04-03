@@ -311,9 +311,9 @@ def _load_config() -> dict:
 
 def _router_from_config(index: int = 0) -> dict:
     cfg = _load_config()
-    routers = cfg.get("routers") or []
+    routers = cfg.get("bras") or []
     if not routers:
-        raise ValueError("No routers found in config.json")
+        raise ValueError("No BRAS found in config.json")
     if index < 0 or index >= len(routers):
         raise ValueError("Router index out of range")
     router = dict(routers[index])
@@ -890,12 +890,12 @@ def flush_data():
     return jsonify({"ok": not errors, "results": results, "errors": errors})
 
 
-@app.route("/api/troubleshoot/routers")
+@app.route("/api/troubleshoot/bras")
 @require_auth
 def troubleshoot_routers():
     try:
         cfg = _load_config()
-        routers = cfg.get("routers") or []
+        routers = cfg.get("bras") or []
         result = []
         for idx, router in enumerate(routers):
             result.append({
@@ -904,7 +904,7 @@ def troubleshoot_routers():
                 "address": router.get("address", ""),
                 "port": int(router.get("port", 8728) or 8728),
             })
-        return jsonify({"ok": True, "routers": result})
+        return jsonify({"ok": True, "bras": result})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -989,7 +989,7 @@ def dashboard_mikrotik_resource():
     """Return compact CPU/RAM percentages for all routers in config.json."""
     try:
         cfg = _load_config()
-        routers = cfg.get("routers") or []
+        routers = cfg.get("bras") or []
         result = []
 
         for idx, router in enumerate(routers):
@@ -1036,7 +1036,7 @@ def dashboard_mikrotik_resource():
                     except Exception:
                         pass
 
-        return jsonify({"ok": True, "count": len(result), "routers": result})
+        return jsonify({"ok": True, "count": len(result), "bras": result})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 

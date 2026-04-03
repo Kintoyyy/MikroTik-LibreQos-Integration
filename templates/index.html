@@ -1876,15 +1876,15 @@ async function loadMikrotikResource() {
   try {
     const r = await fetch('/api/dashboard/mikrotik/resource');
     const d = await r.json();
-    if (!d.ok || !Array.isArray(d.routers)) {
+    if (!d.ok || !Array.isArray(d.bras)) {
       box.innerHTML = '<div class="mt-mini offline"><div class="name">Unavailable</div></div>';
       return;
     }
-    if (!d.routers.length) {
-      box.innerHTML = '<div class="mt-mini offline"><div class="name">No routers in config.json</div></div>';
+    if (!d.bras.length) {
+      box.innerHTML = '<div class="mt-mini offline"><div class="name">No BRAS in config.json</div></div>';
       return;
     }
-    box.innerHTML = d.routers.map(rt => {
+    box.innerHTML = d.bras.map(rt => {
       const title = rt.identity || rt.router || `Router ${Number(rt.index || 0) + 1}`;
       if (!rt.ok) {
         return `<div class="mt-mini offline"><div class="name">${title}</div><div class="row"><span>Offline</span><span class="pct">—</span></div></div>`;
@@ -2073,7 +2073,7 @@ async function loadConfig() {
   if (!d.ok) { toast(d.error, false); return; }
   configData = d.content;
   document.getElementById('config-path').textContent = d.path;
-  document.getElementById('stat-routers').textContent = (d.content.routers||[]).length;
+  document.getElementById('stat-routers').textContent = (d.content.bras||[]).length;
   configCM.setValue(JSON.stringify(d.content, null, 4));
 }
 
@@ -2107,11 +2107,11 @@ function renderConfig() {
   // toggles
   document.getElementById('toggle-queues').checked  = !!configData.queues;
   document.getElementById('toggle-promote').checked = !!configData.promote_to_root;
-  // routers
+  // bras
   const list = document.getElementById('routers-list');
   list.innerHTML = '';
-  (configData.routers || []).forEach((rt, idx) => list.appendChild(buildRouterCard(rt, idx)));
-  document.getElementById('router-count-badge').textContent = (configData.routers||[]).length;
+  (configData.bras || []).forEach((rt, idx) => list.appendChild(buildRouterCard(rt, idx)));
+  document.getElementById('router-count-badge').textContent = (configData.bras||[]).length;
 }
 
 // ── Router card builder ────────────────────────────────────────────────────
@@ -2272,18 +2272,18 @@ function esc(s) { return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;').r
 
 // ── Config mutations ──────────────────────────────────────────────────────
 function setRouterField(idx, field, val) {
-  if (!configData.routers[idx]) return;
-  configData.routers[idx][field] = val;
+  if (!configData.bras[idx]) return;
+  configData.bras[idx][field] = val;
 }
 function setSourceField(idx, src, field, val) {
-  if (!configData.routers[idx]) return;
-  if (!configData.routers[idx][src]) configData.routers[idx][src] = {};
-  configData.routers[idx][src][field] = val;
+  if (!configData.bras[idx]) return;
+  if (!configData.bras[idx][src]) configData.bras[idx][src] = {};
+  configData.bras[idx][src][field] = val;
 }
 function addRouter() {
   if (!configData) return;
-  configData.routers = configData.routers || [];
-  configData.routers.push({
+  configData.bras = configData.bras || [];
+  configData.bras.push({
     name:'New Router', address:'', port:8728, username:'admin', password:'',
     pppoe:{enabled:true,default_download_limit:100,default_upload_limit:100},
     hotspot:{enabled:false,default_download_limit:100,default_upload_limit:100},
@@ -2292,7 +2292,7 @@ function addRouter() {
   });
   renderConfig();
   // open the new router
-  const idx = configData.routers.length - 1;
+  const idx = configData.bras.length - 1;
   const body = document.getElementById(`router-body-${idx}`);
   if (body) { body.classList.add('open'); }
   document.getElementById(`router-card-${idx}`).scrollIntoView({behavior:'smooth',block:'start'});
@@ -2300,7 +2300,7 @@ function addRouter() {
 function removeRouter(e, idx) {
   e.stopPropagation();
   if (!confirm(`Remove router #${idx+1}?`)) return;
-  configData.routers.splice(idx, 1);
+  configData.bras.splice(idx, 1);
   renderConfig();
 }
 
@@ -2339,7 +2339,7 @@ async function saveConfig() {
   });
   const d = await r.json();
   if (!d.ok) { toast(d.error, false); return; }
-  document.getElementById('stat-routers').textContent = (configData.routers||[]).length;
+  document.getElementById('stat-routers').textContent = (configData.bras||[]).length;
   toast('Settings saved — restarting updatecsv…', true);
   const rs = await fetch('/api/services/updatecsv/restart', {method:'POST'});
   const ds = await rs.json();
@@ -2656,28 +2656,28 @@ async function loadTroubleRouters() {
   const sel = document.getElementById('trouble-router-select');
   const summary = document.getElementById('trouble-mt-summary');
   if (!sel) return;
-  const r = await fetch('/api/troubleshoot/routers');
+  const r = await fetch('/api/troubleshoot/bras');
   const d = await r.json();
   if (!d.ok) {
     sel.innerHTML = '';
-    summary.textContent = d.error || 'Unable to load routers';
+    summary.textContent = d.error || 'Unable to load BRAS';
     return;
   }
-  if (!d.routers.length) {
+  if (!d.bras.length) {
     sel.innerHTML = '';
-    summary.textContent = 'No routers found in config.json';
+    summary.textContent = 'No BRAS found in config.json';
     return;
   }
   const prev = sel.value;
-  sel.innerHTML = d.routers.map(rt => {
+  sel.innerHTML = d.bras.map(rt => {
     const label = `${rt.name} (${rt.address}:${rt.port})`;
     return `<option value="${rt.index}">${label}</option>`;
   }).join('');
   if (prev && [...sel.options].some(o => o.value === prev)) {
     sel.value = prev;
   }
-  const active = d.routers.find(rt => String(rt.index) === sel.value) || d.routers[0];
-  summary.textContent = `Selected router: ${active.name} (${active.address}:${active.port})`;
+  const active = d.bras.find(rt => String(rt.index) === sel.value) || d.bras[0];
+  summary.textContent = `Selected BRAS: ${active.name} (${active.address}:${active.port})`;
 }
 
 function _troubleRouterIndex() {

@@ -191,7 +191,7 @@ def read_config_json():
     try:
         with open(CONFIG_JSON, 'r') as f:
             config = json.load(f)
-        routers = config.get('routers', [])
+        routers = config.get('bras', [])
         promote_to_root = config.get('promote_to_root', False)
 
         # Strategy resolution

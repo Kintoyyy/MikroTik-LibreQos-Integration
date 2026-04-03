@@ -2,7 +2,7 @@
     "strategy": "cpu",
     "promote_to_root": false,
     "queues": true,
-    "routers": [
+    "bras": [
         {
             "name": "Mikrotik 1",
             "address": "192.168.88.1",
