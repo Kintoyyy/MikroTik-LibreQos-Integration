@@ -596,6 +596,66 @@ def get_devices():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/wan/stats")
+@require_auth
+def wan_stats():
+    """Return per-WAN device counts and bandwidth totals, plus wan_assignment config."""
+    try:
+        cfg = _load_config()
+        wan_cfg = cfg.get("wan_assignment", {})
+        enabled = wan_cfg.get("enabled", True)
+
+        stats = {"enabled": enabled, "wans": []}
+        if not enabled:
+            return jsonify({"ok": True, **stats})
+
+        if not DB_PATH.exists():
+            return jsonify({"ok": True, **stats})
+
+        con = sqlite3.connect(str(DB_PATH))
+        con.row_factory = sqlite3.Row
+        rows = con.execute("""
+            SELECT core_name, wan_name,
+                   COUNT(*) AS device_count,
+                   COALESCE(SUM(download_max_mbps), 0) AS total_dl,
+                   COALESCE(SUM(upload_max_mbps),   0) AS total_ul
+            FROM devices
+            WHERE core_name != '' AND core_name IS NOT NULL
+              AND wan_name  != '' AND wan_name  IS NOT NULL
+            GROUP BY core_name, wan_name
+            ORDER BY core_name, wan_name
+        """).fetchall()
+        con.close()
+
+        # Attach configured limits from cores
+        limits = {}
+        for core in cfg.get("cores", []):
+            for i, wan in enumerate(core.get("wans", []), start=1):
+                limits[(core["name"], f"WAN{i}")] = {
+                    "dl_limit": wan.get("download_limit", 0),
+                    "ul_limit": wan.get("upload_limit", 0),
+                    "wan_label": wan.get("name", f"WAN{i}"),
+                }
+
+        for r in rows:
+            key = (r["core_name"], r["wan_name"])
+            lim = limits.get(key, {"dl_limit": 0, "ul_limit": 0, "wan_label": r["wan_name"]})
+            stats["wans"].append({
+                "core_name":    r["core_name"],
+                "wan_name":     r["wan_name"],
+                "wan_label":    lim["wan_label"],
+                "device_count": r["device_count"],
+                "total_dl":     r["total_dl"],
+                "total_ul":     r["total_ul"],
+                "dl_limit":     lim["dl_limit"],
+                "ul_limit":     lim["ul_limit"],
+            })
+
+        return jsonify({"ok": True, **stats})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/api/devices", methods=["POST"])
 @require_auth
 def add_device():
