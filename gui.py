@@ -113,6 +113,13 @@ EXPECTED_MT_POLICY = (
 )
 EXPECTED_MT_POLICY_SET = {p.strip() for p in EXPECTED_MT_POLICY.split(",") if p.strip()}
 
+EXPECTED_CORE_GROUP = "API_WRITE"
+EXPECTED_CORE_POLICY = (
+    "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,"
+    "!winbox,!password,!web,!sniff,!romon"
+)
+EXPECTED_CORE_POLICY_SET = {p.strip() for p in EXPECTED_CORE_POLICY.split(",") if p.strip()}
+
 SYSTEMCTL  = "/bin/systemctl"
 JOURNALCTL = "/bin/journalctl"
 
@@ -318,6 +325,27 @@ def _router_from_config(index: int = 0) -> dict:
     if index < 0 or index >= len(routers):
         raise ValueError("Router index out of range")
     router = dict(routers[index])
+    router["port"] = int(router.get("port", 8728) or 8728)
+    return router
+
+
+def _router_from_key(key: str) -> dict:
+    """Resolve a router from a 'type:index' key (e.g. 'bras:0' or 'core:0')."""
+    cfg = _load_config()
+    try:
+        rtype, idx_str = key.split(":", 1)
+        idx = int(idx_str)
+    except (ValueError, AttributeError):
+        raise ValueError(f"Invalid router key: {key!r}")
+    if rtype == "bras":
+        pool = cfg.get("bras") or []
+    elif rtype == "core":
+        pool = cfg.get("cores") or []
+    else:
+        raise ValueError(f"Unknown router type: {rtype!r}")
+    if idx < 0 or idx >= len(pool):
+        raise ValueError(f"Router key {key!r} out of range")
+    router = dict(pool[idx])
     router["port"] = int(router.get("port", 8728) or 8728)
     return router
 
@@ -833,6 +861,112 @@ def wan_rebalance():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route("/api/wan/purge", methods=["POST"])
+@require_auth
+def wan_purge():
+    """Purge all libreqos-managed WAN address-list entries from every core router, then rebalance."""
+    cfg = _load_config()
+    cores = cfg.get("cores", []) or []
+    wan_cfg = cfg.get("wan_assignment", {})
+
+    purge_results = []
+    purge_errors = []
+
+    # ── Step 1: delete all libreqos-managed entries from each core ──────────
+    for core in cores:
+        core_name = core.get("name", "")
+        wans = core.get("wans", []) or []
+        removed = 0
+        pool = None
+        try:
+            pool = _connect_router_api(core)
+            api = pool.get_api()
+            resource = api.get_resource("/ip/firewall/address-list")
+
+            wan_names = {f"WAN{i}" for i in range(1, len(wans) + 1)}
+            for wan_name in wan_names:
+                try:
+                    entries = resource.get(list=wan_name)
+                except Exception:
+                    entries = []
+                for e in entries:
+                    if e.get("comment", "") == "libreqos-managed":
+                        try:
+                            resource.remove(id=e[".id"])
+                            removed += 1
+                        except Exception:
+                            pass
+
+            purge_results.append({"core": core_name, "removed": removed})
+        except Exception as ex:
+            purge_errors.append(f"{core_name}: {ex}")
+            purge_results.append({"core": core_name, "removed": 0, "error": str(ex)})
+        finally:
+            if pool is not None:
+                try:
+                    pool.disconnect()
+                except Exception:
+                    pass
+
+    # ── Step 2: clear WAN assignments in DB ──────────────────────────────────
+    try:
+        con = sqlite3.connect(str(DB_PATH))
+        try:
+            con.execute("UPDATE devices SET core_name='', wan_name=''")
+            con.commit()
+        finally:
+            con.close()
+    except Exception as ex:
+        purge_errors.append(f"DB clear: {ex}")
+
+    if purge_errors:
+        return jsonify({
+            "ok": False,
+            "error": "Purge completed with errors",
+            "purged": purge_results,
+            "errors": purge_errors,
+        }), 502
+
+    # ── Step 3: rebalance ────────────────────────────────────────────────────
+    try:
+        excluded = []
+        if not wan_cfg.get("include_hotspot", False):
+            excluded.append("hotspot")
+        if not wan_cfg.get("include_dhcp", False):
+            excluded.append("dhcp")
+
+        excl_sql = ""
+        if excluded:
+            placeholders = ",".join("?" * len(excluded))
+            excl_sql = f"(source NOT IN ({placeholders}) OR source IS NULL) AND "
+
+        active_cutoff = time.time() - 1200
+        con = sqlite3.connect(str(DB_PATH))
+        try:
+            active_codes = [r[0] for r in con.execute(
+                "SELECT code FROM devices WHERE " + excl_sql + "(is_static = 1 OR last_seen >= ?)",
+                excluded + [active_cutoff],
+            ).fetchall()]
+
+            _wan_manager.assign_wan_nodes(con, cores, wan_cfg)
+            sync_summary = _sync_core_wan_address_lists(con, cfg)
+        finally:
+            con.close()
+
+        return jsonify({
+            "ok": True,
+            "purged": purge_results,
+            "assigned": len(active_codes),
+            "synced": sync_summary,
+        })
+    except Exception as ex:
+        return jsonify({
+            "ok": False,
+            "error": f"Purge succeeded but rebalance failed: {ex}",
+            "purged": purge_results,
+        }), 500
+
+
 @app.route("/api/devices", methods=["POST"])
 @require_auth
 def add_device():
@@ -1140,16 +1274,31 @@ def flush_data():
 def troubleshoot_routers():
     try:
         cfg = _load_config()
-        routers = cfg.get("bras") or []
-        result = []
-        for idx, router in enumerate(routers):
-            result.append({
+        bras_list = cfg.get("bras") or []
+        cores_list = cfg.get("cores") or []
+        bras = [
+            {
+                "key": f"bras:{idx}",
+                "type": "bras",
                 "index": idx,
-                "name": router.get("name") or f"Router {idx + 1}",
-                "address": router.get("address", ""),
-                "port": int(router.get("port", 8728) or 8728),
-            })
-        return jsonify({"ok": True, "bras": result})
+                "name": r.get("name") or f"BRAS {idx + 1}",
+                "address": r.get("address", ""),
+                "port": int(r.get("port", 8728) or 8728),
+            }
+            for idx, r in enumerate(bras_list)
+        ]
+        cores = [
+            {
+                "key": f"core:{idx}",
+                "type": "core",
+                "index": idx,
+                "name": r.get("name") or f"Core {idx + 1}",
+                "address": r.get("address", ""),
+                "port": int(r.get("port", 8728) or 8728),
+            }
+            for idx, r in enumerate(cores_list)
+        ]
+        return jsonify({"ok": True, "bras": bras, "cores": cores})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -1159,8 +1308,8 @@ def troubleshoot_routers():
 def troubleshoot_mt_ping():
     try:
         data = request.get_json(silent=True) or {}
-        idx = int(data.get("router_index", 0))
-        router = _router_from_config(idx)
+        key = data.get("router_key") or f"bras:{data.get('router_index', 0)}"
+        router = _router_from_key(key)
         host = (data.get("host") or router.get("address") or "").strip()
         if not host:
             return jsonify({"ok": False, "error": "Router address is empty"}), 400
@@ -1206,8 +1355,8 @@ def troubleshoot_mt_connect():
     pool = None
     try:
         data = request.get_json(silent=True) or {}
-        idx = int(data.get("router_index", 0))
-        router = _router_from_config(idx)
+        key = data.get("router_key") or f"bras:{data.get('router_index', 0)}"
+        router = _router_from_key(key)
         pool = _connect_router_api(router)
         api = pool.get_api()
         identity_rows = api.get_resource("/system/identity").get()
@@ -1232,47 +1381,41 @@ def troubleshoot_mt_connect():
 @require_auth
 def dashboard_mikrotik_resource():
     """Return compact CPU/RAM percentages for all routers in config.json."""
-    try:
-        cfg = _load_config()
-        routers = cfg.get("bras") or []
-        result = []
-
-        for idx, router in enumerate(routers):
+    def _fetch_router_stats(router_list):
+        out = []
+        for idx, router in enumerate(router_list):
             pool = None
             try:
-                router_copy = dict(router)
-                router_copy["port"] = int(router_copy.get("port", 8728) or 8728)
-                pool = _connect_router_api(router_copy)
+                r = dict(router)
+                r["port"] = int(r.get("port", 8728) or 8728)
+                pool = _connect_router_api(r)
                 api = pool.get_api()
-
                 resource_rows = api.get_resource("/system/resource").get()
                 identity_rows = api.get_resource("/system/identity").get()
                 resource = resource_rows[0] if resource_rows else {}
                 identity = identity_rows[0] if identity_rows else {}
-
                 total_mem = int(resource.get("total-memory", 0) or 0)
                 free_mem = int(resource.get("free-memory", 0) or 0)
                 used_mem = max(total_mem - free_mem, 0)
                 ram_percent = round((used_mem / total_mem * 100.0), 1) if total_mem > 0 else 0.0
-
-                result.append({
+                out.append({
                     "index": idx,
-                    "router": router_copy.get("name") or router_copy.get("address") or f"Router {idx + 1}",
+                    "router": r.get("name") or r.get("address") or f"Router {idx + 1}",
                     "identity": identity.get("name", ""),
                     "cpu_percent": float(resource.get("cpu-load", 0) or 0),
                     "ram_percent": ram_percent,
                     "uptime": str(resource.get("uptime", "") or ""),
                     "ok": True,
                 })
-            except Exception as re:
-                result.append({
+            except Exception as ex:
+                out.append({
                     "index": idx,
                     "router": router.get("name") or router.get("address") or f"Router {idx + 1}",
                     "cpu_percent": None,
                     "ram_percent": None,
                     "uptime": None,
                     "ok": False,
-                    "error": str(re),
+                    "error": str(ex),
                 })
             finally:
                 if pool is not None:
@@ -1280,8 +1423,18 @@ def dashboard_mikrotik_resource():
                         pool.disconnect()
                     except Exception:
                         pass
+        return out
 
-        return jsonify({"ok": True, "count": len(result), "bras": result})
+    try:
+        cfg = _load_config()
+        bras_stats  = _fetch_router_stats(cfg.get("bras") or [])
+        cores_stats = _fetch_router_stats(cfg.get("cores") or [])
+        return jsonify({
+            "ok": True,
+            "count": len(bras_stats) + len(cores_stats),
+            "bras": bras_stats,
+            "cores": cores_stats,
+        })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
@@ -1292,33 +1445,37 @@ def troubleshoot_mt_permissions():
     pool = None
     try:
         data = request.get_json(silent=True) or {}
-        idx = int(data.get("router_index", 0))
-        router = _router_from_config(idx)
+        key = data.get("router_key") or f"bras:{data.get('router_index', 0)}"
+        is_core = key.startswith("core:")
+        router = _router_from_key(key)
         pool = _connect_router_api(router)
         api = pool.get_api()
 
-        # Use the configured username for this router
+        expected_group  = EXPECTED_CORE_GROUP  if is_core else EXPECTED_MT_GROUP
+        expected_policy = EXPECTED_CORE_POLICY if is_core else EXPECTED_MT_POLICY
+        expected_set    = EXPECTED_CORE_POLICY_SET if is_core else EXPECTED_MT_POLICY_SET
+
         configured_user = router.get("username", "")
 
         group_rows = api.get_resource("/user/group").get()
         user_rows = api.get_resource("/user").get()
 
-        group = next((g for g in group_rows if g.get("name") == EXPECTED_MT_GROUP), None)
+        group = next((g for g in group_rows if g.get("name") == expected_group), None)
         user = next((u for u in user_rows if u.get("name") == configured_user), None)
 
         found_policy = (group or {}).get("policy", "")
         found_policy_set = {p.strip() for p in found_policy.split(",") if p.strip()}
-        missing = sorted(EXPECTED_MT_POLICY_SET - found_policy_set)
+        missing = sorted(expected_set - found_policy_set)
         # Extra deny items (starting with !) are acceptable — they only add more restrictions
         extra = sorted(
-            i for i in (found_policy_set - EXPECTED_MT_POLICY_SET)
+            i for i in (found_policy_set - expected_set)
             if not i.startswith("!")
         )
 
         group_ok = bool(group) and not missing and not extra
         user_group = (user or {}).get("group", "")
         user_disabled = _to_bool((user or {}).get("disabled", False))
-        user_ok = bool(user) and user_group == EXPECTED_MT_GROUP and not user_disabled
+        user_ok = bool(user) and user_group == expected_group and not user_disabled
 
         return jsonify({
             "ok": True,
@@ -1329,12 +1486,12 @@ def troubleshoot_mt_permissions():
             "user_found": bool(user),
             "user_group": user_group,
             "user_disabled": user_disabled,
-            "expected_group": EXPECTED_MT_GROUP,
+            "expected_group": expected_group,
             "expected_user": configured_user,
-            "expected_policy": EXPECTED_MT_POLICY,
+            "expected_policy": expected_policy,
             "found_policy": found_policy,
             "missing_policy_items": missing,
-            "extra_policy_items": sorted(found_policy_set - EXPECTED_MT_POLICY_SET),
+            "extra_policy_items": sorted(found_policy_set - expected_set),
         })
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

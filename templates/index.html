@@ -75,12 +75,14 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 @media(max-width:700px){ .sys-info-grid { grid-template-columns: 1fr; } }
 
 /* ── Compact MikroTik stats ── */
-.mt-compact-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:.7rem; }
-.mt-mini { background:#0d1117; border:1px solid var(--border); border-radius:10px; padding:.8rem .85rem; min-height:108px; }
-.mt-mini .name { font-size:.86rem; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.mt-mini .row { display:flex; align-items:center; justify-content:space-between; margin-top:.42rem; font-size:.8rem; color:var(--muted); }
-.mt-mini .pct { font-weight:700; color:#93c5fd; }
+.mt-compact-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:.5rem; }
+.mt-mini { background:#0d1117; border:1px solid var(--border); border-radius:8px; padding:.55rem .7rem; }
+.mt-mini .name { font-size:.78rem; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-bottom:.35rem; }
+.mt-mini .row { display:flex; align-items:center; justify-content:space-between; font-size:.72rem; color:var(--muted); margin-top:.18rem; }
+.mt-mini .pct { font-weight:600; color:#93c5fd; }
 .mt-mini .pct.ram { color:#34d399; }
+.mt-mini .pct.uptime { color:var(--muted); font-weight:400; }
+.mt-mini.offline { opacity:.6; }
 .mt-mini.offline .name { color:var(--muted); }
 
 /* ── Badges ── */
@@ -598,53 +600,6 @@ code { font-size: .8rem; color: #94a3b8; }
   <!-- Form panel -->
   <div id="form-config-panel">
 
-    <!-- Global settings -->
-    <div class="card" style="margin-bottom:1rem">
-      <div class="card-hd"><i class="bi bi-toggles"></i> Global Settings</div>
-      <div class="card-bd">
-        <div style="margin-bottom:1.25rem">
-          <div class="form-label" style="margin-bottom:.6rem">Topology Strategy</div>
-          <div class="strategy-grid" id="strategy-grid">
-            <div class="strategy-card" data-val="cpu" onclick="selectStrategy('cpu')">
-              <i class="bi bi-cpu-fill"></i>
-              <div class="s-name">CPU</div>
-              <div class="s-desc">Greedy bin-pack across CPU cores</div>
-            </div>
-            <div class="strategy-card" data-val="flat" onclick="selectStrategy('flat')">
-              <i class="bi bi-dash-square"></i>
-              <div class="s-name">Flat</div>
-              <div class="s-desc">No hierarchy, empty network.json</div>
-            </div>
-            <div class="strategy-card" data-val="ap_only" onclick="selectStrategy('ap_only')">
-              <i class="bi bi-router"></i>
-              <div class="s-name">AP Only</div>
-              <div class="s-desc">Group devices under router</div>
-            </div>
-            <div class="strategy-card" data-val="ap_site" onclick="selectStrategy('ap_site')">
-              <i class="bi bi-diagram-3"></i>
-              <div class="s-name">AP Site</div>
-              <div class="s-desc">Site → router hierarchy</div>
-            </div>
-            <div class="strategy-card" data-val="full" onclick="selectStrategy('full')">
-              <i class="bi bi-share-fill"></i>
-              <div class="s-name">Full</div>
-              <div class="s-desc">Full path & backhaul shaping</div>
-            </div>
-          </div>
-        </div>
-        <div style="display:flex;gap:2rem;flex-wrap:wrap">
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="toggle-queues"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.875rem">Enable Queues</span>
-          </label>
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="toggle-promote"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.875rem">Promote to Root <span style="font-size:.72rem;color:var(--muted)">(full strategy)</span></span>
-          </label>
-        </div>
-      </div>
-    </div>
-
 
 
     <!-- Routers -->
@@ -654,10 +609,80 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
     <div id="routers-list"></div>
 
+    <!-- Global settings -->
+    <div class="card"
+      style="margin-bottom:1rem">
+      <div class="card-hd"><i class="bi bi-toggles"></i> Global Settings</div>
+      <div class="card-bd">
+        <div style="margin-bottom:1.25rem">
+          <div class="form-label"
+            style="margin-bottom:.6rem">Topology Strategy</div>
+          <div class="strategy-grid"
+            id="strategy-grid">
+            <div class="strategy-card"
+              data-val="cpu"
+              onclick="selectStrategy('cpu')">
+              <i class="bi bi-cpu-fill"></i>
+              <div class="s-name">CPU</div>
+              <div class="s-desc">Greedy bin-pack across CPU cores</div>
+            </div>
+            <div class="strategy-card"
+              data-val="flat"
+              onclick="selectStrategy('flat')">
+              <i class="bi bi-dash-square"></i>
+              <div class="s-name">Flat</div>
+              <div class="s-desc">No hierarchy, empty network.json</div>
+            </div>
+            <div class="strategy-card"
+              data-val="ap_only"
+              onclick="selectStrategy('ap_only')">
+              <i class="bi bi-router"></i>
+              <div class="s-name">AP Only</div>
+              <div class="s-desc">Group devices under router</div>
+            </div>
+            <div class="strategy-card"
+              data-val="ap_site"
+              onclick="selectStrategy('ap_site')">
+              <i class="bi bi-diagram-3"></i>
+              <div class="s-name">AP Site</div>
+              <div class="s-desc">Site → router hierarchy</div>
+            </div>
+            <div class="strategy-card"
+              data-val="full"
+              onclick="selectStrategy('full')">
+              <i class="bi bi-share-fill"></i>
+              <div class="s-name">Full</div>
+              <div class="s-desc">Full path & backhaul shaping</div>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:2rem;flex-wrap:wrap">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox"
+                id="toggle-queues">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Enable Queues</span>
+          </label>
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox"
+                id="toggle-promote">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Promote to Root <span style="font-size:.72rem;color:var(--muted)">(full
+                strategy)</span></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+
     <!-- Core Routers -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;margin-top:1.5rem">
       <div>
-        <span style="font-weight:600;font-size:.95rem">CORE / Load Balancer</span>
+        <span style="font-weight:600;font-size:.95rem">CORE / PBR Load Balancer</span>
         <span id="core-count-badge" style="background:#4c1d9533;color:#a78bfa;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.4rem">0</span>
         <div style="font-size:.75rem;color:var(--muted);margin-top:.2rem">Core MikroTik routers for WAN address-list assignment</div>
       </div>
@@ -778,78 +803,30 @@ code { font-size: .8rem; color: #94a3b8; }
       <span><i class="bi bi-clipboard-check"></i> Expected MikroTik API Permissions</span>
     </div>
     <div class="card-bd" style="padding:.85rem">
-      <p style="font-size:.8rem;color:var(--muted);margin:.2rem 0 .7rem">The permission check validates this exact group policy and user assignment:</p>
-      <pre style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;overflow-x:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.5">/user group add name=API_READ policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon"
-
-/user add name="libreQos_API" group=API_READ password="&lt;Strong Password&gt;" address="&lt;LibreQos IP Address&gt;" disabled=no;</pre>
+      <p style="font-size:.8rem;color:var(--muted);margin:.2rem 0 .5rem">BRAS routers — read-only API access:</p>
+      <pre style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;overflow-x:auto;margin:0 0 .85rem;font-family:'Consolas','Courier New',monospace;line-height:1.5">/user group add name=API_READ policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon"</pre>
+      <p style="font-size:.8rem;color:var(--muted);margin:.2rem 0 .5rem">Core routers — write access required for WAN address-list sync:</p>
+      <pre style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.76rem;color:#94a3b8;overflow-x:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.5">/user group add name=API_WRITE policy="read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,!winbox,!password,!web,!sniff,!romon"</pre>
     </div>
   </div>
-
-  <div class="card" style="border-color:#f59e0b22">
-    <div class="card-hd" style="background:#1a1500">
+  <!-- Purge WAN -->
+  <div class="card" style="margin-top:1rem;border-color:#f59e0b33">
+    <div class="card-hd" style="background:#1a1200">
       <span style="display:flex;align-items:center;gap:.6rem">
-        <i class="bi bi-shield-exclamation" style="color:var(--yellow);font-size:1rem"></i>
-        <span>User Password Not Working</span>
+        <i class="bi bi-arrow-left-right" style="color:var(--yellow);font-size:1rem"></i>
+        <span>Rebalance PBR</span>
       </span>
-      <button class="btn-ghost" onclick="toggleTrouble()" id="trouble-toggle" style="font-size:.75rem">
-        <i class="bi bi-chevron-down"></i> Show
-      </button>
     </div>
-    <div id="trouble-body" style="display:none">
-      <div class="card-bd" style="padding:1.1rem">
-
-        <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 1rem">
-          Current builds automatically migrate older auth files and redirect
-          <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/login.html</code>
-          to
-          <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/first-run.html</code>
-          when no users exist. If the correct username/password still fails, try restarting <strong>lqosd</strong> first.
-        </p>
-
-        <div class="trouble-step">
-          <div class="trouble-step-num">1</div>
-          <div style="flex:1">
-            <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Restart lqosd</div>
-            <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem">This is the first thing to try - it re-reads the auth files and often resolves login failures.</div>
-            <button class="btn-primary" onclick="restartLqosd()" id="btn-restart-lqosd">
-              <i class="bi bi-arrow-clockwise"></i> Restart lqosd Now
-            </button>
-            <span id="lqosd-restart-result" style="font-size:.78rem;margin-left:.75rem"></span>
-          </div>
-        </div>
-
-        <div class="trouble-step" style="margin-top:1rem">
-          <div class="trouble-step-num" style="background:#ef444422;color:var(--red);border-color:#ef444433">2</div>
-          <div style="flex:1">
-            <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Reset user database <span style="font-size:.72rem;font-weight:400;color:var(--red)">(destructive)</span></div>
-            <div style="font-size:.78rem;color:var(--muted);line-height:1.6;margin-bottom:.5rem">
-              Only do this if the correct credentials still fail after restarting lqosd, or if
-              <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code>
-              is corrupt. This will <strong style="color:#f87171">delete all users</strong> - you will need to create a new admin account via first-run setup.
-            </div>
-
-            <div id="lqusers-status" style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem">
-              <i class="bi bi-hourglass-split" style="color:var(--muted)"></i> Checking…
-            </div>
-
-            <button class="btn-danger-ghost" onclick="confirmResetUsers()" id="btn-reset-users" style="padding:.45rem 1rem">
-              <i class="bi bi-trash3"></i> Remove lqusers.toml &amp; Restart lqosd
-            </button>
-          </div>
-        </div>
-
-        <div class="trouble-step" style="margin-top:1rem">
-          <div class="trouble-step-num" style="background:#1d3fbb22;color:var(--blue);border-color:#3b82f633">3</div>
-          <div style="flex:1">
-            <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Complete first-run setup</div>
-            <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
-              After removing <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code> and restarting lqosd,
-              open <code style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">BOX_IP:9123/login.html</code> - the WebUI will automatically redirect to first-run setup.
-            </div>
-          </div>
-        </div>
-
-      </div>
+    <div class="card-bd">
+      <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 .9rem">
+        Removes <strong>all <code style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">libreqos-managed</code> entries</strong> from every core router's WAN address-lists,
+        clears all WAN assignments in the database, then runs a full rebalance.
+        Use this to fix duplicate, stale, or mismatched address-list entries.
+      </p>
+      <div id="purge-wan-result" style="display:none;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem"></div>
+      <button class="btn-danger-ghost" style="border-color:#f59e0b55;color:var(--yellow);padding:.45rem 1rem" onclick="confirmPurgeWan()" id="btn-purge-wan">
+        <i class="bi bi-arrow-left-right"></i> Purge &amp; Rebalance
+      </button>
     </div>
   </div>
 
@@ -858,7 +835,7 @@ code { font-size: .8rem; color: #94a3b8; }
     <div class="card-hd" style="background:#1a0808">
       <span style="display:flex;align-items:center;gap:.6rem">
         <i class="bi bi-trash3-fill" style="color:var(--red);font-size:1rem"></i>
-        <span>Flush All Sync Data</span>
+        <span>Flush LQos Data and Rebalance</span>
       </span>
     </div>
     <div class="card-bd">
@@ -869,10 +846,108 @@ code { font-size: .8rem; color: #94a3b8; }
       </p>
       <div id="flush-result" style="display:none;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem"></div>
       <button class="btn-danger-ghost" onclick="confirmFlushData()" id="btn-flush-data" style="padding:.45rem 1rem">
-        <i class="bi bi-trash3"></i> Flush All Data
+        <i class="bi bi-trash3"></i> Flush Data &amp; Rebalance
       </button>
     </div>
   </div>
+
+    <div class="card"
+      style="margin-top:1rem;border-color:#ef444433">
+      <div class="card-hd"
+        style="background:#1a1500">
+        <span style="display:flex;align-items:center;gap:.6rem">
+          <i class="bi bi-shield-exclamation"
+            style="color:var(--yellow);font-size:1rem"></i>
+          <span>Reset LibreQos Account</span>
+        </span>
+        <button class="btn-ghost"
+          onclick="toggleTrouble()"
+          id="trouble-toggle"
+          style="font-size:.75rem">
+          <i class="bi bi-chevron-down"></i> Show
+        </button>
+      </div>
+      <div id="trouble-body"
+        style="display:none">
+        <div class="card-bd"
+          style="padding:1.1rem">
+    
+          <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 1rem">
+            Current builds automatically migrate older auth files and redirect
+            <code
+              style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/login.html</code>
+            to
+            <code
+              style="font-size:.78rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">/first-run.html</code>
+            when no users exist. If the correct username/password still fails, try restarting <strong>lqosd</strong> first.
+          </p>
+    
+          <div class="trouble-step">
+            <div class="trouble-step-num">1</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Restart lqosd</div>
+              <div style="font-size:.78rem;color:var(--muted);margin-bottom:.65rem">This is the first thing to try - it
+                re-reads the auth files and often resolves login failures.</div>
+              <button class="btn-primary"
+                onclick="restartLqosd()"
+                id="btn-restart-lqosd">
+                <i class="bi bi-arrow-clockwise"></i> Restart lqosd Now
+              </button>
+              <span id="lqosd-restart-result"
+                style="font-size:.78rem;margin-left:.75rem"></span>
+            </div>
+          </div>
+    
+          <div class="trouble-step"
+            style="margin-top:1rem">
+            <div class="trouble-step-num"
+              style="background:#ef444422;color:var(--red);border-color:#ef444433">2</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Reset user database <span
+                  style="font-size:.72rem;font-weight:400;color:var(--red)">(destructive)</span></div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.6;margin-bottom:.5rem">
+                Only do this if the correct credentials still fail after restarting lqosd, or if
+                <code
+                  style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code>
+                is corrupt. This will <strong style="color:#f87171">delete all users</strong> - you will need to create a
+                new admin account via first-run setup.
+              </div>
+    
+              <div id="lqusers-status"
+                style="background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem">
+                <i class="bi bi-hourglass-split"
+                  style="color:var(--muted)"></i> Checking…
+              </div>
+    
+              <button class="btn-danger-ghost"
+                onclick="confirmResetUsers()"
+                id="btn-reset-users"
+                style="padding:.45rem 1rem">
+                <i class="bi bi-trash3"></i> Remove lqusers.toml &amp; Restart lqosd
+              </button>
+            </div>
+          </div>
+    
+          <div class="trouble-step"
+            style="margin-top:1rem">
+            <div class="trouble-step-num"
+              style="background:#1d3fbb22;color:var(--blue);border-color:#3b82f633">3</div>
+            <div style="flex:1">
+              <div style="font-weight:600;font-size:.875rem;margin-bottom:.3rem">Complete first-run setup</div>
+              <div style="font-size:.78rem;color:var(--muted);line-height:1.6">
+                After removing <code
+                  style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">lqusers.toml</code>
+                and restarting lqosd,
+                open <code
+                  style="font-size:.75rem;background:#0d1117;padding:.1em .4em;border-radius:4px;color:#94a3b8">BOX_IP:9123/login.html</code>
+                - the WebUI will automatically redirect to first-run setup.
+              </div>
+            </div>
+          </div>
+    
+        </div>
+      </div>
+    </div>
 
 </div>
 
@@ -1954,30 +2029,36 @@ async function restartUbuntuHost() {
   }
 }
 
+function _renderMtCards(list) {
+  return list.map(rt => {
+    const title = rt.identity || rt.router || `Router ${Number(rt.index || 0) + 1}`;
+    if (!rt.ok) {
+      return `<div class="mt-mini offline"><div class="name">${title}</div><div class="row"><span>Offline</span><span class="pct">—</span></div></div>`;
+    }
+    const cpu = Number(rt.cpu_percent || 0).toFixed(1);
+    const ram = Number(rt.ram_percent || 0).toFixed(1);
+    const uptime = (rt.uptime || '').toString().trim() || '—';
+    return `<div class="mt-mini"><div class="name">${title}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div><div class="row"><span>Uptime</span><span class="pct uptime">${uptime}</span></div></div>`;
+  }).join('');
+}
+
 async function loadMikrotikResource() {
   const box = document.getElementById('mt-compact-list');
   if (!box) return;
   try {
     const r = await fetch('/api/dashboard/mikrotik/resource');
     const d = await r.json();
-    if (!d.ok || !Array.isArray(d.bras)) {
+    if (!d.ok) {
       box.innerHTML = '<div class="mt-mini offline"><div class="name">Unavailable</div></div>';
       return;
     }
-    if (!d.bras.length) {
-      box.innerHTML = '<div class="mt-mini offline"><div class="name">No BRAS in config.json</div></div>';
+    const bras  = Array.isArray(d.bras)  ? d.bras  : [];
+    const cores = Array.isArray(d.cores) ? d.cores : [];
+    if (!bras.length && !cores.length) {
+      box.innerHTML = '<div class="mt-mini offline"><div class="name">No routers in config.json</div></div>';
       return;
     }
-    box.innerHTML = d.bras.map(rt => {
-      const title = rt.identity || rt.router || `Router ${Number(rt.index || 0) + 1}`;
-      if (!rt.ok) {
-        return `<div class="mt-mini offline"><div class="name">${title}</div><div class="row"><span>Offline</span><span class="pct">—</span></div></div>`;
-      }
-      const cpu = Number(rt.cpu_percent || 0).toFixed(1);
-      const ram = Number(rt.ram_percent || 0).toFixed(1);
-      const uptime = (rt.uptime || '').toString().trim() || '—';
-      return `<div class="mt-mini"><div class="name">${title}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div><div class="row"><span>Uptime</span><span class="pct">${uptime}</span></div></div>`;
-    }).join('');
+    box.innerHTML = _renderMtCards([...bras, ...cores]);
   } catch (_e) {
     box.innerHTML = '<div class="mt-mini offline"><div class="name">Unavailable</div></div>';
   }
@@ -3008,29 +3089,39 @@ async function loadTroubleRouters() {
   const d = await r.json();
   if (!d.ok) {
     sel.innerHTML = '';
-    summary.textContent = d.error || 'Unable to load BRAS';
+    summary.textContent = d.error || 'Unable to load routers';
     return;
   }
-  if (!d.bras.length) {
+  const allRouters = [...(d.bras || []), ...(d.cores || [])];
+  if (!allRouters.length) {
     sel.innerHTML = '';
-    summary.textContent = 'No BRAS found in config.json';
+    summary.textContent = 'No routers found in config.json';
     return;
   }
   const prev = sel.value;
-  sel.innerHTML = d.bras.map(rt => {
-    const label = `${rt.name} (${rt.address}:${rt.port})`;
-    return `<option value="${rt.index}">${label}</option>`;
-  }).join('');
+  let html = '';
+  if (d.bras && d.bras.length) {
+    html += `<optgroup label="BRAS">` + d.bras.map(rt =>
+      `<option value="${rt.key}">${rt.name} (${rt.address}:${rt.port})</option>`
+    ).join('') + `</optgroup>`;
+  }
+  if (d.cores && d.cores.length) {
+    html += `<optgroup label="Core">` + d.cores.map(rt =>
+      `<option value="${rt.key}">${rt.name} (${rt.address}:${rt.port})</option>`
+    ).join('') + `</optgroup>`;
+  }
+  sel.innerHTML = html;
   if (prev && [...sel.options].some(o => o.value === prev)) {
     sel.value = prev;
   }
-  const active = d.bras.find(rt => String(rt.index) === sel.value) || d.bras[0];
-  summary.textContent = `Selected BRAS: ${active.name} (${active.address}:${active.port})`;
+  const active = allRouters.find(rt => rt.key === sel.value) || allRouters[0];
+  const typeLabel = active.type === 'core' ? 'Core' : 'BRAS';
+  summary.textContent = `Selected ${typeLabel}: ${active.name} (${active.address}:${active.port})`;
 }
 
-function _troubleRouterIndex() {
+function _troubleRouterKey() {
   const sel = document.getElementById('trouble-router-select');
-  return sel && sel.value !== '' ? Number(sel.value) : 0;
+  return sel && sel.value !== '' ? sel.value : 'bras:0';
 }
 
 function _setTroubleOutput(text, ok=true) {
@@ -3045,7 +3136,7 @@ async function runMtPing() {
   const r = await fetch('/api/troubleshoot/mt/ping', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ router_index: _troubleRouterIndex() })
+    body: JSON.stringify({ router_key: _troubleRouterKey() })
   });
   const d = await r.json();
   if (!d.ok) {
@@ -3061,7 +3152,7 @@ async function runMtConnect() {
   const r = await fetch('/api/troubleshoot/mt/connect', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ router_index: _troubleRouterIndex() })
+    body: JSON.stringify({ router_key: _troubleRouterKey() })
   });
   const d = await r.json();
   if (!d.ok) {
@@ -3079,7 +3170,7 @@ async function runMtPermissionCheck() {
   const r = await fetch('/api/troubleshoot/mt/permissions', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ router_index: _troubleRouterIndex() })
+    body: JSON.stringify({ router_key: _troubleRouterKey() })
   });
   const d = await r.json();
   if (!d.ok) {
@@ -3175,6 +3266,50 @@ async function confirmResetUsers() {
     loadServices();
   } else {
     toast(d.error, false);
+  }
+}
+
+async function confirmPurgeWan() {
+  const confirmed = confirm(
+    'WARNING: This will:\n\n' +
+    '  1. Delete ALL libreqos-managed entries from every core WAN address-list\n' +
+    '  2. Clear all WAN assignments in the device database\n' +
+    '  3. Run a full WAN rebalance\n\n' +
+    'The MikroTik routers must be reachable. Continue?'
+  );
+  if (!confirmed) return;
+  const btn = document.getElementById('btn-purge-wan');
+  const res = document.getElementById('purge-wan-result');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Purging…';
+  res.style.display = 'none';
+  try {
+    const r = await fetch('/api/wan/purge', { method: 'POST' });
+    const d = await r.json();
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-left-right"></i> Purge & Rebalance';
+    res.style.display = 'block';
+    if (d.ok) {
+      const purgeLines = (d.purged || []).map(c => `✔ ${c.core}: removed ${c.removed}`).join('\n');
+      const synced = d.synced || {};
+      const syncLine = `↺ Rebalanced — assigned ${d.assigned||0}, list +${synced.total_added||0}/-${synced.total_removed||0}`;
+      res.style.color = 'var(--green)';
+      res.textContent = [purgeLines, syncLine].filter(Boolean).join('\n');
+      toast(`WAN purged — assigned ${d.assigned||0} devices`);
+    } else {
+      const lines = [
+        d.error || 'Purge failed',
+        ...(d.purged || []).map(c => c.error ? `✘ ${c.core}: ${c.error}` : `✔ ${c.core}: removed ${c.removed}`),
+        ...(d.errors || []).map(e => `✘ ${e}`),
+      ].join('\n');
+      res.style.color = 'var(--yellow)';
+      res.textContent = lines;
+      toast(d.error || 'Purge completed with errors', false);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-left-right"></i> Purge & Rebalance';
+    toast('Request failed: ' + e.message, false);
   }
 }
 
