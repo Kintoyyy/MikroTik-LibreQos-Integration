@@ -1,4 +1,5 @@
 import heapq
+import ipaddress
 import logging
 
 logger = logging.getLogger(__name__)
@@ -149,6 +150,41 @@ class WANManager:
                     f"WAN OVERLOAD: {core_name}/{wan_name} UL {ul:.0f} Mbps > limit {ul_limit} Mbps"
                 )
 
+    @staticmethod
+    def _collapse_to_subnets(ips):
+        """
+        Collapse a list of IP strings into the minimal set of covering subnets.
+        Uses ipaddress.collapse_addresses — only merges IPs that form complete
+        CIDR blocks, so no unowned addresses are ever included.
+        Returns a list of subnet strings (e.g. ['10.0.0.0/24', '10.0.2.0/23']).
+        """
+        networks = []
+        for ip in ips:
+            try:
+                networks.append(ipaddress.ip_network(ip, strict=False))
+            except ValueError:
+                logger.debug(f"Skipping invalid IP for subnet calc: {ip}")
+        if not networks:
+            return []
+        return [str(n) for n in ipaddress.collapse_addresses(networks)]
+
+    def _build_target_subnets(self, conn, core):
+        """
+        Build target {(wan_name, subnet_str)} from DB IPs, collapsed per WAN.
+        Collapsing means IPs within the same CIDR block become a single entry,
+        so the address-list is smaller and changes less frequently.
+        """
+        target = set()
+        for i, _ in enumerate(core.get('wans', []), start=1):
+            wan_name = f"WAN{i}"
+            ips = [row[0] for row in conn.execute(
+                "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
+                (core['name'], wan_name)
+            )]
+            for subnet in self._collapse_to_subnets(ips):
+                target.add((wan_name, subnet))
+        return target
+
     def _build_wan_cache(self, api, core):
         """Fetch current WAN address-list entries from the router and return a cache dict."""
         cache = {}
@@ -166,35 +202,30 @@ class WANManager:
 
     def sync_wan_address_lists(self, conn, cores):
         """
-        Sync address-list entries on each core router.
+        Sync address-list entries on each core router using subnet aggregation.
 
-        Two-phase approach to minimise API connections:
-          1. Build target state from DB and diff against the in-memory cache.
-             If nothing changed, skip the router entirely — no connection made.
-          2. When a diff is detected (or there is no cache yet), connect to the
-             router and fetch the CURRENT address-list state to recompute the diff
-             against real router data before issuing any add/remove calls.
+        IPs assigned to each WAN are collapsed into the minimal set of CIDR
+        subnets before comparison. This means individual IP changes within the
+        same subnet do not trigger any router update.
+
+        Two-phase approach:
+          1. Collapse DB IPs to subnets and diff against the in-memory cache.
+             Skip the router entirely if the subnet set is unchanged.
+          2. Only when subnets changed: connect, re-fetch live state from the
+             router, recompute the diff, then add/remove subnets as needed.
         """
         for core in cores:
             core_key = core['address']
 
-            # Phase 1 — build target from DB (free, no connection).
-            target = set()
-            for i, _ in enumerate(core.get('wans', []), start=1):
-                wan_name = f"WAN{i}"
-                for (ip,) in conn.execute(
-                    "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
-                    (core['name'], wan_name)
-                ):
-                    target.add((wan_name, ip))
+            # Phase 1 — collapse IPs → subnets (free, no connection).
+            target = self._build_target_subnets(conn, core)
 
-            # Quick cache diff — skip the router if nothing looks changed.
+            # Diff against the cached subnet set — skip if nothing changed.
             if core_key in self._cache:
-                cached = self._cache[core_key]
-                if target == set(cached):
+                if target == set(self._cache[core_key]):
                     continue
 
-            # Phase 2 — connect and fetch the live state before writing anything.
+            # Phase 2 — subnets changed; connect and verify against live state.
             api = self._connect(core)
             if api is None:
                 logger.warning(f"Skipping core {core['name']} — connection failed.")
@@ -204,8 +235,7 @@ class WANManager:
             try:
                 resource = api.get_resource('/ip/firewall/address-list')
 
-                # Always refresh the cache from the router so the diff is accurate
-                # and we never add entries that are already present.
+                # Re-fetch from router so we never add subnets already present.
                 self._cache[core_key] = self._build_wan_cache(api, core)
                 cache = self._cache[core_key]
 
@@ -216,22 +246,22 @@ class WANManager:
                     continue
 
                 for key in to_remove:
-                    list_name, ip = key
+                    list_name, subnet = key
                     try:
                         resource.remove(id=cache[key])
-                        logger.info(f"Removed {ip} from {list_name} on {core['name']}")
+                        logger.info(f"Removed {subnet} from {list_name} on {core['name']}")
                     except Exception as ex:
-                        logger.warning(f"Failed to remove {ip} from {list_name}: {ex}")
+                        logger.warning(f"Failed to remove {subnet} from {list_name}: {ex}")
                     cache.pop(key, None)
 
                 for key in to_add:
-                    list_name, ip = key
+                    list_name, subnet = key
                     try:
-                        new_id = resource.add(list=list_name, address=ip, comment='libreqos-managed')
+                        new_id = resource.add(list=list_name, address=subnet, comment='libreqos-managed')
                         cache[key] = new_id
-                        logger.info(f"Added {ip} to {list_name} on {core['name']}")
+                        logger.info(f"Added {subnet} to {list_name} on {core['name']}")
                     except Exception as ex:
-                        logger.warning(f"Failed to add {ip} to {list_name}: {ex}")
+                        logger.warning(f"Failed to add {subnet} to {list_name}: {ex}")
 
                 logger.info(f"{core['name']} WAN sync: +{len(to_add)} / -{len(to_remove)}")
 
