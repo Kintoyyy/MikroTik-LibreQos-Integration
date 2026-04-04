@@ -167,40 +167,54 @@ class WANManager:
     def sync_wan_address_lists(self, conn, cores):
         """
         Sync address-list entries on each core router.
-        Uses an in-memory cache so the router is only queried once per process start.
-        Subsequent cycles only push actual deltas (add/remove).
+
+        Two-phase approach to minimise API connections:
+          1. Build target state from DB and diff against the in-memory cache.
+             If nothing changed, skip the router entirely — no connection made.
+          2. When a diff is detected (or there is no cache yet), connect to the
+             router and fetch the CURRENT address-list state to recompute the diff
+             against real router data before issuing any add/remove calls.
         """
         for core in cores:
             core_key = core['address']
+
+            # Phase 1 — build target from DB (free, no connection).
+            target = set()
+            for i, _ in enumerate(core.get('wans', []), start=1):
+                wan_name = f"WAN{i}"
+                for (ip,) in conn.execute(
+                    "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
+                    (core['name'], wan_name)
+                ):
+                    target.add((wan_name, ip))
+
+            # Quick cache diff — skip the router if nothing looks changed.
+            if core_key in self._cache:
+                cached = self._cache[core_key]
+                if target == set(cached):
+                    continue
+
+            # Phase 2 — connect and fetch the live state before writing anything.
             api = self._connect(core)
             if api is None:
                 logger.warning(f"Skipping core {core['name']} — connection failed.")
-                self._cache.pop(core_key, None)   # invalidate so next success re-fetches
+                self._cache.pop(core_key, None)
                 continue
 
             try:
                 resource = api.get_resource('/ip/firewall/address-list')
 
-                # Build cache on first contact with this core
-                if core_key not in self._cache:
-                    self._cache[core_key] = self._build_wan_cache(api, core)
+                # Always refresh the cache from the router so the diff is accurate
+                # and we never add entries that are already present.
+                self._cache[core_key] = self._build_wan_cache(api, core)
                 cache = self._cache[core_key]
 
-                # Build target state from DB: {(wan_name, ip)}
-                target = set()
-                for i, _ in enumerate(core.get('wans', []), start=1):
-                    wan_name = f"WAN{i}"
-                    for (ip,) in conn.execute(
-                        "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
-                        (core['name'], wan_name)
-                    ):
-                        target.add((wan_name, ip))
+                to_add    = target - set(cache)
+                to_remove = set(cache) - target
 
-                current = set(cache)
-                to_add    = target  - current
-                to_remove = current - target
+                if not to_add and not to_remove:
+                    continue
 
-                # Remove stale entries
                 for key in to_remove:
                     list_name, ip = key
                     try:
@@ -210,7 +224,6 @@ class WANManager:
                         logger.warning(f"Failed to remove {ip} from {list_name}: {ex}")
                     cache.pop(key, None)
 
-                # Add new entries
                 for key in to_add:
                     list_name, ip = key
                     try:
@@ -218,15 +231,10 @@ class WANManager:
                         cache[key] = new_id
                         logger.info(f"Added {ip} to {list_name} on {core['name']}")
                     except Exception as ex:
-                        if 'already have such entry' in str(ex):
-                            cache[key] = None   # exists on router, mark in cache to skip next time
-                            logger.debug(f"Already exists: {ip} in {list_name} — cached")
-                        else:
-                            logger.warning(f"Failed to add {ip} to {list_name}: {ex}")
+                        logger.warning(f"Failed to add {ip} to {list_name}: {ex}")
 
-                if to_add or to_remove:
-                    logger.info(f"{core['name']} WAN sync: +{len(to_add)} / -{len(to_remove)}")
+                logger.info(f"{core['name']} WAN sync: +{len(to_add)} / -{len(to_remove)}")
 
             except Exception as ex:
                 logger.error(f"Error syncing address lists on {core['name']}: {ex}")
-                self._cache.pop(core_key, None)   # invalidate cache so next cycle re-fetches
+                self._cache.pop(core_key, None)
