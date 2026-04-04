@@ -15,6 +15,7 @@ import socket
 import re
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
+from wan_manager import WANManager
 
 try:
     import psutil
@@ -335,6 +336,12 @@ def _connect_router_api(router: dict):
         port=int(router.get("port", 8728) or 8728),
         plaintext_login=True,
     )
+
+def _connect_for_wan(router: dict):
+    """Adapter for WANManager: returns API object (not pool)."""
+    return _connect_router_api(router).get_api()
+
+_wan_manager = WANManager(_connect_for_wan)
 
 def _broadcast_loop():
     while True:
@@ -748,28 +755,13 @@ def _sync_core_wan_address_lists(con, cfg: dict) -> dict:
 def wan_rebalance():
     """Rebalance active devices across WANs with delta DB updates (no table wipe)."""
     try:
-        import heapq as _heapq
-
         cfg = _load_config()
         wan_cfg = cfg.get("wan_assignment", {})
         if not wan_cfg.get("enabled", True):
             return jsonify({"ok": False, "error": "WAN assignment is disabled"}), 400
 
         cores = cfg.get("cores", [])
-        wans = []
-        for core in cores:
-            core_name = core.get("name", "")
-            for i, wan in enumerate(core.get("wans", []), start=1):
-                wans.append({
-                    "core": core_name,
-                    "wan": f"WAN{i}",
-                    "dl_limit": float(wan.get("download_limit", 1000) or 1000),
-                    "ul_limit": float(wan.get("upload_limit", 1000) or 1000),
-                    "used_dl": 0.0,
-                    "used_ul": 0.0,
-                })
-
-        if not wans:
+        if not any(core.get("wans") for core in cores):
             return jsonify({"ok": False, "error": "No WANs configured in cores"}), 400
 
         excluded = []
@@ -788,23 +780,18 @@ def wan_rebalance():
 
         con = sqlite3.connect(str(DB_PATH))
         try:
-            devices = con.execute(
-                "SELECT code, download_max_mbps, upload_max_mbps, "
-                "       COALESCE(core_name, ''), COALESCE(wan_name, '') "
-                "FROM devices "
-                "WHERE " + excl_sql + "(is_static = 1 OR last_seen >= ?) "
-                "ORDER BY weight DESC",
+            active_codes = [r[0] for r in con.execute(
+                "SELECT code FROM devices WHERE " + excl_sql + "(is_static = 1 OR last_seen >= ?)",
                 excluded + [active_cutoff],
-            ).fetchall()
+            ).fetchall()]
 
-            stale_rows = con.execute(
+            stale_codes = [r[0] for r in con.execute(
                 "SELECT code FROM devices "
                 "WHERE " + excl_sql
                 + "is_static = 0 AND last_seen < ? "
                 "AND COALESCE(core_name, '') != '' AND COALESCE(wan_name, '') != ''",
                 excluded + [active_cutoff],
-            ).fetchall()
-            stale_codes = [r[0] for r in stale_rows]
+            ).fetchall()]
 
             if stale_codes:
                 con.executemany(
@@ -812,32 +799,14 @@ def wan_rebalance():
                     [(code,) for code in stale_codes],
                 )
 
-            def _util(w):
-                cap = w["dl_limit"] + w["ul_limit"]
-                return (w["used_dl"] + w["used_ul"]) / cap if cap > 0 else float("inf")
-
-            heap = [(_util(w), i) for i, w in enumerate(wans)]
-            _heapq.heapify(heap)
-
-            changed = []
-            for code, dl, ul, old_core, old_wan in devices:
-                _, idx = _heapq.heappop(heap)
-                wan = wans[idx]
-                new_core = wan["core"]
-                new_wan = wan["wan"]
-                if new_core != old_core or new_wan != old_wan:
-                    changed.append((new_core, new_wan, code))
-                wan["used_dl"] += float(dl or 0)
-                wan["used_ul"] += float(ul or 0)
-                _heapq.heappush(heap, (_util(wan), idx))
-
-            if changed:
+            # Clear all active assignments so WANManager treats everything as new
+            if active_codes:
                 con.executemany(
-                    "UPDATE devices SET core_name=?, wan_name=? WHERE code=?",
-                    changed,
+                    "UPDATE devices SET core_name='', wan_name='' WHERE code=?",
+                    [(code,) for code in active_codes],
                 )
 
-            con.commit()
+            _wan_manager.assign_wan_nodes(con, cores, wan_cfg)
             sync_summary = _sync_core_wan_address_lists(con, cfg)
 
             # Rebalance is only fully successful when router API sync succeeds.
@@ -845,8 +814,8 @@ def wan_rebalance():
                 return jsonify({
                     "ok": False,
                     "error": "Rebalance applied to DB, but MikroTik API sync failed",
-                    "assigned": len(changed),
-                    "updated": len(changed),
+                    "assigned": len(active_codes),
+                    "updated": len(active_codes),
                     "offline_cleared": len(stale_codes),
                     "synced": sync_summary,
                 }), 502
@@ -855,8 +824,8 @@ def wan_rebalance():
 
         return jsonify({
             "ok": True,
-            "assigned": len(changed),
-            "updated": len(changed),
+            "assigned": len(active_codes),
+            "updated": len(active_codes),
             "offline_cleared": len(stale_codes),
             "synced": sync_summary,
         })
