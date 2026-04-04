@@ -28,7 +28,7 @@ class WANManager:
             for i, wan in enumerate(core.get('wans', []), start=1):
                 wans.append({
                     'core':     core_name,
-                    'wan':      f"WAN{i}",
+                    'wan':      wan.get('address_list', f"WAN{i}"),
                     'dl_limit': wan.get('download_limit', 1000),
                     'ul_limit': wan.get('upload_limit', 1000),
                     'used_dl':  0,
@@ -135,7 +135,7 @@ class WANManager:
         wan_limits = {}
         for core in cores:
             for i, wan in enumerate(core.get('wans', []), start=1):
-                wan_limits[(core['name'], f"WAN{i}")] = (
+                wan_limits[(core['name'], wan.get('address_list', f"WAN{i}"))] = (
                     wan.get('download_limit', 1000),
                     wan.get('upload_limit', 1000),
                 )
@@ -175,8 +175,8 @@ class WANManager:
         so the address-list is smaller and changes less frequently.
         """
         target = set()
-        for i, _ in enumerate(core.get('wans', []), start=1):
-            wan_name = f"WAN{i}"
+        for i, wan in enumerate(core.get('wans', []), start=1):
+            wan_name = wan.get('address_list', f"WAN{i}")
             ips = [row[0] for row in conn.execute(
                 "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
                 (core['name'], wan_name)
@@ -206,7 +206,10 @@ class WANManager:
         keys produced by _build_target_subnets / _collapse_to_subnets.
         """
         cache = {}
-        wan_names = [f"WAN{i}" for i in range(1, len(core.get('wans', [])) + 1)]
+        wan_names = [
+            wan.get('address_list', f"WAN{i}")
+            for i, wan in enumerate(core.get('wans', []), start=1)
+        ]
         resource = api.get_resource('/ip/firewall/address-list')
         for wan_name in wan_names:
             try:

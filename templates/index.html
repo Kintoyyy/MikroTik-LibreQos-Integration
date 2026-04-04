@@ -2649,7 +2649,12 @@ function buildCoreWanRow(coreIdx, wanIdx, w) {
         <input class="form-input" style="font-size:.8rem" placeholder="e.g. ISP1" value="${esc(w.name||'')}"
           oninput="setCoreWanField(${coreIdx},${wanIdx},'name',this.value)">
       </div>
-      <div style="width:160px">
+      <div style="width:130px">
+        <label class="form-label" style="margin-bottom:.2rem">Address-List</label>
+        <input class="form-input" style="font-size:.8rem" placeholder="e.g. WAN1" value="${esc(w.address_list||'')}"
+          oninput="setCoreWanField(${coreIdx},${wanIdx},'address_list',this.value)">
+      </div>
+      <div style="width:140px">
         <label class="form-label" style="margin-bottom:.2rem">Download</label>
         <div class="form-input-group">
           <input class="form-input" type="number" min="1" style="font-size:.8rem" value="${w.download_limit||1000}"
@@ -2657,7 +2662,7 @@ function buildCoreWanRow(coreIdx, wanIdx, w) {
           <span class="input-suffix" style="font-size:.72rem">Mbps</span>
         </div>
       </div>
-      <div style="width:160px">
+      <div style="width:140px">
         <label class="form-label" style="margin-bottom:.2rem">Upload</label>
         <div class="form-input-group">
           <input class="form-input" type="number" min="1" style="font-size:.8rem" value="${w.upload_limit||1000}"
@@ -2700,7 +2705,7 @@ function removeCore(e, idx) {
 function addCoreWan(coreIdx) {
   if (!configData.cores || !configData.cores[coreIdx]) return;
   configData.cores[coreIdx].wans = configData.cores[coreIdx].wans || [];
-  configData.cores[coreIdx].wans.push({ name:'', download_limit:1000, upload_limit:1000 });
+  configData.cores[coreIdx].wans.push({ name:'', address_list:'', download_limit:1000, upload_limit:1000 });
   renderConfig();
   // reopen the card body after re-render
   const body = document.getElementById(`core-body-${coreIdx}`);

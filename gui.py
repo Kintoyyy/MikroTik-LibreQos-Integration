@@ -666,10 +666,11 @@ def wan_stats():
         limits = {}
         for core in cfg.get("cores", []):
             for i, wan in enumerate(core.get("wans", []), start=1):
-                limits[(core["name"], f"WAN{i}")] = {
+                al = wan.get("address_list", f"WAN{i}")
+                limits[(core["name"], al)] = {
                     "dl_limit": wan.get("download_limit", 0),
                     "ul_limit": wan.get("upload_limit", 0),
-                    "wan_label": wan.get("name", f"WAN{i}"),
+                    "wan_label": wan.get("name", al),
                 }
 
         for r in rows:
@@ -720,8 +721,8 @@ def _sync_core_wan_address_lists(con, cfg: dict) -> dict:
             resource = api.get_resource("/ip/firewall/address-list")
 
             target = set()
-            for i, _wan in enumerate(wans, start=1):
-                wan_name = f"WAN{i}"
+            for i, wan in enumerate(wans, start=1):
+                wan_name = wan.get("address_list", f"WAN{i}")
                 rows = con.execute(
                     "SELECT ipv4 FROM devices "
                     "WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL AND ipv4 != ''",
@@ -731,8 +732,8 @@ def _sync_core_wan_address_lists(con, cfg: dict) -> dict:
                     target.add((wan_name, ip))
 
             current = {}
-            for i, _wan in enumerate(wans, start=1):
-                wan_name = f"WAN{i}"
+            for i, wan in enumerate(wans, start=1):
+                wan_name = wan.get("address_list", f"WAN{i}")
                 entries = resource.get(list=wan_name)
                 for e in entries:
                     ip = e.get("address")
@@ -883,7 +884,7 @@ def wan_purge():
             api = pool.get_api()
             resource = api.get_resource("/ip/firewall/address-list")
 
-            wan_names = {f"WAN{i}" for i in range(1, len(wans) + 1)}
+            wan_names = {wan.get("address_list", f"WAN{i}") for i, wan in enumerate(wans, start=1)}
             for wan_name in wan_names:
                 try:
                     entries = resource.get(list=wan_name)
