@@ -987,7 +987,7 @@ def restart_ubuntu_host():
 # ---------------------------------------------------------------------------
 # Multi-service management
 # ---------------------------------------------------------------------------
-MANAGED_SERVICES = ["lqosd", "lqos_scheduler", "updatecsv", "gui"]
+MANAGED_SERVICES = ["lqosd", "lqos_scheduler", "updatecsv", "wan_service", "gui"]
 
 LQUSERS_PATHS = [
     Path("/etc/lqos/lqusers.toml"),

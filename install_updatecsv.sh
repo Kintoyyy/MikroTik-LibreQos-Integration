@@ -8,11 +8,10 @@ NC='\033[0m'
 
 LIBREQOS_DIR="/opt/libreqos"
 SRC_DIR="$LIBREQOS_DIR/src"
-PYTHON_SCRIPT="$SRC_DIR/updatecsv.py"
-GUI_SCRIPT="$SRC_DIR/gui.py"
 TEMPLATES_DIR="$SRC_DIR/templates"
 CONFIG_JSON="$SRC_DIR/config.json"
 SERVICE_FILE="/etc/systemd/system/updatecsv.service"
+WAN_SERVICE_FILE="/etc/systemd/system/wan_service.service"
 GUI_SERVICE_FILE="/etc/systemd/system/gui.service"
 
 if [ "$EUID" -ne 0 ]; then
@@ -72,12 +71,22 @@ deactivate
 # ── Copy scripts ──────────────────────────────────────────────────────────
 
 printf "${YELLOW}➜ Copying updatecsv.py...${NC}\n"
-cp "updatecsv.py" "$PYTHON_SCRIPT"
-chmod +x "$PYTHON_SCRIPT"
+cp "updatecsv.py" "$SRC_DIR/updatecsv.py"
+chmod +x "$SRC_DIR/updatecsv.py"
+
+printf "${YELLOW}➜ Copying wan_service.py...${NC}\n"
+cp "wan_service.py" "$SRC_DIR/wan_service.py"
+chmod +x "$SRC_DIR/wan_service.py"
 
 printf "${YELLOW}➜ Copying gui.py...${NC}\n"
-cp "gui.py" "$GUI_SCRIPT"
-chmod +x "$GUI_SCRIPT"
+cp "gui.py" "$SRC_DIR/gui.py"
+chmod +x "$SRC_DIR/gui.py"
+
+printf "${YELLOW}➜ Copying Python modules...${NC}\n"
+for module in rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py; do
+    cp "$module" "$SRC_DIR/$module"
+    printf "  • $module\n"
+done
 
 printf "${YELLOW}➜ Copying templates/...${NC}\n"
 cp -r templates/. "$TEMPLATES_DIR/"
@@ -98,10 +107,10 @@ if [ ! -s "$CONFIG_JSON" ]; then
     "strategy": "cpu",
     "promote_to_root": false,
     "queues": true,
-    "routers": [
+    "bras": [
         {
-            "name": "Mikrotik 1",
-            "address": "192.168.88.1",
+            "name": "Mikrotik AC",
+            "address": "192.168.88.2",
             "port": 8728,
             "username": "admin",
             "password": "password",
@@ -125,7 +134,34 @@ if [ ! -s "$CONFIG_JSON" ]; then
                 "default_upload_limit": 100
             }
         }
-    ]
+    ],
+    "cores": [
+        {
+            "name": "Mikrotik CORE",
+            "address": "192.168.88.1",
+            "port": 8728,
+            "username": "admin",
+            "password": "password",
+            "wans": [
+                {
+                    "download_limit": 1000,
+                    "name": "ISP1-PLDT",
+                    "upload_limit": 1000
+                },
+                {
+                    "download_limit": 500,
+                    "name": "ISP2-GLOBE",
+                    "upload_limit": 500
+                }
+            ]
+        }
+    ],
+    "wan_assignment": {
+        "enabled": false,
+        "include_hotspot": false,
+        "include_dhcp": false,
+        "interval": 300
+    }
 }
 EOF
     chmod 640 "$CONFIG_JSON"
@@ -150,6 +186,34 @@ WorkingDirectory=/opt/libreqos/src
 Environment="VIRTUAL_ENV=/opt/libreqos/venv"
 Environment="PATH=/opt/libreqos/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/opt/libreqos/venv/bin/python3 /opt/libreqos/src/updatecsv.py
+Restart=always
+RestartSec=10
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
+# ── wan_service.service ───────────────────────────────────────────────────
+
+if [ -f "wan_service.service" ]; then
+    printf "${YELLOW}➜ Copying wan_service.service...${NC}\n"
+    cp "wan_service.service" "$WAN_SERVICE_FILE"
+else
+    printf "${YELLOW}➜ Creating default wan_service.service...${NC}\n"
+    cat << 'EOF' > "$WAN_SERVICE_FILE"
+[Unit]
+Description=LibreQoS WAN Assignment and Sync
+After=network.target updatecsv.service
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/opt/libreqos/src
+Environment="VIRTUAL_ENV=/opt/libreqos/venv"
+Environment="PATH=/opt/libreqos/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/libreqos/venv/bin/python3 /opt/libreqos/src/wan_service.py
 Restart=always
 RestartSec=10
 Environment="PYTHONUNBUFFERED=1"
@@ -204,6 +268,9 @@ systemctl daemon-reload
 printf "${BLUE}➜ Starting and enabling updatecsv service...${NC}\n"
 systemctl enable --now updatecsv.service
 
+printf "${BLUE}➜ Starting and enabling wan_service...${NC}\n"
+systemctl enable --now wan_service.service
+
 printf "${BLUE}➜ Starting and enabling GUI service...${NC}\n"
 systemctl enable --now gui.service
 
@@ -214,5 +281,7 @@ printf "${GREEN}  Password:${NC} admin  (change after first login)\n"
 printf "\n"
 printf "${BLUE}Service status:${NC}\n"
 systemctl status updatecsv.service --no-pager -l
+printf "\n"
+systemctl status wan_service.service --no-pager -l
 printf "\n"
 systemctl status gui.service --no-pager -l

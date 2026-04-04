@@ -7,7 +7,6 @@ import time
 from device_database import DeviceDatabase
 from node_assigner import NodeAssigner, STRATEGY_CPU, ALL_STRATEGIES
 from router_scanner import RouterScanner
-from wan_manager import WANManager
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -27,8 +26,7 @@ logger = logging.getLogger(__name__)
 
 def read_config_json():
     """
-    Read config.json and return
-    (routers, strategy, queues, promote_to_root, cores, wan_sources).
+    Read config.json and return (routers, strategy, queues, promote_to_root).
 
     Strategy resolution order:
       1. Explicit 'strategy' key in config.json
@@ -41,7 +39,6 @@ def read_config_json():
             config = json.load(f)
 
         routers         = config.get('bras', [])
-        cores           = config.get('cores', [])
         promote_to_root = config.get('promote_to_root', False)
 
         if 'strategy' in config:
@@ -73,28 +70,20 @@ def read_config_json():
             else:
                 seen_names[base] = 1
 
-        wan_cfg = config.get('wan_assignment', {})
-        wan_sources = {
-            'enabled':         wan_cfg.get('enabled',         True),
-            'include_hotspot': wan_cfg.get('include_hotspot', False),
-            'include_dhcp':    wan_cfg.get('include_dhcp',    False),
-        }
-
         logger.info(
-            f"Read {len(routers)} routers, {len(cores)} cores from {CONFIG_JSON} "
-            f"(strategy={strategy})"
+            f"Read {len(routers)} routers from {CONFIG_JSON} (strategy={strategy})"
         )
-        return routers, strategy, queues, promote_to_root, cores, wan_sources
+        return routers, strategy, queues, promote_to_root
 
     except FileNotFoundError:
         logger.error(f"Config file not found: {CONFIG_JSON}")
-        return [], STRATEGY_CPU, None, False, [], {}
+        return [], STRATEGY_CPU, None, False
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in config: {e}")
-        return [], STRATEGY_CPU, None, False, [], {}
+        return [], STRATEGY_CPU, None, False
     except Exception as e:
         logger.error(f"Error reading config: {e}")
-        return [], STRATEGY_CPU, None, False, [], {}
+        return [], STRATEGY_CPU, None, False
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -107,11 +96,10 @@ def main():
 
     scanner  = RouterScanner(db)
     assigner = NodeAssigner(NETWORK_JSON)
-    wan_mgr  = WANManager(RouterScanner.connect)
 
     while True:
         try:
-            routers, strategy, queues, promote_to_root, cores, wan_sources = read_config_json()
+            routers, strategy, queues, promote_to_root = read_config_json()
 
             scan_time   = time.time()
             any_changes = False
@@ -129,11 +117,6 @@ def main():
                 db.check_tc_u16_overflow()
 
                 assigner.assign(db.conn, strategy, routers, queues, promote_to_root)
-
-                if cores and wan_sources.get('enabled', True):
-                    wan_totals = wan_mgr.assign_wan_nodes(db.conn, cores, wan_sources)
-                    wan_mgr.check_wan_capacity(wan_totals, cores)
-                    wan_mgr.sync_wan_address_lists(db.conn, cores)
 
                 db.export_to_csv()
 
