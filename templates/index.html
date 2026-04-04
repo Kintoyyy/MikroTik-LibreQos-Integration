@@ -1244,8 +1244,8 @@ code { font-size: .8rem; color: #94a3b8; }
         <thead>
           <tr>
             <th>Code</th><th>IPv4</th><th>MAC</th>
-            <th>Source</th><th>Router</th><th>Parent</th>
-            <th style="text-align:right">DL % WAN</th><th style="text-align:right">UL % WAN</th>
+            <th>Source</th><th>Router</th><th>Parent</th><th>WAN</th>
+            <th style="text-align:right">DL</th><th style="text-align:right">UL</th>
             <th>Comment</th><th style="text-align:center">Static</th>
             <th style="text-align:center">Actions</th>
           </tr>
@@ -2028,8 +2028,9 @@ function filterDevices() {
       <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
       <td>${r.router}</td>
       <td>${r.parent_node}</td>
-      <td style="text-align:right">${_fmtPctOfWan(r, wanLookup, 'dl')}</td>
-      <td style="text-align:right">${_fmtPctOfWan(r, wanLookup, 'ul')}</td>
+      <td>${r.wan_name ? `<span class="src-badge" style="background:var(--accent);color:#fff" title="${r.core_name||''}">${r.wan_name}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="text-align:right">${_fmtBw(r.download_max_mbps)}</td>
+      <td style="text-align:right">${_fmtBw(r.upload_max_mbps)}</td>
       <td style="color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">${r.comment}</td>
       <td style="text-align:center">${r.is_static?'<i class="bi bi-lock-fill" style="color:#f59e0b"></i>':''}</td>
       <td style="text-align:center;white-space:nowrap">

@@ -185,8 +185,26 @@ class WANManager:
                 target.add((wan_name, subnet))
         return target
 
+    @staticmethod
+    def _normalize_address(addr: str) -> str:
+        """
+        Normalize an address string to canonical CIDR form so it can be compared
+        against the output of _collapse_to_subnets.
+        MikroTik may return bare host IPs ('10.0.0.1') while our target always
+        produces CIDR notation ('10.0.0.1/32'). Normalizing both sides prevents
+        false-positive diffs that would re-add already-present entries on every run.
+        """
+        try:
+            return str(ipaddress.ip_network(addr, strict=False))
+        except ValueError:
+            return addr
+
     def _build_wan_cache(self, api, core):
-        """Fetch current WAN address-list entries from the router and return a cache dict."""
+        """
+        Fetch current WAN address-list entries from the router.
+        Addresses are normalized to CIDR form so cache keys always match the
+        keys produced by _build_target_subnets / _collapse_to_subnets.
+        """
         cache = {}
         wan_names = [f"WAN{i}" for i in range(1, len(core.get('wans', [])) + 1)]
         resource = api.get_resource('/ip/firewall/address-list')
@@ -194,7 +212,8 @@ class WANManager:
             try:
                 for e in resource.get(list=wan_name):
                     if e.get('address') and '.id' in e:
-                        cache[(wan_name, e['address'])] = e['.id']
+                        normalized = self._normalize_address(e['address'])
+                        cache[(wan_name, normalized)] = e['.id']
             except Exception as ex:
                 logger.warning(f"Cache init {wan_name} on {core['name']}: {ex}")
         logger.info(f"WAN cache built for {core['name']}: {len(cache)} entries")
