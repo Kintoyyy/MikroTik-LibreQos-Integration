@@ -1209,6 +1209,8 @@ code { font-size: .8rem; color: #94a3b8; }
         <button class="btn-ghost"   onclick="loadYaml('network_json')">network.json</button>
         <button class="btn-ghost"   onclick="loadYaml('shaped_devices')">ShapedDevices.csv</button>
         <button class="btn-ghost"   onclick="loadYaml('updatecsv')">updatecsv.py</button>
+        <button class="btn-ghost"   onclick="loadYaml('rate_resolver')">rate_resolver.py</button>
+        <button class="btn-ghost"   onclick="loadYaml('wan_manager')">wan_manager.py</button>
       </div>
       <div style="display:flex;align-items:center;gap:.75rem">
         <span style="font-size:.72rem;color:var(--muted)" id="yaml-path"></span>
@@ -2791,9 +2793,11 @@ const YAML_MODES = {
   config_json: 'application/json',
   network_json:'application/json',
   shaped_devices:'text/plain',
-  updatecsv:   'text/x-python',
+  updatecsv:      'text/x-python',
+  rate_resolver:  'text/x-python',
+  wan_manager:    'text/x-python',
 };
-const YAML_NAMES = ['libreqos','lqos','network','config_json','network_json','shaped_devices','updatecsv'];
+const YAML_NAMES = ['libreqos','lqos','network','config_json','network_json','shaped_devices','updatecsv','rate_resolver','wan_manager'];
 
 async function loadYaml(name) {
   currentYaml = name;

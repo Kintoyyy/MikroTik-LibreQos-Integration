@@ -103,6 +103,8 @@ YAML_FILES = {
     "config_json":   OPT_DIR / "config.json",
     "shaped_devices": OPT_DIR / "ShapedDevices.csv",
     "updatecsv":     OPT_DIR / "updatecsv.py",
+    "rate_resolver": OPT_DIR / "rate_resolver.py",
+    "wan_manager":   OPT_DIR / "wan_manager.py",
     "network":       NETPLAN_DIR / "50-cloud-init.yaml",
 }
 
