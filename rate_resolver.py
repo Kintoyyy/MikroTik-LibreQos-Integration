@@ -4,14 +4,23 @@ import string
 import logging
 from datetime import datetime
 
+from settings import (
+    MIN_DL_RATE_PERCENTAGE, MIN_UL_RATE_PERCENTAGE,
+    MAX_DL_RATE_PERCENTAGE, MAX_UL_RATE_PERCENTAGE,
+    DEFAULT_DL_BANDWIDTH, DEFAULT_UL_BANDWIDTH, ID_LENGTH,
+)
+
 logger = logging.getLogger(__name__)
 
 
 class RateResolver:
-    MIN_RATE_PERCENTAGE = 0.5
-    MAX_RATE_PERCENTAGE = 1.15
-    DEFAULT_BANDWIDTH   = 1000
-    ID_LENGTH           = 8
+    MIN_DL_RATE_PERCENTAGE = MIN_DL_RATE_PERCENTAGE
+    MIN_UL_RATE_PERCENTAGE = MIN_UL_RATE_PERCENTAGE
+    MAX_DL_RATE_PERCENTAGE = MAX_DL_RATE_PERCENTAGE
+    MAX_UL_RATE_PERCENTAGE = MAX_UL_RATE_PERCENTAGE
+    DEFAULT_DL_BANDWIDTH   = DEFAULT_DL_BANDWIDTH
+    DEFAULT_UL_BANDWIDTH   = DEFAULT_UL_BANDWIDTH
+    ID_LENGTH              = ID_LENGTH
 
     RE_LIST_RATE = re.compile(r'(\d+(?:\.\d+)?[kmgKMG])/(\d+(?:\.\d+)?[kmgKMG])')
     RE_BANDWIDTH = re.compile(r'(\d+(?:\.\d+)?)([kmgKMG])?')
@@ -72,8 +81,8 @@ class RateResolver:
         except (ValueError, TypeError):
             rx, tx = 0, 0
         return (
-            max(int(rx * RateResolver.MIN_RATE_PERCENTAGE), 1),
-            max(int(tx * RateResolver.MIN_RATE_PERCENTAGE), 1),
+            max(int(rx * RateResolver.MIN_DL_RATE_PERCENTAGE), 1),
+            max(int(tx * RateResolver.MIN_UL_RATE_PERCENTAGE), 1),
         )
 
     @staticmethod
@@ -83,8 +92,8 @@ class RateResolver:
         except (ValueError, TypeError):
             rx_f, tx_f = 0, 0
         return (
-            max(int(rx_f * RateResolver.MAX_RATE_PERCENTAGE), 1),
-            max(int(tx_f * RateResolver.MAX_RATE_PERCENTAGE), 1),
+            max(int(rx_f * RateResolver.MAX_DL_RATE_PERCENTAGE), 1),
+            max(int(tx_f * RateResolver.MAX_UL_RATE_PERCENTAGE), 1),
         )
 
     @staticmethod

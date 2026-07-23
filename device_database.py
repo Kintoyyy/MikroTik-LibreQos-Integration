@@ -5,6 +5,7 @@ import shutil
 import sqlite3
 
 from rate_resolver import RateResolver
+from settings import SOURCE_PRIORITY, TC_U16_WARN_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,6 @@ _CREATE_DEVICES_SQL = """
         wan_name        TEXT DEFAULT ''
     )
 """
-
-# Higher number = higher priority. If the same IP already exists from a higher-priority
-# source, the lower-priority source entry is skipped.
-SOURCE_PRIORITY = {'pppoe': 4, 'hotspot': 3, 'dhcp': 2, 'address_list': 1}
-
-TC_U16_WARN_THRESHOLD = 60_000
 
 FIELDNAMES = [
     'Circuit ID', 'Circuit Name', 'Device ID', 'Device Name', 'Parent Node',

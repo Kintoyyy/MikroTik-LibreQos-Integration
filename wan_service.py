@@ -21,13 +21,12 @@ import time
 from device_database import DeviceDatabase
 from wan_manager import WANManager
 from router_scanner import RouterScanner
+from settings import WAN_DEFAULT_INTERVAL as DEFAULT_INTERVAL, WAN_ERROR_RETRY_INTERVAL as ERROR_RETRY_INTERVAL
 
-CONFIG_JSON          = 'config.json'
-DB_FILE              = 'devices.db'
-SHAPED_DEVICES_CSV   = 'ShapedDevices.csv'
-NETWORK_JSON         = 'network.json'
-DEFAULT_INTERVAL     = 300
-ERROR_RETRY_INTERVAL = 30
+CONFIG_JSON        = 'config.json'
+DB_FILE            = 'devices.db'
+SHAPED_DEVICES_CSV = 'ShapedDevices.csv'
+NETWORK_JSON       = 'network.json'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

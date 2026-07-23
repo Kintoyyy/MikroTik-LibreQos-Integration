@@ -1,0 +1,36 @@
+{
+    "scanner": {
+        "scan_interval": 600,
+        "error_retry_interval": 30
+    },
+    "wan_service": {
+        "default_interval": 300,
+        "error_retry_interval": 30,
+        "rebalance_threshold": 1.10
+    },
+    "rates": {
+        "min_dl_rate_percentage": 0.5,
+        "min_ul_rate_percentage": 0.5,
+        "max_dl_rate_percentage": 1.0,
+        "max_ul_rate_percentage": 1.0,
+        "default_dl_bandwidth": 100,
+        "default_ul_bandwidth": 100,
+        "id_length": 8
+    },
+    "database": {
+        "tc_u16_warn_threshold": 60000,
+        "source_priority": {
+            "pppoe": 4,
+            "hotspot": 3,
+            "dhcp": 2,
+            "address_list": 1
+        }
+    },
+    "gui": {
+        "managed_services": ["lqosd", "lqos_scheduler", "updatecsv", "wan_service", "gui"],
+        "expected_mt_group": "API_READ",
+        "expected_mt_policy": "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon",
+        "expected_core_group": "API_WRITE",
+        "expected_core_policy": "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,!winbox,!password,!web,!sniff,!romon"
+    }
+}

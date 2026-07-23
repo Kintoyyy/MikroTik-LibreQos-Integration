@@ -2,11 +2,13 @@ import heapq
 import ipaddress
 import logging
 
+from settings import WAN_REBALANCE_THRESHOLD
+
 logger = logging.getLogger(__name__)
 
 
 class WANManager:
-    WAN_REBALANCE_THRESHOLD = 1.10  # Trigger full rebalance when any WAN load exceeds 110% of its limit
+    WAN_REBALANCE_THRESHOLD = WAN_REBALANCE_THRESHOLD
 
     def __init__(self, connect_fn):
         # connect_fn is connect_to_router from updatecsv.py, injected to avoid circular imports

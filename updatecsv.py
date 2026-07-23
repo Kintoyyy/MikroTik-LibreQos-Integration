@@ -7,16 +7,14 @@ import time
 from device_database import DeviceDatabase
 from node_assigner import NodeAssigner, STRATEGY_CPU, ALL_STRATEGIES
 from router_scanner import RouterScanner
+from settings import SCAN_INTERVAL, ERROR_RETRY_INTERVAL
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-CONFIG_JSON          = 'config.json'
-SHAPED_DEVICES_CSV   = 'ShapedDevices.csv'
-NETWORK_JSON         = 'network.json'
-DB_FILE              = 'devices.db'
-
-SCAN_INTERVAL        = 600
-ERROR_RETRY_INTERVAL = 30
+CONFIG_JSON        = 'config.json'
+SHAPED_DEVICES_CSV = 'ShapedDevices.csv'
+NETWORK_JSON       = 'network.json'
+DB_FILE            = 'devices.db'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

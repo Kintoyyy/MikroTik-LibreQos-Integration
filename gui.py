@@ -16,6 +16,13 @@ import re
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 from wan_manager import WANManager
+from settings import (
+    MANAGED_SERVICES as _SETTINGS_MANAGED_SERVICES,
+    EXPECTED_MT_GROUP as _SETTINGS_MT_GROUP,
+    EXPECTED_MT_POLICY as _SETTINGS_MT_POLICY,
+    EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
+    EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
+)
 
 try:
     import psutil
@@ -35,8 +42,10 @@ app = Flask(__name__)
 # Path resolution: prefer /opt/libreqos/src, fall back to script directory
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.resolve()
-OPT_DIR = Path("/opt/libreqos/src")
-NETPLAN_DIR = Path("/etc/netplan")
+# OPT_DIR = Path("/opt/libreqos/src")
+OPT_DIR = Path("./")  # Allow config files without src/ in path
+# NETPLAN_DIR = Path("/etc/netplan")
+NETPLAN_DIR = Path("./")  # For testing without root; adjust as needed
 
 def find_file(name):
     """Return path to file, preferring the installed location."""
@@ -46,9 +55,10 @@ def find_file(name):
         return opt_path
     return local_path
 
-CONFIG_PATH = OPT_DIR / "config.json"
-DB_PATH     = find_file("devices.db")
-AUTH_PATH   = find_file("gui_auth.json")
+CONFIG_PATH   = OPT_DIR / "config.json"
+SETTINGS_PATH = OPT_DIR / "settings.json"
+DB_PATH       = find_file("devices.db")
+AUTH_PATH     = find_file("gui_auth.json")
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -91,7 +101,8 @@ def require_auth(f):
         return f(*args, **kwargs)
     return wrapper
 
-LQOS_CONF_PATH = Path("/etc/lqos.conf")
+# LQOS_CONF_PATH = Path("/etc/lqos.conf")
+LQOS_CONF_PATH = Path("./")  # For testing without root; adjust as needed
 
 def _find_lqos_conf():
     return LQOS_CONF_PATH
@@ -101,6 +112,7 @@ YAML_FILES = {
     "lqos":          LQOS_CONF_PATH,
     "network_json":  OPT_DIR / "network.json",
     "config_json":   OPT_DIR / "config.json",
+    "settings_json": OPT_DIR / "settings.json",
     "shaped_devices": OPT_DIR / "ShapedDevices.csv",
     "updatecsv":     OPT_DIR / "updatecsv.py",
     "rate_resolver": OPT_DIR / "rate_resolver.py",
@@ -108,18 +120,12 @@ YAML_FILES = {
     "network":       NETPLAN_DIR / "50-cloud-init.yaml",
 }
 
-EXPECTED_MT_GROUP = "API_READ"
-EXPECTED_MT_POLICY = (
-    "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,"
-    "!winbox,!password,!web,!sniff,!romon"
-)
+EXPECTED_MT_GROUP    = _SETTINGS_MT_GROUP
+EXPECTED_MT_POLICY   = _SETTINGS_MT_POLICY
 EXPECTED_MT_POLICY_SET = {p.strip() for p in EXPECTED_MT_POLICY.split(",") if p.strip()}
 
-EXPECTED_CORE_GROUP = "API_WRITE"
-EXPECTED_CORE_POLICY = (
-    "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,"
-    "!winbox,!password,!web,!sniff,!romon"
-)
+EXPECTED_CORE_GROUP  = _SETTINGS_CORE_GROUP
+EXPECTED_CORE_POLICY = _SETTINGS_CORE_POLICY
 EXPECTED_CORE_POLICY_SET = {p.strip() for p in EXPECTED_CORE_POLICY.split(",") if p.strip()}
 
 SYSTEMCTL  = "/bin/systemctl"
@@ -502,6 +508,29 @@ def save_config():
         # validate JSON
         json.dumps(content)
         CONFIG_PATH.write_text(json.dumps(content, indent=4))
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/settings", methods=["GET"])
+@require_auth
+def get_settings():
+    try:
+        content = json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}
+        return jsonify({"ok": True, "content": content})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/settings", methods=["POST"])
+@require_auth
+def save_settings():
+    try:
+        data = request.get_json(force=True)
+        content = data.get("content")
+        json.dumps(content)  # validate serialisable
+        SETTINGS_PATH.write_text(json.dumps(content, indent=4))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -1124,7 +1153,7 @@ def restart_ubuntu_host():
 # ---------------------------------------------------------------------------
 # Multi-service management
 # ---------------------------------------------------------------------------
-MANAGED_SERVICES = ["lqosd", "lqos_scheduler", "updatecsv", "wan_service", "gui"]
+MANAGED_SERVICES = _SETTINGS_MANAGED_SERVICES
 
 LQUSERS_PATHS = [
     Path("/etc/lqos/lqusers.toml"),

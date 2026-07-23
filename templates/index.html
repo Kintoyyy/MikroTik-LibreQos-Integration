@@ -440,6 +440,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <button class="tab-btn"        onclick="switchTab('topology')"> <i class="bi bi-diagram-3"></i>Topology</button>
   <button class="tab-btn"        onclick="switchTab('devices')">  <i class="bi bi-table"></i>Devices</button>
   <button class="tab-btn"        onclick="switchTab('lqos')">     <i class="bi bi-gear-wide-connected"></i>Config</button>
+  <button class="tab-btn"        onclick="switchTab('appsettings')"><i class="bi bi-gear-fill"></i>App Settings</button>
   <button class="tab-btn"        onclick="switchTab('credits')">  <i class="bi bi-heart-fill"></i>Credits</button>
 </div>
 
@@ -1431,255 +1432,176 @@ code { font-size: .8rem; color: #94a3b8; }
      LibreQos CONFIG
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-lqos">
-
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
-    <div>
-      <h2 style="font-size:1.1rem;font-weight:700;margin:0">lqos Config</h2>
-      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0" id="lqos-path-label">lqos.conf</p>
-    </div>
-    <div style="display:flex;gap:.6rem">
-      <button class="btn-ghost" onclick="loadLqosConf()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
-      <button class="btn-primary" onclick="saveLqosConf()"><i class="bi bi-floppy-fill"></i> Save Changes</button>
-    </div>
-  </div>
-
-  <!-- Apply note -->
-  <div style="display:flex;align-items:flex-start;gap:.6rem;background:#0d1a0d;border:1px solid #22c55e33;border-radius:10px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.8rem;color:#86efac;line-height:1.6">
-    <i class="bi bi-info-circle-fill" style="margin-top:.1rem;flex-shrink:0"></i>
-    <span>
-      Changes to <code style="background:#0a1a0a;padding:.1em .35em;border-radius:4px;color:#4ade80">qoo_profiles.json</code> are picked up automatically.<br>
-      If you change <code style="background:#0a1a0a;padding:.1em .35em;border-radius:4px;color:#4ade80">/etc/lqos.conf</code>, you must restart <strong>lqosd</strong> for changes to take effect.
-    </span>
-  </div>
-
-  <!-- General -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-info-circle-fill"></i> General</div>
-    <div class="card-bd">
-      <div class="form-row form-row-2" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Node Name</label>
-          <input class="form-input" id="lq-node_name" type="text" placeholder="e.g. my-router">
-        </div>
-        <div>
-          <label class="form-label">LibreQoS Directory</label>
-          <input class="form-input" id="lq-lqos_directory" type="text" placeholder="/opt/libreqos/src">
-        </div>
-      </div>
-      <div class="form-row form-row-3">
-        <div>
-          <label class="form-label">Packet Capture Time (s)</label>
-          <input class="form-input" id="lq-packet_capture_time" type="number" min="1">
-        </div>
-        <div>
-          <label class="form-label">Queue Check Period (ms)</label>
-          <input class="form-input" id="lq-queue_check_period_ms" type="number" min="100">
-        </div>
-        <div style="display:flex;align-items:flex-end;padding-bottom:.1rem">
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="lq-disable_webserver"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.83rem">Disable Webserver</span>
-          </label>
-        </div>
+  <div class="card">
+    <div class="card-hd">
+      <span><i class="bi bi-gear-wide-connected"></i> lqos.conf <span style="font-size:.72rem;color:var(--muted);font-weight:400" id="lqos-path-label"></span></span>
+      <div style="display:flex;gap:.6rem">
+        <button class="btn-ghost" onclick="loadLqosConf()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
+        <button class="btn-primary" onclick="saveLqosConf()"><i class="bi bi-floppy-fill"></i> Save &amp; Restart lqosd</button>
       </div>
     </div>
+    <div class="card-bd" style="padding:.5rem"><textarea id="lqos-editor"></textarea></div>
   </div>
-
-  <!-- Bridge -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-ethernet"></i> Bridge</div>
-    <div class="card-bd">
-      <div class="form-row form-row-3">
-        <div>
-          <label class="form-label">To Internet Interface</label>
-          <input class="form-input" id="lq-bridge-to_internet" type="text" placeholder="e.g. eth0">
-        </div>
-        <div>
-          <label class="form-label">To Network Interface</label>
-          <input class="form-input" id="lq-bridge-to_network" type="text" placeholder="e.g. eth1">
-        </div>
-        <div style="display:flex;align-items:flex-end;padding-bottom:.1rem">
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="lq-bridge-use_xdp_bridge"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.83rem">Use XDP Bridge</span>
-          </label>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Queues -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-bar-chart-fill"></i> Queues</div>
-    <div class="card-bd">
-      <div class="form-row form-row-2" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Uplink Bandwidth (Mbps)</label>
-          <input class="form-input" id="lq-queues-uplink_bandwidth_mbps" type="number" min="1">
-        </div>
-        <div>
-          <label class="form-label">Downlink Bandwidth (Mbps)</label>
-          <input class="form-input" id="lq-queues-downlink_bandwidth_mbps" type="number" min="1">
-        </div>
-      </div>
-      <div class="form-row form-row-2" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Generated PN Download (Mbps)</label>
-          <input class="form-input" id="lq-queues-generated_pn_download_mbps" type="number" min="1">
-        </div>
-        <div>
-          <label class="form-label">Generated PN Upload (Mbps)</label>
-          <input class="form-input" id="lq-queues-generated_pn_upload_mbps" type="number" min="1">
-        </div>
-      </div>
-      <div class="form-row form-row-2" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Default SQM</label>
-          <input class="form-input" id="lq-queues-default_sqm" type="text" placeholder="e.g. cake diffserv4">
-        </div>
-      </div>
-      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-queues-monitor_only"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Monitor Only</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-queues-dry_run"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Dry Run</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-queues-use_binpacking"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Use Bin Packing</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-queues-sudo"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Use Sudo</span>
-        </label>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tuning -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-sliders2"></i> Tuning</div>
-    <div class="card-bd">
-      <div class="form-row form-row-4" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">netdev_budget_usecs</label>
-          <input class="form-input" id="lq-tuning-netdev_budget_usecs" type="number" min="0">
-        </div>
-        <div>
-          <label class="form-label">netdev_budget_packets</label>
-          <input class="form-input" id="lq-tuning-netdev_budget_packets" type="number" min="0">
-        </div>
-        <div>
-          <label class="form-label">rx_usecs</label>
-          <input class="form-input" id="lq-tuning-rx_usecs" type="number" min="0">
-        </div>
-        <div>
-          <label class="form-label">tx_usecs</label>
-          <input class="form-input" id="lq-tuning-tx_usecs" type="number" min="0">
-        </div>
-      </div>
-      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-tuning-stop_irq_balance"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Stop IRQ Balance</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-tuning-disable_rxvlan"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Disable RX VLAN</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-tuning-disable_txvlan"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Disable TX VLAN</span>
-        </label>
-      </div>
-    </div>
-  </div>
-
-  <!-- IP Ranges -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-diagram-2-fill"></i> IP Ranges</div>
-    <div class="card-bd">
-      <div class="form-row form-row-2" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Ignore Subnets <span style="color:var(--muted);font-weight:400">(one per line)</span></label>
-          <textarea class="form-input" id="lq-ip_ranges-ignore_subnets" rows="4" style="resize:vertical;font-family:monospace;font-size:.82rem"></textarea>
-        </div>
-        <div>
-          <label class="form-label">Allow Subnets <span style="color:var(--muted);font-weight:400">(one per line)</span></label>
-          <textarea class="form-input" id="lq-ip_ranges-allow_subnets" rows="4" style="resize:vertical;font-family:monospace;font-size:.82rem"></textarea>
-        </div>
-      </div>
-      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-ip_ranges-unknown_ip_honors_ignore"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Unknown IP Honors Ignore</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-ip_ranges-unknown_ip_honors_allow"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Unknown IP Honors Allow</span>
-        </label>
-      </div>
-    </div>
-  </div>
-
-  <!-- Long Term Stats -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-graph-up-arrow"></i> Long Term Stats</div>
-    <div class="card-bd">
-      <div class="form-row form-row-3" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Collation Period (s)</label>
-          <input class="form-input" id="lq-long_term_stats-collation_period_seconds" type="number" min="1">
-        </div>
-        <div>
-          <label class="form-label">UISP Reporting Interval (s)</label>
-          <input class="form-input" id="lq-long_term_stats-uisp_reporting_interval_seconds" type="number" min="1">
-        </div>
-        <div style="display:flex;align-items:flex-end;padding-bottom:.1rem">
-          <label class="toggle-wrap">
-            <div class="toggle"><input type="checkbox" id="lq-long_term_stats-gather_stats"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-            <span style="font-size:.83rem">Gather Stats</span>
-          </label>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Integration Common -->
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-plug-fill"></i> Integration Common</div>
-    <div class="card-bd">
-      <div class="form-row form-row-2" style="margin-bottom:.75rem">
-        <div>
-          <label class="form-label">Queue Refresh Interval (mins)</label>
-          <input class="form-input" id="lq-integration_common-queue_refresh_interval_mins" type="number" min="1">
-        </div>
-      </div>
-      <div style="display:flex;gap:1.5rem;flex-wrap:wrap">
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-integration_common-circuit_name_as_address"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Circuit Name as Address</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-integration_common-always_overwrite_network_json"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Always Overwrite network.json</span>
-        </label>
-        <label class="toggle-wrap">
-          <div class="toggle"><input type="checkbox" id="lq-integration_common-use_mikrotik_ipv6"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
-          <span style="font-size:.83rem">Use MikroTik IPv6</span>
-        </label>
-      </div>
-    </div>
-  </div>
-
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
      CREDITS
 ════════════════════════════════════════════════════════════════════════ -->
+<!-- ══════════════════════════════════════════════════════════════════════
+     APP SETTINGS
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-appsettings">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <h2 style="margin:0;font-size:1.1rem;font-weight:700"><i class="bi bi-gear-fill" style="color:var(--blue)"></i> App Settings</h2>
+      <p style="margin:.25rem 0 0;font-size:.8rem;color:var(--muted)">Tuning parameters for the integration services. Most changes require a service restart to take effect.</p>
+    </div>
+    <div style="display:flex;gap:.6rem">
+      <button class="btn-ghost" onclick="loadAppSettings()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
+      <button class="btn-primary" onclick="saveAppSettings()"><i class="bi bi-save"></i> Save Settings</button>
+    </div>
+  </div>
+
+  <!-- Scanner -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-clock-history"></i> Scanner</span></div>
+    <div class="card-bd">
+      <div class="form-row form-row-2">
+        <div>
+          <label class="form-label">Scan Interval</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-scan-interval" min="30">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">How often to poll MikroTik routers for device changes</div>
+        </div>
+        <div>
+          <label class="form-label">Error Retry Interval</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-error-retry" min="5">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Wait time before retrying after a scan error</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- WAN Service -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-diagram-3"></i> WAN Service</span></div>
+    <div class="card-bd">
+      <div class="form-row form-row-3">
+        <div>
+          <label class="form-label">Sync Interval</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-wan-interval" min="30">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">WAN address-list sync cadence</div>
+        </div>
+        <div>
+          <label class="form-label">Error Retry Interval</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-wan-error-retry" min="5">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Wait time before retrying after a WAN sync error</div>
+        </div>
+        <div>
+          <label class="form-label">Rebalance Threshold</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-rebalance-threshold" min="1.0" max="3.0" step="0.05">
+            <span class="input-suffix">×</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Trigger full rebalance when a WAN exceeds this fraction of its limit (e.g. 1.10 = 110%)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rate Limits -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-speedometer"></i> Rate Limits</span></div>
+    <div class="card-bd">
+      <div class="form-row form-row-4" style="margin-bottom:1rem">
+        <div>
+          <label class="form-label">Min Download Rate</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-min-dl-pct" min="1" max="100" step="1">
+            <span class="input-suffix">%</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Guaranteed min download as % of max</div>
+        </div>
+        <div>
+          <label class="form-label">Min Upload Rate</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-min-ul-pct" min="1" max="100" step="1">
+            <span class="input-suffix">%</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Guaranteed min upload as % of max</div>
+        </div>
+        <div>
+          <label class="form-label">Max Download Rate</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-max-dl-pct" min="50" max="200" step="1">
+            <span class="input-suffix">%</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Download ceiling applied to parsed rate</div>
+        </div>
+        <div>
+          <label class="form-label">Max Upload Rate</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-max-ul-pct" min="50" max="200" step="1">
+            <span class="input-suffix">%</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Upload ceiling applied to parsed rate</div>
+        </div>
+      </div>
+      <div class="form-row form-row-3">
+        <div>
+          <label class="form-label">Default Download Bandwidth</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-default-dl-bw" min="1">
+            <span class="input-suffix">Mbps</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Download fallback when no rate can be parsed</div>
+        </div>
+        <div>
+          <label class="form-label">Default Upload Bandwidth</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-default-ul-bw" min="1">
+            <span class="input-suffix">Mbps</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Upload fallback when no rate can be parsed</div>
+        </div>
+        <div>
+          <label class="form-label">ID Length</label>
+          <input class="form-input" type="number" id="set-id-length" min="4" max="32">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Characters in generated circuit/device IDs</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GUI / Permissions -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-shield-check"></i> GUI &amp; Permissions</span></div>
+    <div class="card-bd">
+      <div class="form-row form-row-2">
+        <div>
+          <label class="form-label">Expected BRAS API Group</label>
+          <input class="form-input" id="set-mt-group">
+        </div>
+        <div>
+          <label class="form-label">Expected Core API Group</label>
+          <input class="form-input" id="set-core-group">
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="page" id="page-credits">
   <div style="max-width:640px;margin:0 auto">
 
@@ -1803,7 +1725,7 @@ code { font-size: .8rem; color: #94a3b8; }
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const names = ['dashboard','config','services','troubleshoot','network','mgmt','yaml','topology','devices','lqos','credits'];
+    const names = ['dashboard','config','services','troubleshoot','network','mgmt','yaml','topology','devices','lqos','appsettings','credits'];
     b.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -1815,6 +1737,7 @@ function switchTab(name) {
   if (name === 'troubleshoot') loadTroubleshooting();
   if (name === 'topology')     { loadTopology(); loadWanStats(); }
   if (name === 'lqos')         loadLqosConf();
+  if (name === 'appsettings')  loadAppSettings();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -4271,139 +4194,24 @@ mgmtCM.setValue('# Select DHCP or Static IP above');
 });
 
 // ── LQ-OS Config ─────────────────────────────────────────────────────────
-let _lqosData = {};
-
-function _lqGet(section, key) {
-  if (section) return (_lqosData[section] || {})[key];
-  return _lqosData[key];
-}
-
-function _lqSetField(id, section, key) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const val = _lqGet(section, key);
-  if (val === undefined || val === null) return;
-  if (el.type === 'checkbox') {
-    el.checked = !!val;
-  } else if (Array.isArray(val)) {
-    el.value = val.join('\n');
-  } else {
-    el.value = val;
-  }
-}
+const lqosCM = CodeMirror.fromTextArea(document.getElementById('lqos-editor'), {
+  mode: 'text/plain', theme: 'dracula', lineNumbers: true, indentUnit: 2,
+});
 
 async function loadLqosConf() {
-  const r = await fetch('/api/lqos');
+  const r = await fetch('/api/yaml/lqos');
   const d = await r.json();
-  if (!d.ok) { toast(d.error, false); return; }
-  if (!d.exists) { toast('lqos.conf not found at ' + d.path, false); return; }
-  _lqosData = d.data || {};
-  document.getElementById('lqos-path-label').textContent = d.path;
-
-  // General (top-level)
-  _lqSetField('lq-node_name',           null,               'node_name');
-  _lqSetField('lq-lqos_directory',      null,               'lqos_directory');
-  _lqSetField('lq-packet_capture_time', null,               'packet_capture_time');
-  _lqSetField('lq-queue_check_period_ms',null,              'queue_check_period_ms');
-  _lqSetField('lq-disable_webserver',   null,               'disable_webserver');
-  // Bridge
-  _lqSetField('lq-bridge-to_internet',  'bridge',           'to_internet');
-  _lqSetField('lq-bridge-to_network',   'bridge',           'to_network');
-  _lqSetField('lq-bridge-use_xdp_bridge','bridge',          'use_xdp_bridge');
-  // Queues
-  _lqSetField('lq-queues-uplink_bandwidth_mbps',   'queues','uplink_bandwidth_mbps');
-  _lqSetField('lq-queues-downlink_bandwidth_mbps', 'queues','downlink_bandwidth_mbps');
-  _lqSetField('lq-queues-generated_pn_download_mbps','queues','generated_pn_download_mbps');
-  _lqSetField('lq-queues-generated_pn_upload_mbps','queues','generated_pn_upload_mbps');
-  _lqSetField('lq-queues-default_sqm',   'queues',          'default_sqm');
-  _lqSetField('lq-queues-monitor_only',  'queues',          'monitor_only');
-  _lqSetField('lq-queues-dry_run',       'queues',          'dry_run');
-  _lqSetField('lq-queues-use_binpacking','queues',          'use_binpacking');
-  _lqSetField('lq-queues-sudo',          'queues',          'sudo');
-  // Tuning
-  _lqSetField('lq-tuning-netdev_budget_usecs',   'tuning',  'netdev_budget_usecs');
-  _lqSetField('lq-tuning-netdev_budget_packets', 'tuning',  'netdev_budget_packets');
-  _lqSetField('lq-tuning-rx_usecs',      'tuning',          'rx_usecs');
-  _lqSetField('lq-tuning-tx_usecs',      'tuning',          'tx_usecs');
-  _lqSetField('lq-tuning-stop_irq_balance','tuning',        'stop_irq_balance');
-  _lqSetField('lq-tuning-disable_rxvlan','tuning',          'disable_rxvlan');
-  _lqSetField('lq-tuning-disable_txvlan','tuning',          'disable_txvlan');
-  // IP Ranges
-  _lqSetField('lq-ip_ranges-ignore_subnets', 'ip_ranges',  'ignore_subnets');
-  _lqSetField('lq-ip_ranges-allow_subnets',  'ip_ranges',  'allow_subnets');
-  _lqSetField('lq-ip_ranges-unknown_ip_honors_ignore','ip_ranges','unknown_ip_honors_ignore');
-  _lqSetField('lq-ip_ranges-unknown_ip_honors_allow', 'ip_ranges','unknown_ip_honors_allow');
-  // Long Term Stats
-  _lqSetField('lq-long_term_stats-gather_stats',  'long_term_stats','gather_stats');
-  _lqSetField('lq-long_term_stats-collation_period_seconds','long_term_stats','collation_period_seconds');
-  _lqSetField('lq-long_term_stats-uisp_reporting_interval_seconds','long_term_stats','uisp_reporting_interval_seconds');
-  // Integration Common
-  _lqSetField('lq-integration_common-circuit_name_as_address','integration_common','circuit_name_as_address');
-  _lqSetField('lq-integration_common-always_overwrite_network_json','integration_common','always_overwrite_network_json');
-  _lqSetField('lq-integration_common-queue_refresh_interval_mins','integration_common','queue_refresh_interval_mins');
-  _lqSetField('lq-integration_common-use_mikrotik_ipv6','integration_common','use_mikrotik_ipv6');
-}
-
-function _lqReadField(id, type) {
-  const el = document.getElementById(id);
-  if (!el) return undefined;
-  if (type === 'bool')   return el.checked;
-  if (type === 'int')    return parseInt(el.value) || 0;
-  if (type === 'float')  return parseFloat(el.value) || 0;
-  if (type === 'array')  return el.value.split('\n').map(s=>s.trim()).filter(Boolean);
-  return el.value;
+  if (!d.ok) { toast(d.error || 'Failed to load lqos.conf', false); return; }
+  lqosCM.setValue(d.content || '');
+  const lbl = document.getElementById('lqos-path-label');
+  if (lbl) lbl.textContent = d.path || '';
 }
 
 async function saveLqosConf() {
-  const updates = {
-    // General (top-level: section="")
-    'node_name':              _lqReadField('lq-node_name', 'str'),
-    'lqos_directory':         _lqReadField('lq-lqos_directory', 'str'),
-    'packet_capture_time':    _lqReadField('lq-packet_capture_time', 'int'),
-    'queue_check_period_ms':  _lqReadField('lq-queue_check_period_ms', 'int'),
-    'disable_webserver':      _lqReadField('lq-disable_webserver', 'bool'),
-    // Bridge
-    'bridge|to_internet':     _lqReadField('lq-bridge-to_internet', 'str'),
-    'bridge|to_network':      _lqReadField('lq-bridge-to_network', 'str'),
-    'bridge|use_xdp_bridge':  _lqReadField('lq-bridge-use_xdp_bridge', 'bool'),
-    // Queues
-    'queues|uplink_bandwidth_mbps':        _lqReadField('lq-queues-uplink_bandwidth_mbps','int'),
-    'queues|downlink_bandwidth_mbps':      _lqReadField('lq-queues-downlink_bandwidth_mbps','int'),
-    'queues|generated_pn_download_mbps':   _lqReadField('lq-queues-generated_pn_download_mbps','int'),
-    'queues|generated_pn_upload_mbps':     _lqReadField('lq-queues-generated_pn_upload_mbps','int'),
-    'queues|default_sqm':      _lqReadField('lq-queues-default_sqm', 'str'),
-    'queues|monitor_only':     _lqReadField('lq-queues-monitor_only', 'bool'),
-    'queues|dry_run':          _lqReadField('lq-queues-dry_run', 'bool'),
-    'queues|use_binpacking':   _lqReadField('lq-queues-use_binpacking', 'bool'),
-    'queues|sudo':             _lqReadField('lq-queues-sudo', 'bool'),
-    // Tuning
-    'tuning|netdev_budget_usecs':   _lqReadField('lq-tuning-netdev_budget_usecs','int'),
-    'tuning|netdev_budget_packets': _lqReadField('lq-tuning-netdev_budget_packets','int'),
-    'tuning|rx_usecs':         _lqReadField('lq-tuning-rx_usecs','int'),
-    'tuning|tx_usecs':         _lqReadField('lq-tuning-tx_usecs','int'),
-    'tuning|stop_irq_balance': _lqReadField('lq-tuning-stop_irq_balance','bool'),
-    'tuning|disable_rxvlan':   _lqReadField('lq-tuning-disable_rxvlan','bool'),
-    'tuning|disable_txvlan':   _lqReadField('lq-tuning-disable_txvlan','bool'),
-    // IP Ranges
-    'ip_ranges|ignore_subnets': _lqReadField('lq-ip_ranges-ignore_subnets','array'),
-    'ip_ranges|allow_subnets':  _lqReadField('lq-ip_ranges-allow_subnets','array'),
-    'ip_ranges|unknown_ip_honors_ignore': _lqReadField('lq-ip_ranges-unknown_ip_honors_ignore','bool'),
-    'ip_ranges|unknown_ip_honors_allow':  _lqReadField('lq-ip_ranges-unknown_ip_honors_allow','bool'),
-    // Long Term Stats
-    'long_term_stats|gather_stats':                    _lqReadField('lq-long_term_stats-gather_stats','bool'),
-    'long_term_stats|collation_period_seconds':        _lqReadField('lq-long_term_stats-collation_period_seconds','int'),
-    'long_term_stats|uisp_reporting_interval_seconds': _lqReadField('lq-long_term_stats-uisp_reporting_interval_seconds','int'),
-    // Integration Common
-    'integration_common|circuit_name_as_address':      _lqReadField('lq-integration_common-circuit_name_as_address','bool'),
-    'integration_common|always_overwrite_network_json':_lqReadField('lq-integration_common-always_overwrite_network_json','bool'),
-    'integration_common|queue_refresh_interval_mins':  _lqReadField('lq-integration_common-queue_refresh_interval_mins','int'),
-    'integration_common|use_mikrotik_ipv6':            _lqReadField('lq-integration_common-use_mikrotik_ipv6','bool'),
-  };
-
-  const r = await fetch('/api/lqos', {
+  const r = await fetch('/api/yaml/lqos', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({updates})
+    body: JSON.stringify({content: lqosCM.getValue()}),
   });
   const d = await r.json();
   if (!d.ok) { toast(d.error || 'Save failed', false); return; }
@@ -4411,6 +4219,74 @@ async function saveLqosConf() {
   const rs = await fetch('/api/services/lqosd/restart', { method: 'POST' });
   const rd = await rs.json();
   toast(rd.ok ? 'lqosd restarted' : ('lqosd restart failed: ' + rd.error), rd.ok);
+}
+
+// ── App Settings ──────────────────────────────────────────────────────────
+async function loadAppSettings() {
+  const r = await fetch('/api/settings');
+  const d = await r.json();
+  if (!d.ok) { toast(d.error || 'Failed to load settings', false); return; }
+  const s = d.content || {};
+
+  const g = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+
+  g('set-scan-interval',      s.scanner?.scan_interval           ?? 600);
+  g('set-error-retry',        s.scanner?.error_retry_interval    ?? 30);
+  g('set-wan-interval',       s.wan_service?.default_interval    ?? 300);
+  g('set-wan-error-retry',    s.wan_service?.error_retry_interval ?? 30);
+  g('set-rebalance-threshold',s.wan_service?.rebalance_threshold ?? 1.10);
+  g('set-min-dl-pct',         Math.round((s.rates?.min_dl_rate_percentage ?? 0.5) * 100));
+  g('set-min-ul-pct',         Math.round((s.rates?.min_ul_rate_percentage ?? 0.5) * 100));
+  g('set-max-dl-pct',         Math.round((s.rates?.max_dl_rate_percentage ?? 1.0) * 100));
+  g('set-max-ul-pct',         Math.round((s.rates?.max_ul_rate_percentage ?? 1.0) * 100));
+  g('set-default-dl-bw',      s.rates?.default_dl_bandwidth ?? 100);
+  g('set-default-ul-bw',      s.rates?.default_ul_bandwidth ?? 100);
+  g('set-id-length',          s.rates?.id_length            ?? 8);
+  g('set-mt-group',           s.gui?.expected_mt_group   ?? 'API_READ');
+  g('set-core-group',         s.gui?.expected_core_group ?? 'API_WRITE');
+}
+
+async function saveAppSettings() {
+  const iv   = id => document.getElementById(id)?.value ?? '';
+  const int_ = id => parseInt(iv(id))   || 0;
+  const flt  = id => parseFloat(iv(id)) || 0;
+
+  const content = {
+    scanner: {
+      scan_interval:        int_('set-scan-interval') || 600,
+      error_retry_interval: int_('set-error-retry')   || 30,
+    },
+    wan_service: {
+      default_interval:     int_('set-wan-interval')       || 300,
+      error_retry_interval: int_('set-wan-error-retry')    || 30,
+      rebalance_threshold:  flt('set-rebalance-threshold') || 1.10,
+    },
+    rates: {
+      min_dl_rate_percentage: (int_('set-min-dl-pct') || 50) / 100,
+      min_ul_rate_percentage: (int_('set-min-ul-pct') || 50) / 100,
+      max_dl_rate_percentage: (int_('set-max-dl-pct') || 100) / 100,
+      max_ul_rate_percentage: (int_('set-max-ul-pct') || 100) / 100,
+      default_dl_bandwidth:   int_('set-default-dl-bw') || 100,
+      default_ul_bandwidth:   int_('set-default-ul-bw') || 100,
+      id_length:              int_('set-id-length')      || 8,
+    },
+    gui: {
+      expected_mt_group:   iv('set-mt-group').trim(),
+      expected_core_group: iv('set-core-group').trim(),
+    },
+  };
+
+  const r = await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({content}),
+  });
+  const d = await r.json();
+  if (d.ok) {
+    toast('Settings saved — restart services for changes to take effect');
+  } else {
+    toast(d.error || 'Save failed', false);
+  }
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -4494,6 +4370,7 @@ function initApp() {
   loadYaml('libreqos');
   loadTroubleshooting();
   loadDevices();
+  loadAppSettings();
   loadMikrotikResource();
   loadWanStats();
   setInterval(loadDevices, 30000);
