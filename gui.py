@@ -725,89 +725,20 @@ def wan_stats():
 
 def _sync_core_wan_address_lists(con, cfg: dict) -> dict:
     """
-    Sync core WAN address-lists by delta only (add/remove differences).
-    Returns a summary with per-core changes and errors.
+    Sync core WAN address-lists via WANManager — the single source of truth
+    for each router's address-list state.
+
+    This used to be a second, independent implementation (raw per-IP,
+    non-collapsed, no persistent cache) running alongside WANManager's own
+    subnet-collapsed sync in wan_service.py. The two disagreed on address
+    representation (e.g. "10.0.0.5" vs "10.0.0.5/32") and each treated the
+    other's entries as untracked drift, so stale/duplicate entries could
+    build up on the router without either side ever reliably cleaning them
+    up. Delegating here keeps tracking (and cleanup) consistent regardless
+    of whether a sync was triggered by the daemon or a manual GUI action.
     """
     cores = cfg.get("cores", []) or []
-    summary = {
-        "ok": True,
-        "cores": [],
-        "total_added": 0,
-        "total_removed": 0,
-        "errors": [],
-    }
-
-    for core in cores:
-        core_name = core.get("name", "")
-        core_result = {"core": core_name, "added": 0, "removed": 0, "error": ""}
-        wans = core.get("wans", []) or []
-        if not wans:
-            summary["cores"].append(core_result)
-            continue
-
-        pool = None
-        try:
-            pool = _connect_router_api(core)
-            api = pool.get_api()
-            resource = api.get_resource("/ip/firewall/address-list")
-
-            target = set()
-            for i, wan in enumerate(wans, start=1):
-                wan_name = wan.get("address_list", f"WAN{i}")
-                rows = con.execute(
-                    "SELECT ipv4 FROM devices "
-                    "WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL AND ipv4 != ''",
-                    (core_name, wan_name),
-                ).fetchall()
-                for (ip,) in rows:
-                    target.add((wan_name, ip))
-
-            current = {}
-            for i, wan in enumerate(wans, start=1):
-                wan_name = wan.get("address_list", f"WAN{i}")
-                entries = resource.get(list=wan_name)
-                for e in entries:
-                    ip = e.get("address")
-                    eid = e.get(".id")
-                    if ip and eid:
-                        current[(wan_name, ip)] = eid
-
-            to_add = target - set(current.keys())
-            to_remove = set(current.keys()) - target
-
-            for wan_name, ip in to_remove:
-                try:
-                    resource.remove(id=current[(wan_name, ip)])
-                    core_result["removed"] += 1
-                except Exception:
-                    # Keep going; one bad row should not block the rest.
-                    pass
-
-            for wan_name, ip in to_add:
-                try:
-                    resource.add(list=wan_name, address=ip, comment="libreqos-managed")
-                    core_result["added"] += 1
-                except Exception as ex:
-                    if "already have such entry" not in str(ex):
-                        raise
-
-            summary["total_added"] += core_result["added"]
-            summary["total_removed"] += core_result["removed"]
-
-        except Exception as ex:
-            core_result["error"] = str(ex)
-            summary["ok"] = False
-            summary["errors"].append(f"{core_name}: {ex}")
-        finally:
-            if pool is not None:
-                try:
-                    pool.disconnect()
-                except Exception:
-                    pass
-
-        summary["cores"].append(core_result)
-
-    return summary
+    return _wan_manager.sync_wan_address_lists(con, cores)
 
 
 @app.route("/api/wan/rebalance", methods=["POST"])
@@ -901,44 +832,13 @@ def wan_purge():
     cores = cfg.get("cores", []) or []
     wan_cfg = cfg.get("wan_assignment", {})
 
-    purge_results = []
-    purge_errors = []
-
     # ── Step 1: delete all libreqos-managed entries from each core ──────────
-    for core in cores:
-        core_name = core.get("name", "")
-        wans = core.get("wans", []) or []
-        removed = 0
-        pool = None
-        try:
-            pool = _connect_router_api(core)
-            api = pool.get_api()
-            resource = api.get_resource("/ip/firewall/address-list")
-
-            wan_names = {wan.get("address_list", f"WAN{i}") for i, wan in enumerate(wans, start=1)}
-            for wan_name in wan_names:
-                try:
-                    entries = resource.get(list=wan_name)
-                except Exception:
-                    entries = []
-                for e in entries:
-                    if e.get("comment", "") == "libreqos-managed":
-                        try:
-                            resource.remove(id=e[".id"])
-                            removed += 1
-                        except Exception:
-                            pass
-
-            purge_results.append({"core": core_name, "removed": removed})
-        except Exception as ex:
-            purge_errors.append(f"{core_name}: {ex}")
-            purge_results.append({"core": core_name, "removed": 0, "error": str(ex)})
-        finally:
-            if pool is not None:
-                try:
-                    pool.disconnect()
-                except Exception:
-                    pass
+    # Delegated to WANManager so the purge goes through the same cache the
+    # daemon and the sync above rely on — a raw, uncached delete here would
+    # leave WANManager's in-memory cache pointing at now-deleted router IDs,
+    # which could make later syncs think nothing needs to be re-added/removed.
+    purge_results = _wan_manager.purge_wan_entries(cores)
+    purge_errors = [f"{r['core']}: {r['error']}" for r in purge_results if r.get("error")]
 
     # ── Step 2: clear WAN assignments in DB ──────────────────────────────────
     try:

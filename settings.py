@@ -12,6 +12,7 @@ _DEFAULTS = {
         "default_interval": 300,
         "error_retry_interval": 30,
         "rebalance_threshold": 1.10,
+        "full_reconcile_interval": 1800,
     },
     "rates": {
         "min_dl_rate_percentage": 0.5,
@@ -84,6 +85,7 @@ ERROR_RETRY_INTERVAL = int(_s["scanner"]["error_retry_interval"])
 WAN_DEFAULT_INTERVAL     = int(_s["wan_service"]["default_interval"])
 WAN_ERROR_RETRY_INTERVAL = int(_s["wan_service"]["error_retry_interval"])
 WAN_REBALANCE_THRESHOLD  = float(_s["wan_service"]["rebalance_threshold"])
+WAN_FULL_RECONCILE_INTERVAL = int(_s["wan_service"]["full_reconcile_interval"])
 
 # ── Database constants ────────────────────────────────────────────────────────
 TC_U16_WARN_THRESHOLD = int(_s["database"]["tc_u16_warn_threshold"])

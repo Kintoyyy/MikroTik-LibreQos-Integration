@@ -6,7 +6,8 @@
     "wan_service": {
         "default_interval": 300,
         "error_retry_interval": 30,
-        "rebalance_threshold": 1.10
+        "rebalance_threshold": 1.10,
+        "full_reconcile_interval": 1800
     },
     "rates": {
         "min_dl_rate_percentage": 0.5,
