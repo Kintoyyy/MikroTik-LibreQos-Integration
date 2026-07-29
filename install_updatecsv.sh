@@ -10,6 +10,7 @@ LIBREQOS_DIR="/opt/libreqos"
 SRC_DIR="$LIBREQOS_DIR/src"
 TEMPLATES_DIR="$SRC_DIR/templates"
 CONFIG_JSON="$SRC_DIR/config.json"
+SETTINGS_JSON="$SRC_DIR/settings.json"
 SERVICE_FILE="/etc/systemd/system/updatecsv.service"
 WAN_SERVICE_FILE="/etc/systemd/system/wan_service.service"
 GUI_SERVICE_FILE="/etc/systemd/system/gui.service"
@@ -83,7 +84,7 @@ cp "gui.py" "$SRC_DIR/gui.py"
 chmod +x "$SRC_DIR/gui.py"
 
 printf "${YELLOW}➜ Copying Python modules...${NC}\n"
-for module in rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py; do
+for module in settings.py rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py; do
     cp "$module" "$SRC_DIR/$module"
     printf "  • $module\n"
 done
@@ -99,6 +100,14 @@ if [ -f "config.json" ] && jq empty config.json >/dev/null 2>&1; then
     chmod 640 "$CONFIG_JSON"
 else
     printf "${YELLOW}➜ config.json missing or invalid — keeping existing or writing default.${NC}\n"
+fi
+
+if [ -f "settings.json" ] && jq empty settings.json >/dev/null 2>&1 && [ ! -s "$SETTINGS_JSON" ]; then
+    printf "${YELLOW}➜ Copying settings.json...${NC}\n"
+    cp "settings.json" "$SETTINGS_JSON"
+    chmod 640 "$SETTINGS_JSON"
+else
+    printf "${YELLOW}➜ settings.json missing, invalid, or already present — keeping existing.${NC}\n"
 fi
 
 if [ ! -s "$CONFIG_JSON" ]; then
