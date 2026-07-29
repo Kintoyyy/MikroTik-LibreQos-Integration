@@ -14,3 +14,5 @@ __pycache__/database.cpython-312.pyc
 devices.db-shm
 devices.db-wal
 devices.db
+.installed_version
+.update_backup_*/

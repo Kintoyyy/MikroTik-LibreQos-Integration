@@ -39,24 +39,24 @@ except ImportError:
 app = Flask(__name__)
 
 # ---------------------------------------------------------------------------
-# Path resolution: prefer /opt/libreqos/src, fall back to script directory
+# Path resolution: prefer the installed production location, fall back to
+# the script directory (so local/dev runs without root or without /opt,
+# /etc/netplan, /etc/lqos.conf present still find something to display).
 # ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).parent.resolve()
-# OPT_DIR = Path("/opt/libreqos/src")
-OPT_DIR = Path("./")  # Allow config files without src/ in path
-# NETPLAN_DIR = Path("/etc/netplan")
-NETPLAN_DIR = Path("./")  # For testing without root; adjust as needed
+SCRIPT_DIR  = Path(__file__).parent.resolve()
+OPT_DIR     = Path("/opt/libreqos/src")
+NETPLAN_DIR = Path("/etc/netplan")
 
-def find_file(name):
-    """Return path to file, preferring the installed location."""
-    opt_path = OPT_DIR / name
+def find_file(name, base=OPT_DIR):
+    """Return path to file, preferring the installed location, falling back to the script directory."""
+    opt_path = base / name
     local_path = SCRIPT_DIR / name
     if opt_path.exists():
         return opt_path
     return local_path
 
-CONFIG_PATH   = OPT_DIR / "config.json"
-SETTINGS_PATH = OPT_DIR / "settings.json"
+CONFIG_PATH   = find_file("config.json")
+SETTINGS_PATH = find_file("settings.json")
 DB_PATH       = find_file("devices.db")
 AUTH_PATH     = find_file("gui_auth.json")
 
@@ -101,23 +101,22 @@ def require_auth(f):
         return f(*args, **kwargs)
     return wrapper
 
-# LQOS_CONF_PATH = Path("/etc/lqos.conf")
-LQOS_CONF_PATH = Path("./")  # For testing without root; adjust as needed
+LQOS_CONF_PATH = find_file("lqos.conf", base=Path("/etc"))
 
 def _find_lqos_conf():
     return LQOS_CONF_PATH
 
 YAML_FILES = {
-    "libreqos":      NETPLAN_DIR / "libreqos.yaml",
+    "libreqos":      find_file("libreqos.yaml", base=NETPLAN_DIR),
     "lqos":          LQOS_CONF_PATH,
-    "network_json":  OPT_DIR / "network.json",
-    "config_json":   OPT_DIR / "config.json",
-    "settings_json": OPT_DIR / "settings.json",
-    "shaped_devices": OPT_DIR / "ShapedDevices.csv",
-    "updatecsv":     OPT_DIR / "updatecsv.py",
-    "rate_resolver": OPT_DIR / "rate_resolver.py",
-    "wan_manager":   OPT_DIR / "wan_manager.py",
-    "network":       NETPLAN_DIR / "50-cloud-init.yaml",
+    "network_json":  find_file("network.json"),
+    "config_json":   CONFIG_PATH,
+    "settings_json": SETTINGS_PATH,
+    "shaped_devices": find_file("ShapedDevices.csv"),
+    "updatecsv":     find_file("updatecsv.py"),
+    "rate_resolver": find_file("rate_resolver.py"),
+    "wan_manager":   find_file("wan_manager.py"),
+    "network":       find_file("50-cloud-init.yaml", base=NETPLAN_DIR),
 }
 
 EXPECTED_MT_GROUP    = _SETTINGS_MT_GROUP
@@ -1051,6 +1050,143 @@ def restart_ubuntu_host():
 
 
 # ---------------------------------------------------------------------------
+# App update (pull from GitHub, reinstall in place)
+# ---------------------------------------------------------------------------
+GITHUB_REPO_URL = "https://github.com/Kintoyyy/MikroTik-LibreQos-Integration"
+
+# Application code kept in sync with GitHub by "Update App". Deliberately
+# excludes anything holding live state or credentials — config.json,
+# settings.json, gui_auth.json, devices.db, ShapedDevices.csv, network.json,
+# lqos.conf, and the systemd unit files are never touched, so an update
+# can't silently roll back routers, WAN assignments, or the login password.
+UPDATE_CODE_FILES = [
+    "gui.py",
+    "updatecsv.py",
+    "wan_service.py",
+    "rate_resolver.py",
+    "device_database.py",
+    "node_assigner.py",
+    "router_scanner.py",
+    "wan_manager.py",
+    "settings.py",
+]
+UPDATE_SERVICES = ["updatecsv.service", "wan_service.service"]  # gui.service restarts itself, separately, last
+
+
+def _installed_version_path():
+    return SCRIPT_DIR / ".installed_version"
+
+
+def _current_version():
+    marker = _installed_version_path()
+    if marker.exists():
+        try:
+            return marker.read_text().strip() or "unknown"
+        except Exception:
+            pass
+    return "unknown"
+
+
+@app.route("/api/system/version")
+@require_auth
+def system_version():
+    return jsonify({"ok": True, "version": _current_version(), "repo": GITHUB_REPO_URL})
+
+
+@app.route("/api/system/update", methods=["POST"])
+@require_auth
+def update_app():
+    """
+    Pull the latest code from GitHub and reinstall it in place.
+
+    Only the files in UPDATE_CODE_FILES plus templates/ are replaced. A copy
+    of every file about to be overwritten is stashed in a timestamped backup
+    folder next to gui.py first, so a bad update can be rolled back by hand.
+    """
+    if not shutil.which("git"):
+        return jsonify({"ok": False, "error": "git is not installed on this host"}), 500
+
+    tmp_dir = tempfile.mkdtemp(prefix="libreqos-update-")
+    try:
+        clone = subprocess.run(
+            ["git", "clone", "--depth", "1", GITHUB_REPO_URL, tmp_dir],
+            capture_output=True, text=True, timeout=120,
+        )
+        if clone.returncode != 0:
+            return jsonify({"ok": False, "error": f"git clone failed: {clone.stderr.strip()}"}), 500
+
+        src_root = Path(tmp_dir)
+        if not (src_root / "gui.py").exists():
+            return jsonify({"ok": False, "error": "Downloaded repo is missing gui.py — aborting"}), 500
+
+        backup_dir = SCRIPT_DIR / f".update_backup_{int(time.time())}"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        updated = []
+        for name in UPDATE_CODE_FILES:
+            src = src_root / name
+            if not src.exists():
+                continue
+            dest = SCRIPT_DIR / name
+            if dest.exists():
+                shutil.copy2(dest, backup_dir / name)
+            shutil.copy2(src, dest)
+            updated.append(name)
+
+        templates_src = src_root / "templates"
+        if templates_src.exists():
+            templates_dest = SCRIPT_DIR / "templates"
+            if templates_dest.exists():
+                shutil.copytree(templates_dest, backup_dir / "templates", dirs_exist_ok=True)
+            shutil.copytree(templates_src, templates_dest, dirs_exist_ok=True)
+            updated.append("templates/")
+
+        rev = subprocess.run(
+            ["git", "-C", tmp_dir, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        new_version = rev.stdout.strip() if rev.returncode == 0 else ""
+        if new_version:
+            _installed_version_path().write_text(new_version + "\n")
+
+        restart_errors = []
+        for svc in UPDATE_SERVICES:
+            try:
+                result = _systemctl("restart", svc, capture_output=True, text=True)
+                if result.returncode != 0:
+                    restart_errors.append(f"{svc}: {result.stderr.strip()}")
+            except Exception as ex:
+                restart_errors.append(f"{svc}: {ex}")
+
+        # gui.service restarts itself — deferred a couple seconds on a
+        # background thread so this response reaches the browser first,
+        # instead of dying mid-request the way an inline restart would.
+        def _restart_gui_later():
+            time.sleep(2)
+            try:
+                _systemctl("restart", "gui.service", capture_output=True, text=True)
+            except Exception:
+                pass
+
+        threading.Thread(target=_restart_gui_later, daemon=True).start()
+
+        return jsonify({
+            "ok": True,
+            "version": new_version or "unknown",
+            "updated_files": updated,
+            "backup": str(backup_dir),
+            "restart_errors": restart_errors,
+            "message": "Updated — GUI service is restarting now, reload in a few seconds.",
+        })
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "git operation timed out"}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
 # Multi-service management
 # ---------------------------------------------------------------------------
 MANAGED_SERVICES = _SETTINGS_MANAGED_SERVICES
@@ -1182,18 +1318,16 @@ def flush_data():
         errors.append(f"devices.db: {e}")
 
     # Clear ShapedDevices.csv (write header only)
-    shaped_path = OPT_DIR / "ShapedDevices.csv"
     try:
         header = "Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment\n"
-        shaped_path.write_text(header)
+        YAML_FILES["shaped_devices"].write_text(header)
         results["ShapedDevices.csv"] = "cleared"
     except Exception as e:
         errors.append(f"ShapedDevices.csv: {e}")
 
     # Clear network.json (write empty object)
-    network_path = OPT_DIR / "network.json"
     try:
-        network_path.write_text("{}\n")
+        YAML_FILES["network_json"].write_text("{}\n")
         results["network.json"] = "cleared"
     except Exception as e:
         errors.append(f"network.json: {e}")

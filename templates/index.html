@@ -779,6 +779,31 @@ code { font-size: .8rem; color: #94a3b8; }
     <button class="btn-ghost" onclick="loadTroubleshooting()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
   </div>
 
+  <!-- App Update -->
+  <div class="card" style="margin-bottom:1rem;border-color:#22c55e33">
+    <div class="card-hd" style="background:#001a0f">
+      <span style="display:flex;align-items:center;gap:.6rem">
+        <i class="bi bi-cloud-arrow-down-fill" style="color:var(--green);font-size:1rem"></i>
+        <span>App Update</span>
+      </span>
+    </div>
+    <div class="card-bd">
+      <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 .5rem">
+        Pulls the latest code from
+        <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank" rel="noopener" style="color:var(--blue)">GitHub</a>
+        and reinstalls it in place. Routers, WAN assignments, device data, and your login password are never touched —
+        only application code and templates are replaced, and the previous code is backed up first.
+      </p>
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:.75rem">
+        Running version: <code id="app-version" style="font-size:.78rem;background:#0d1117;padding:.1em .5em;border-radius:4px;color:#94a3b8">—</code>
+      </div>
+      <div id="update-app-result" style="display:none;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;white-space:pre-wrap"></div>
+      <button class="btn-primary" onclick="confirmUpdateApp()" id="btn-update-app">
+        <i class="bi bi-cloud-arrow-down"></i> Update App
+      </button>
+    </div>
+  </div>
+
   <div class="card" style="margin-bottom:1rem">
     <div class="card-hd"><i class="bi bi-router-fill"></i> MikroTik Connection Tools</div>
     <div class="card-bd">
@@ -3011,6 +3036,65 @@ function closeLogDrawer() {
 async function loadTroubleshooting() {
   await loadTroubleRouters();
   await loadLqusersStatus();
+  await loadAppVersion();
+}
+
+async function loadAppVersion() {
+  const el = document.getElementById('app-version');
+  if (!el) return;
+  try {
+    const r = await fetch('/api/system/version');
+    const d = await r.json();
+    el.textContent = d.ok ? d.version : 'unknown';
+  } catch (e) {
+    el.textContent = 'unknown';
+  }
+}
+
+async function confirmUpdateApp() {
+  const confirmed = confirm(
+    'This will:\n\n' +
+    '  1. Pull the latest code from GitHub\n' +
+    '  2. Replace the app\'s Python files and templates (config, devices, and passwords are kept)\n' +
+    '  3. Restart updatecsv, wan_service, and this GUI\n\n' +
+    'The GUI will be briefly unreachable while it restarts. Continue?'
+  );
+  if (!confirmed) return;
+  const btn = document.getElementById('btn-update-app');
+  const res = document.getElementById('update-app-result');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Updating…';
+  res.style.display = 'none';
+  try {
+    const r = await fetch('/api/system/update', { method: 'POST' });
+    const d = await r.json();
+    res.style.display = 'block';
+    if (d.ok) {
+      const lines = [
+        `✔ Updated to ${d.version}`,
+        `✔ Files: ${(d.updated_files || []).join(', ') || 'none'}`,
+        `✔ Backup: ${d.backup || 'n/a'}`,
+        ...((d.restart_errors || []).map(e => `✘ ${e}`)),
+        d.message || '',
+      ].filter(Boolean).join('\n');
+      res.style.color = 'var(--green)';
+      res.textContent = lines;
+      toast('App updated — GUI restarting…');
+      document.getElementById('app-version').textContent = d.version;
+    } else {
+      res.style.color = 'var(--red)';
+      res.textContent = '✘ ' + (d.error || 'Update failed');
+      toast(d.error || 'Update failed', false);
+    }
+  } catch (e) {
+    res.style.display = 'block';
+    res.style.color = 'var(--yellow)';
+    res.textContent = 'Request interrupted — this is expected if the GUI restarted already. Reload the page in a few seconds to confirm.';
+    toast('Reload in a few seconds to confirm the update applied', false);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Update App';
+  }
 }
 
 async function loadTroubleRouters() {
