@@ -1,11 +1,20 @@
+import contextlib
 import logging
 import time
 
 import routeros_api
 
 from rate_resolver import RateResolver
+from settings import CONNECT_RETRIES, CONNECT_RETRY_DELAY
 
 logger = logging.getLogger(__name__)
+
+# Optional per-router sources: (config key, RouterOS path)
+_SOURCES = (
+    ('pppoe',   '/ppp/active'),
+    ('hotspot', '/ip/hotspot/active'),
+    ('dhcp',    '/ip/dhcp-server/lease'),
+)
 
 
 class RouterScanner:
@@ -16,58 +25,79 @@ class RouterScanner:
     # ── Router connection ───────────────────────────────────────────────────
 
     @staticmethod
-    def connect(router, retries=3):
+    @contextlib.contextmanager
+    def open_api(router, retries=None):
         """
-        Open a RouterOS API connection with retry logic.
-        Returns the API object on success, None after all retries are exhausted.
+        Open a RouterOS API connection with retry logic, and always close it.
+        Yields the API object, or None after all retries are exhausted.
+
+            with RouterScanner.open_api(router) as api:
+                ...
         """
+        retries = retries or CONNECT_RETRIES
+        pool = api = None
         for attempt in range(retries):
             try:
-                api = routeros_api.RouterOsApiPool(
+                pool = routeros_api.RouterOsApiPool(
                     router['address'],
-                    username=router['username'],
-                    password=router['password'],
-                    port=router['port'],
+                    username=router.get('username', ''),
+                    password=router.get('password', ''),
+                    port=int(router.get('port', 8728) or 8728),
                     plaintext_login=True,
-                ).get_api()
+                )
+                api = pool.get_api()
                 logger.info(
                     f"Connected to {router['name']} ({router['address']}) "
                     f"[attempt {attempt + 1}]"
                 )
-                return api
+                break
             except Exception as e:
                 logger.warning(
                     f"Connection error to {router['name']} "
                     f"[attempt {attempt + 1}/{retries}]: {e}"
                 )
+                RouterScanner._disconnect(pool)
+                pool = api = None
                 if attempt == retries - 1:
                     logger.error(f"Failed to connect to {router['name']}")
-                    return None
-                time.sleep(5)
+                else:
+                    time.sleep(CONNECT_RETRY_DELAY)
+        try:
+            yield api
+        finally:
+            RouterScanner._disconnect(pool)
 
     @staticmethod
-    def get_resource_data(api, resource_path):
-        """Fetch a RouterOS resource, returning an empty list on error."""
-        try:
-            return api.get_resource(resource_path).get()
-        except Exception as e:
-            logger.error(f"Failed to fetch {resource_path}: {e}")
-            return []
+    def _disconnect(pool):
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
 
     # ── Public scan entry point ─────────────────────────────────────────────
 
-    def scan_router(self, router, scan_time) -> bool:
+    def scan_router(self, router, scan_time):
         """
         Connect to one router, collect all device sources, and persist to the DB.
-        Returns True if any device data changed.
+
+        Returns (ok, changed). ok is False when the router could not be read
+        completely; nothing is written for it then, and its existing devices
+        are kept instead of being treated as gone.
         """
-        api = self.connect(router)
-        if api is None:
-            logger.warning(f"Skipping {router['name']} — connection failed.")
-            return False
+        name = router['name']
+        with self.open_api(router) as api:
+            if api is None:
+                logger.warning(f"Skipping {name} — connection failed; keeping its devices.")
+                return False, False
+            try:
+                data = self._fetch_all(api, router)
+            except Exception as e:
+                logger.error(f"Failed to read from {name}: {e} — keeping its devices.")
+                return False, False
 
         try:
-            addr_list_entries = self.get_resource_data(api, '/ip/firewall/address-list')
+            addr_list_entries = data['address_list']
 
             # Build IP→list_name map used by PPPoE and hotspot rate lookups
             ip_to_list = {
@@ -77,27 +107,46 @@ class RouterScanner:
             }
 
             changed = False
-            changed |= self._process_pppoe_users(api, router, ip_to_list, scan_time)
-            changed |= self._process_hotspot_users(api, router, ip_to_list, scan_time)
-            changed |= self._process_dhcp_leases(api, router, ip_to_list, scan_time)
+            changed |= self._process_pppoe_users(router, data['pppoe'], ip_to_list, scan_time)
+            changed |= self._process_hotspot_users(router, data['hotspot'], ip_to_list, scan_time)
+            changed |= self._process_dhcp_leases(router, data['dhcp'], scan_time)
             changed |= self._process_address_list(router, addr_list_entries, scan_time)
 
             self.db.conn.commit()
-            return changed
+            return True, changed
 
         except Exception as e:
-            logger.error(f"Error processing router {router['name']}: {e}")
+            logger.error(f"Error processing router {name}: {e}")
             self.db.conn.rollback()
-            return False
+            return False, False
+
+    @staticmethod
+    def _fetch_all(api, router):
+        """
+        Read everything needed from the router before touching the DB, so the
+        DB write lock is never held during network I/O. Raises on any API
+        error: a partial read must not look like "all those devices are gone".
+        Disabled sources are returned as None.
+        """
+        data = {'address_list': api.get_resource('/ip/firewall/address-list').get()}
+        for key, path in _SOURCES:
+            if router.get(key, {}).get('enabled', False):
+                try:
+                    data[key] = api.get_resource(path).get()
+                except Exception as e:
+                    raise RuntimeError(f"{path}: {e}") from e
+            else:
+                data[key] = None
+        return data
 
     # ── Private processors ──────────────────────────────────────────────────
 
-    def _process_pppoe_users(self, api, router, ip_to_list, scan_time) -> bool:
+    def _process_pppoe_users(self, router, sessions, ip_to_list, scan_time) -> bool:
         """
         Active PPPoE sessions: get NAME, CALLER-ID (MAC), ADDRESS.
         Rate is looked up by IP in the address list. Falls back to config default.
         """
-        if not router.get('pppoe', {}).get('enabled', False):
+        if sessions is None:
             logger.info(f"PPPoE disabled for {router['name']}")
             return False
 
@@ -106,7 +155,6 @@ class RouterScanner:
         default_ul  = router.get('pppoe', {}).get('default_upload_limit', 10)
         changed     = False
 
-        sessions = self.get_resource_data(api, '/ppp/active')
         logger.info(f"PPPoE: {len(sessions)} active sessions on {router_name}")
 
         for session in sessions:
@@ -132,22 +180,22 @@ class RouterScanner:
                 f"rate='{rate_used}' → {rx_max}/{tx_max} Mbps"
             )
 
-            comment = RateResolver.build_comment('pppoe', rate_used or list_name, rate_failed, scan_time)
+            comment = RateResolver.build_comment('pppoe', rate_used or list_name, rate_failed)
 
             if self.db.upsert_device(
-                code, '', mac, address, comment, 'pppoe', router_name,
+                code, mac, address, comment, 'pppoe', router_name,
                 rx_max, tx_max, rx_min, tx_min, scan_time
             ):
                 changed = True
 
         return changed
 
-    def _process_hotspot_users(self, api, router, ip_to_list, scan_time) -> bool:
+    def _process_hotspot_users(self, router, users, ip_to_list, scan_time) -> bool:
         """
         Active hotspot sessions: get USER, MAC-ADDRESS, ADDRESS.
         Rate is looked up by IP in the address list. Falls back to config default.
         """
-        if not router.get('hotspot', {}).get('enabled', False):
+        if users is None:
             logger.info(f"Hotspot disabled for {router['name']}")
             return False
 
@@ -156,7 +204,6 @@ class RouterScanner:
         default_ul  = router.get('hotspot', {}).get('default_upload_limit', 10)
         changed     = False
 
-        users = self.get_resource_data(api, '/ip/hotspot/active')
         logger.info(f"Hotspot: {len(users)} active users on {router_name}")
 
         for user in users:
@@ -183,21 +230,22 @@ class RouterScanner:
                 f"rate='{rate_used}' → {rx_max}/{tx_max} Mbps"
             )
 
-            comment = RateResolver.build_comment('hotspot', rate_used or list_name, rate_failed, scan_time)
+            comment = RateResolver.build_comment('hotspot', rate_used or list_name, rate_failed)
 
             if self.db.upsert_device(
-                code, '', mac, address, comment, 'hotspot', router_name,
+                code, mac, address, comment, 'hotspot', router_name,
                 rx_max, tx_max, rx_min, tx_min, scan_time
             ):
                 changed = True
 
         return changed
 
-    def _process_dhcp_leases(self, api, router, ip_to_list, scan_time) -> bool:
+    def _process_dhcp_leases(self, router, leases, scan_time) -> bool:
         """
         DHCP leases: rate from address-list field on the lease, comment, or default.
+        Devices are keyed by MAC — host-names are client-chosen and not unique.
         """
-        if not router.get('dhcp', {}).get('enabled', False):
+        if leases is None:
             logger.info(f"DHCP disabled for {router['name']}")
             return False
 
@@ -206,15 +254,14 @@ class RouterScanner:
         default_ul  = router.get('dhcp', {}).get('default_upload_limit', 1000)
         changed     = False
 
-        leases = self.get_resource_data(api, '/ip/dhcp-server/lease')
         logger.info(f"DHCP: {len(leases)} leases on {router_name}")
 
         for lease in leases:
-            mac = lease.get('mac-address', '').upper()
-            if not mac:
+            mac     = lease.get('mac-address', '').upper()
+            address = lease.get('address', '')
+            if not mac or not address or lease.get('disabled', 'false') == 'true':
                 continue
 
-            address         = lease.get('address', '')
             hostname        = lease.get('host-name', '')
             addr_list_field = lease.get('address-list', lease.get('address-lists', ''))
             comment_field   = lease.get('comment', '')
@@ -229,14 +276,13 @@ class RouterScanner:
                 f"rate='{rate_used}' → {rx_max}/{tx_max} Mbps"
             )
 
-            mac_clean = mac.replace(':', '')
-            code    = f"DHCP-{hostname}" if hostname else f"DHCP-{mac_clean}"
+            code    = f"DHCP-{mac.replace(':', '')}"
             comment = RateResolver.build_comment(
-                'dhcp', rate_used or addr_list_field, rate_failed, scan_time
+                'dhcp', rate_used or addr_list_field, rate_failed, label=hostname
             )
 
             if self.db.upsert_device(
-                code, '', mac, address, comment, 'dhcp', router_name,
+                code, mac, address, comment, 'dhcp', router_name,
                 rx_max, tx_max, rx_min, tx_min, scan_time
             ):
                 changed = True
@@ -261,22 +307,23 @@ class RouterScanner:
         ]
         logger.info(f"Address list: {len(entries)} entries for {router_name}")
 
+        used_codes = set()
         for entry in entries:
             address   = entry.get('address', '')
             list_name = entry.get('list', '')
             comment   = entry.get('comment', '')
-            code      = comment if comment else f"ADDR-{address}"
+            # The comment names the device, but two entries can share one.
+            code      = comment if comment and comment not in used_codes else f"ADDR-{address}"
+            used_codes.add(code)
 
             rx_max, tx_max, rx_min, tx_min, rate_failed = \
                 RateResolver.resolve_rates(list_name, default_dl, default_ul)
             logger.debug(f"AddrList {code}: list='{list_name}' → {rx_max}/{tx_max} Mbps")
 
-            entry_comment = RateResolver.build_comment(
-                'address_list', list_name, rate_failed, scan_time
-            )
+            entry_comment = RateResolver.build_comment('address_list', list_name, rate_failed)
 
             if self.db.upsert_device(
-                code, '', '', address, entry_comment, 'address_list', router_name,
+                code, '', address, entry_comment, 'address_list', router_name,
                 rx_max, tx_max, rx_min, tx_min, scan_time
             ):
                 changed = True

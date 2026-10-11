@@ -22,7 +22,7 @@ Includes a full **web-based GUI** for configuration, monitoring, device manageme
    - For IPoE/DHCP: rate is read from the static lease's `address-list` field
    - For RADIUS/User Manager: set `Mikrotik-Address-List` attribute — no `Mikrotik-Rate-Limit` needed
    - Falls back to configurable per-source defaults when no rate is found
-   - Min rate = 50% of max; applied max = parsed rate × 1.15
+   - Min rate = 1 Mbps and max = plan rate × 1.15 (LibreQoS's recommendation); both are configurable in **App Settings**
 
 3. **Flexible topology strategies**
    - `cpu` — greedy bin-pack across CPU queue nodes (best performance at scale)
@@ -140,7 +140,8 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 - Login required before any page or API endpoint is accessible
 - Password is stored as a PBKDF2-SHA256 hash in `gui_auth.json`
 - Change password anytime via the key icon in the top bar
-- Sessions are invalidated on GUI service restart
+- Sessions survive GUI restarts; change the password to sign everyone out
+- Failed logins are rate-limited per address (5 attempts, then a 60 s lockout; configurable)
 
 ### Service Management
 

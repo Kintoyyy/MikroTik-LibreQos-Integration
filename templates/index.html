@@ -680,7 +680,8 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
 
 
-    <!-- Core Routers -->
+    <!-- Core Routers (shown only while WAN Assignment is on) -->
+    <div id="cores-section">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;margin-top:1.5rem">
       <div>
         <span style="font-weight:600;font-size:.95rem">CORE / PBR Load Balancer</span>
@@ -690,6 +691,7 @@ code { font-size: .8rem; color: #94a3b8; }
       <button class="btn-ghost" onclick="addCore()"><i class="bi bi-plus-lg"></i> Add Core</button>
     </div>
     <div id="cores-list"></div>
+    </div>
     <!-- WAN Assignment -->
     <div class="card"
       style="margin-bottom:1rem"
@@ -1509,14 +1511,44 @@ code { font-size: .8rem; color: #94a3b8; }
           <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Wait time before retrying after a scan error</div>
         </div>
       </div>
+      <div class="form-row form-row-2" style="margin-top:1rem">
+        <div>
+          <label class="form-label">Router Connect Retries</label>
+          <input class="form-input" type="number" id="set-connect-retries" min="1" max="10">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Attempts per router before it is skipped for the cycle (its devices are kept)</div>
+        </div>
+        <div>
+          <label class="form-label">Connect Retry Delay</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-connect-delay" min="0" step="0.5">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Pause between connection attempts</div>
+        </div>
+      </div>
+      <div class="form-row form-row-2" style="margin-top:1rem">
+        <div>
+          <label class="form-label">LibreQoS Apply Command</label>
+          <input class="form-input" id="set-update-cmd" placeholder="empty = let lqos_scheduler apply changes">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Runs when ShapedDevices.csv or network.json changes. Leave empty to run nothing: lqos_scheduler applies the files on its next refresh (queue_refresh_interval_mins in lqos.conf)</div>
+        </div>
+        <div>
+          <label class="form-label">Apply Timeout</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-update-timeout" min="10">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">A hung apply is stopped after this and retried next cycle</div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- WAN Service -->
-  <div class="card" style="margin-bottom:1rem">
+  <!-- WAN Service (shown only while WAN Assignment is on) -->
+  <div class="card" style="margin-bottom:1rem" id="wan-settings-card">
     <div class="card-hd"><span><i class="bi bi-diagram-3"></i> WAN Service</span></div>
     <div class="card-bd">
-      <div class="form-row form-row-3">
+      <div class="form-row form-row-4">
         <div>
           <label class="form-label">Sync Interval</label>
           <div class="form-input-group">
@@ -1534,12 +1566,20 @@ code { font-size: .8rem; color: #94a3b8; }
           <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Wait time before retrying after a WAN sync error</div>
         </div>
         <div>
-          <label class="form-label">Rebalance Threshold</label>
+          <label class="form-label">Rebalance Imbalance Ratio</label>
           <div class="form-input-group">
-            <input class="form-input" type="number" id="set-rebalance-threshold" min="1.0" max="3.0" step="0.05">
+            <input class="form-input" type="number" id="set-rebalance-ratio" min="1.05" max="10" step="0.05">
             <span class="input-suffix">×</span>
           </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Trigger full rebalance when a WAN exceeds this fraction of its limit (e.g. 1.10 = 110%)</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Move devices only when the busiest WAN's utilization is over this many times the least busy one's. Each move breaks that subscriber's NAT sessions</div>
+        </div>
+        <div>
+          <label class="form-label">Manual Rebalance Offline Cutoff</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-manual-cutoff" min="60">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">The Rebalance button treats dynamic devices not seen for this long as offline</div>
         </div>
       </div>
     </div>
@@ -1553,18 +1593,18 @@ code { font-size: .8rem; color: #94a3b8; }
         <div>
           <label class="form-label">Min Download Rate</label>
           <div class="form-input-group">
-            <input class="form-input" type="number" id="set-min-dl-pct" min="1" max="100" step="1">
+            <input class="form-input" type="number" id="set-min-dl-pct" min="0" max="100" step="1">
             <span class="input-suffix">%</span>
           </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Guaranteed min download as % of max</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Guaranteed min download as % of max. 0 = 1 Mbps (LibreQoS recommends min 1/1)</div>
         </div>
         <div>
           <label class="form-label">Min Upload Rate</label>
           <div class="form-input-group">
-            <input class="form-input" type="number" id="set-min-ul-pct" min="1" max="100" step="1">
+            <input class="form-input" type="number" id="set-min-ul-pct" min="0" max="100" step="1">
             <span class="input-suffix">%</span>
           </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Guaranteed min upload as % of max</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Guaranteed min upload as % of max. 0 = 1 Mbps (LibreQoS recommends min 1/1)</div>
         </div>
         <div>
           <label class="form-label">Max Download Rate</label>
@@ -1572,7 +1612,7 @@ code { font-size: .8rem; color: #94a3b8; }
             <input class="form-input" type="number" id="set-max-dl-pct" min="50" max="200" step="1">
             <span class="input-suffix">%</span>
           </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Download ceiling applied to parsed rate</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Download ceiling as % of the plan rate. LibreQoS recommends about 115%</div>
         </div>
         <div>
           <label class="form-label">Max Upload Rate</label>
@@ -1580,7 +1620,7 @@ code { font-size: .8rem; color: #94a3b8; }
             <input class="form-input" type="number" id="set-max-ul-pct" min="50" max="200" step="1">
             <span class="input-suffix">%</span>
           </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Upload ceiling applied to parsed rate</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Upload ceiling as % of the plan rate. LibreQoS recommends about 115%</div>
         </div>
       </div>
       <div class="form-row form-row-3">
@@ -1609,6 +1649,74 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
   </div>
 
+  <!-- Topology & Limits -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-diagram-2"></i> Topology &amp; Limits</span></div>
+    <div class="card-bd">
+      <div class="form-row form-row-3">
+        <div>
+          <label class="form-label">Parent Node Bandwidth</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-parent-mult" min="1" max="10" step="0.05">
+            <span class="input-suffix">×</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">network.json node size = sum of its devices' max rates × this</div>
+        </div>
+        <div>
+          <label class="form-label">Skew Warning Ratio</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-skew-ratio" min="1.1" max="20" step="0.1">
+            <span class="input-suffix">×</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Log a warning when the busiest top-level/CPU node carries this many times the lightest one's load</div>
+        </div>
+        <div>
+          <label class="form-label">CPU Rebalance Ratio</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-cpu-rebalance" min="1.05" max="10" step="0.05">
+            <span class="input-suffix">×</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">cpu strategy with sticky assignment: move devices only when the busiest CPU node exceeds this many times the lightest</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-top:1rem">
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="set-sticky-cpu">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Sticky CPU assignment <span style="font-size:.72rem;color:var(--muted)">(keep devices on their CPU node — fewer queue rebuilds)</span></span>
+          </label>
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="set-node-ids">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Stable node IDs in network.json</span>
+          </label>
+          <label class="toggle-wrap">
+            <div class="toggle"><input type="checkbox" id="set-virtual-sites">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </div>
+            <span style="font-size:.875rem">Virtual site nodes <span style="font-size:.72rem;color:var(--muted)">(ap_site/full: sites group routers but are not shaped)</span></span>
+          </label>
+      </div>
+      <div class="form-row form-row-2" style="margin-top:1rem">
+        <div>
+          <label class="form-label">TC u16 Warning Threshold</label>
+          <input class="form-input" type="number" id="set-tc-u16" min="1000">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Warn when one CPU queue approaches the tc class ID limit (TC_U16_OVERFLOW)</div>
+        </div>
+        <div>
+          <label class="form-label">Circuit Limit Warning</label>
+          <input class="form-input" type="number" id="set-circuit-cap" min="0">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">LibreQoS without a license shapes only the first 1000 circuits (MAPPED_CIRCUIT_LIMIT). 0 = no warning</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- GUI / Permissions -->
   <div class="card" style="margin-bottom:1rem">
     <div class="card-hd"><span><i class="bi bi-shield-check"></i> GUI &amp; Permissions</span></div>
@@ -1621,6 +1729,21 @@ code { font-size: .8rem; color: #94a3b8; }
         <div>
           <label class="form-label">Expected Core API Group</label>
           <input class="form-input" id="set-core-group">
+        </div>
+      </div>
+      <div class="form-row form-row-2" style="margin-top:1rem">
+        <div>
+          <label class="form-label">Login Attempts</label>
+          <input class="form-input" type="number" id="set-login-attempts" min="1" max="100">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Failed logins from one address before it is locked out</div>
+        </div>
+        <div>
+          <label class="form-label">Login Lockout</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-login-lockout" min="0">
+            <span class="input-suffix">sec</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">How long a locked-out address must wait</div>
         </div>
       </div>
     </div>
@@ -1747,6 +1870,15 @@ code { font-size: .8rem; color: #94a3b8; }
 <script>
 'use strict';
 
+// Every request carries X-Requested-With; the server rejects state-changing
+// API calls without it (CSRF protection — a cross-site page cannot set it).
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = (url, opts = {}) => {
+  const headers = new Headers(opts.headers || {});
+  headers.set('X-Requested-With', 'fetch');
+  return _nativeFetch(url, { ...opts, headers });
+};
+
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b,i) => {
@@ -1770,7 +1902,8 @@ function toast(msg, ok=true) {
   const stack = document.getElementById('toast-stack');
   const el = document.createElement('div');
   el.className = 'toast-item ' + (ok ? 'toast-ok' : 'toast-err');
-  el.innerHTML = `<i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'}"></i> ${msg}`;
+  el.innerHTML = `<i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'}"></i> `;
+  el.append(String(msg ?? ''));
   stack.appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
@@ -1983,12 +2116,12 @@ function _renderMtCards(list) {
   return list.map(rt => {
     const title = rt.identity || rt.router || `Router ${Number(rt.index || 0) + 1}`;
     if (!rt.ok) {
-      return `<div class="mt-mini offline"><div class="name">${title}</div><div class="row"><span>Offline</span><span class="pct">—</span></div></div>`;
+      return `<div class="mt-mini offline"><div class="name">${esc(title)}</div><div class="row"><span>Offline</span><span class="pct">—</span></div></div>`;
     }
     const cpu = Number(rt.cpu_percent || 0).toFixed(1);
     const ram = Number(rt.ram_percent || 0).toFixed(1);
     const uptime = (rt.uptime || '').toString().trim() || '—';
-    return `<div class="mt-mini"><div class="name">${title}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div><div class="row"><span>Uptime</span><span class="pct uptime">${uptime}</span></div></div>`;
+    return `<div class="mt-mini"><div class="name">${esc(title)}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div><div class="row"><span>Uptime</span><span class="pct uptime">${esc(uptime)}</span></div></div>`;
   }).join('');
 }
 
@@ -2035,13 +2168,14 @@ async function loadDevices() {
   });
   document.getElementById('top-bw-body').innerHTML = top.map(r=>`
     <tr>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${r.code}</td>
-      <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(r.code)}</td>
+      <td><span class="src-badge badge-${esc(r.source)}">${esc(r.source)}</span></td>
       <td style="text-align:right">${_fmtPctOfWan(r, topWanLookup, 'dl')}</td>
       <td style="text-align:right">${_fmtPctOfWan(r, topWanLookup, 'ul')}</td>
     </tr>`).join('');
   filterDevices();
 }
+let shownDevices = [];   // rows currently rendered; row buttons refer to them by index
 function filterDevices() {
   const q   = document.getElementById('device-search').value.toLowerCase();
   const src = document.getElementById('device-source-filter').value;
@@ -2051,22 +2185,23 @@ function filterDevices() {
   topoWanStats.forEach(w => {
     wanLookup[`${w.core_name||''}|${w.wan_name||''}`] = { dl: w.dl_limit||0, ul: w.ul_limit||0 };
   });
-  document.getElementById('devices-body').innerHTML = rows.map(r=>`
+  shownDevices = rows;
+  document.getElementById('devices-body').innerHTML = rows.map((r, i)=>`
     <tr>
-      <td style="font-weight:500">${r.code}</td>
-      <td><code>${r.ipv4||''}</code></td>
-      <td><code>${r.mac||''}</code></td>
-      <td><span class="src-badge badge-${r.source}">${r.source}</span></td>
-      <td>${r.router}</td>
-      <td>${r.parent_node}</td>
-      <td>${r.wan_name ? `<span class="src-badge" style="background:var(--accent);color:#fff" title="${r.core_name||''}">${r.wan_name}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="font-weight:500">${esc(r.code)}</td>
+      <td><code>${esc(r.ipv4||'')}</code></td>
+      <td><code>${esc(r.mac||'')}</code></td>
+      <td><span class="src-badge badge-${esc(r.source)}">${esc(r.source)}</span></td>
+      <td>${esc(r.router||'')}</td>
+      <td>${esc(r.parent_node||'')}</td>
+      <td>${r.wan_name ? `<span class="src-badge" style="background:var(--accent);color:#fff" title="${esc(r.core_name||'')}">${esc(r.wan_name)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
       <td style="text-align:right">${_fmtBw(r.download_max_mbps)}</td>
       <td style="text-align:right">${_fmtBw(r.upload_max_mbps)}</td>
-      <td style="color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">${r.comment}</td>
+      <td style="color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis">${esc(r.comment||'')}</td>
       <td style="text-align:center">${r.is_static?'<i class="bi bi-lock-fill" style="color:#f59e0b"></i>':''}</td>
       <td style="text-align:center;white-space:nowrap">
-        <button class="btn-row-edit"   title="Edit"   onclick='openEditDevice(${JSON.stringify(r)})'><i class="bi bi-pencil-fill"></i></button>
-        <button class="btn-row-delete" title="Delete" onclick="deleteDevice(${JSON.stringify(r.code)})"><i class="bi bi-trash3-fill"></i></button>
+        <button class="btn-row-edit"   title="Edit"   onclick="openEditDevice(shownDevices[${i}])"><i class="bi bi-pencil-fill"></i></button>
+        <button class="btn-row-delete" title="Delete" onclick="deleteDevice(shownDevices[${i}].code)"><i class="bi bi-trash3-fill"></i></button>
       </td>
     </tr>`).join('');
 }
@@ -2088,7 +2223,9 @@ function openDeviceModal(prefill) {
 function openEditDevice(row) {
   editingDeviceCode = row.code;
   document.getElementById('device-modal-title').textContent = 'Edit Device';
-  document.getElementById('device-modal-sub').textContent   = row.code;
+  document.getElementById('device-modal-sub').textContent   = row.is_static
+    ? row.code
+    : `${row.code} — synced from ${row.router || 'a router'}; the next scan overwrites edits that differ from the router`;
   document.getElementById('device-modal-save-btn').innerHTML = '<i class="bi bi-floppy-fill"></i> Update Device';
   fillDeviceForm(row);
   document.getElementById('dev-code').readOnly = true;
@@ -2296,7 +2433,9 @@ function renderConfig() {
   document.getElementById('toggle-promote').checked = !!configData.promote_to_root;
   // wan assignment
   const wanCfg = configData.wan_assignment || {};
-  const wanEnabled = wanCfg.enabled !== false;
+  const wanEnabled = wanCfg.enabled === true;   // WAN assignment is optional and off by default
+  _wanOnAtLoad = wanEnabled;
+  applyWanVisibility(wanEnabled);
   document.getElementById('toggle-wan-enabled').checked  = wanEnabled;
   document.getElementById('toggle-wan-hotspot').checked  = !!wanCfg.include_hotspot;
   document.getElementById('toggle-wan-dhcp').checked     = !!wanCfg.include_dhcp;
@@ -2313,9 +2452,19 @@ function renderConfig() {
   document.getElementById('core-count-badge').textContent = (configData.cores||[]).length;
 }
 
+let _wanOnAtLoad = false;
+
+function applyWanVisibility(on) {
+  ['cores-section', 'wan-settings-card'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  });
+}
+
 function _onWanEnabledToggle() {
   const en = document.getElementById('toggle-wan-enabled').checked;
   document.getElementById('wan-assignment-opts').style.display = en ? 'flex' : 'none';
+  applyWanVisibility(en);
   if (!configData) return;
   if (!configData.wan_assignment) configData.wan_assignment = {};
   configData.wan_assignment.enabled = en;
@@ -2395,7 +2544,7 @@ function buildRouterCard(rt, idx) {
 
 function buildSourceSection(rt, idx, key, label, icon, cls, hasEnabled) {
   const src = rt[key] || {};
-  const enabled = src.enabled !== false;
+  const enabled = src.enabled === true;   // the scanner treats a missing flag as off
   const dl = src.default_download_limit || 100;
   const ul = src.default_upload_limit   || 100;
   return `
@@ -2475,7 +2624,12 @@ function buildAddrListSection(rt, idx) {
 function srcColor(key) {
   return {pppoe:'#3b82f6',hotspot:'#22c55e',dhcp:'#f59e0b',address_list:'#8b5cf6'}[key]||'#94a3b8';
 }
-function esc(s) { return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Escape for HTML text and attribute values. Device data comes from routers
+// and subscribers (e.g. DHCP host-names) and must never be rendered as HTML.
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 
 // ── Config mutations ──────────────────────────────────────────────────────
 function setRouterField(idx, field, val) {
@@ -2727,6 +2881,19 @@ async function saveConfig() {
   const rs = await fetch('/api/services/updatecsv/restart', {method:'POST'});
   const ds = await rs.json();
   toast(ds.ok ? 'updatecsv restarted' : ('Restart failed: ' + (ds.error||'')), ds.ok);
+
+  // wan_service runs only while WAN Assignment is on (enabled at boot too).
+  const wanOn = !!(configData.wan_assignment && configData.wan_assignment.enabled);
+  const ws = await fetch(`/api/services/wan_service/${wanOn ? 'enable' : 'disable'}`, {method:'POST'});
+  const dw = await ws.json();
+  if (!dw.ok) {
+    toast('wan_service: ' + (dw.error || 'failed'), false);
+  } else if (wanOn !== _wanOnAtLoad) {
+    toast(wanOn
+      ? 'WAN service enabled and started'
+      : 'WAN service stopped. Managed address-list entries stay on the core routers until you run Purge in Troubleshooting.', true);
+  }
+  _wanOnAtLoad = wanOn;
 }
 
 // ── YAML editor ───────────────────────────────────────────────────────────
@@ -2974,7 +3141,7 @@ function renderServiceCards(services) {
         <i class="bi ${meta.icon}" style="color:${stateColor}"></i>
         ${meta.label}
         <span style="margin-left:auto;display:flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:500;color:${stateColor}">
-          <span class="dot ${dotCls}"></span>${state}${svc.sub && svc.sub!==state ? ' ('+svc.sub+')' : ''}
+          <span class="dot ${dotCls}"></span>${state}${svc.sub && svc.sub!==state ? ' ('+svc.sub+')' : ''}${svc.enabled === 'disabled' ? ' · off at boot' : ''}
         </span>
       </div>
       <div class="svc-meta">
@@ -3603,7 +3770,7 @@ async function loadTopology() {
   const sel = document.getElementById('topo-router-filter');
   const prev = sel.value;
   sel.innerHTML = '<option value="">All routers</option>' +
-    routers.map(r => `<option value="${r}" ${r===prev?'selected':''}>${r}</option>`).join('');
+    routers.map(r => `<option value="${esc(r)}" ${r===prev?'selected':''}>${esc(r)}</option>`).join('');
 
   renderTopology();
 }
@@ -3863,10 +4030,10 @@ function _renderTrafficShare(devices) {
   const tooltipFn = p => {
     if (p.dataType === 'edge') {
       const pct = Math.round(p.data.value / total * 100);
-      return `<b>${p.data.source}</b> → <b>${p.data.target}</b><br>${p.data.value} devices (${pct}%)`;
+      return `<b>${esc(p.data.source)}</b> → <b>${esc(p.data.target)}</b><br>${p.data.value} devices (${pct}%)`;
     }
     const pct = Math.round(p.value / total * 100);
-    return `<b>${p.name}</b><br>${p.value} devices — ${pct}%`;
+    return `<b>${esc(p.name)}</b><br>${p.value} devices — ${pct}%`;
   };
 
   _drawSankey(nodes, links, 4, null, tooltipFn);
@@ -3943,16 +4110,16 @@ function _renderDetail(devices, parents, limit) {
       const tgt = p.data.target.startsWith('dev::')
         ? (_detailDevMap[p.data.target]?.ipv4 || _strip(p.data.target))
         : p.data.target;
-      return `<b>${src}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+      return `<b>${esc(src)}</b> → <b>${esc(tgt)}</b><br>${_fmtBw(p.data.value)}`;
     }
     if (p.name.startsWith('dev::')) {
       const d = _detailDevMap[p.name];
-      if (!d) return `<b>${_strip(p.name)}</b>`;
+      if (!d) return `<b>${esc(_strip(p.name))}</b>`;
       const tag = (label, val) =>
-        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${val}</b>`;
+        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${esc(val)}</b>`;
       const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
       return [
-        `<b style="color:#e2e8f0">${d.code}</b>`,
+        `<b style="color:#e2e8f0">${esc(d.code)}</b>`,
         sep,
         d.ipv4    ? tag('IP',     d.ipv4)                          : '',
         d.mac     ? tag('MAC',    d.mac)                           : '',
@@ -3965,7 +4132,7 @@ function _renderDetail(devices, parents, limit) {
         d.parent_node ? tag('CPU', d.parent_node)                  : '',
       ].filter(Boolean).join('<br>');
     }
-    return `<b>${p.name}</b><br>${_fmtBw(p.value)}`;
+    return `<b>${esc(p.name)}</b><br>${_fmtBw(p.value)}`;
   };
 
   _drawSankey(nodes, links, hasWans ? 3 : 2, labelFn, tooltipFn);
@@ -4019,16 +4186,16 @@ function _renderWanDevice(devices, limit) {
       const tgt = p.data.target.startsWith('dev::')
         ? (_detailDevMap[p.data.target]?.ipv4 || p.data.target.slice(5))
         : p.data.target;
-      return `<b>${p.data.source}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+      return `<b>${esc(p.data.source)}</b> → <b>${esc(tgt)}</b><br>${_fmtBw(p.data.value)}`;
     }
     if (p.name.startsWith('dev::')) {
       const d = _detailDevMap[p.name];
-      if (!d) return `<b>${p.name.slice(5)}</b>`;
+      if (!d) return `<b>${esc(p.name.slice(5))}</b>`;
       const tag = (label, val) =>
-        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${val}</b>`;
+        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${esc(val)}</b>`;
       const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
       return [
-        `<b style="color:#e2e8f0">${d.code}</b>`,
+        `<b style="color:#e2e8f0">${esc(d.code)}</b>`,
         sep,
         d.ipv4 ? tag('IP',     d.ipv4)                          : '',
         d.mac  ? tag('MAC',    d.mac)                           : '',
@@ -4042,7 +4209,7 @@ function _renderWanDevice(devices, limit) {
       ].filter(Boolean).join('<br>');
     }
     // WAN node tooltip — show total
-    return `<b>${p.name}</b><br>${_fmtBw(p.value)}`;
+    return `<b>${esc(p.name)}</b><br>${_fmtBw(p.value)}`;
   };
 
   _drawSankey(nodes, links, 2, labelFn, tooltipFn);
@@ -4092,16 +4259,16 @@ function _renderCpuDevice(devices, parents, limit) {
       const tgt = p.data.target.startsWith('dev::')
         ? (_detailDevMap[p.data.target]?.ipv4 || p.data.target.slice(5))
         : p.data.target;
-      return `<b>${p.data.source}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+      return `<b>${esc(p.data.source)}</b> → <b>${esc(tgt)}</b><br>${_fmtBw(p.data.value)}`;
     }
     if (p.name.startsWith('dev::')) {
       const d = _detailDevMap[p.name];
-      if (!d) return `<b>${p.name.slice(5)}</b>`;
+      if (!d) return `<b>${esc(p.name.slice(5))}</b>`;
       const tag = (label, val) =>
-        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${val}</b>`;
+        `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${esc(val)}</b>`;
       const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
       return [
-        `<b style="color:#e2e8f0">${d.code}</b>`,
+        `<b style="color:#e2e8f0">${esc(d.code)}</b>`,
         sep,
         d.ipv4 ? tag('IP',     d.ipv4)                          : '',
         d.mac  ? tag('MAC',    d.mac)                           : '',
@@ -4114,7 +4281,7 @@ function _renderCpuDevice(devices, parents, limit) {
         d.router      ? tag('BRAS', d.router)                   : '',
       ].filter(Boolean).join('<br>');
     }
-    return `<b>${p.name}</b><br>${_fmtBw(p.value)}`;
+    return `<b>${esc(p.name)}</b><br>${_fmtBw(p.value)}`;
   };
 
   _drawSankey(nodes, links, 2, labelFn, tooltipFn);
@@ -4200,10 +4367,10 @@ function _drawSankey(nodes, links, levels, labelFn, tooltipFn) {
     if (p.dataType === 'edge') {
       const src = p.data.source.startsWith('dev::') ? p.data.source.slice(5) : p.data.source;
       const tgt = p.data.target.startsWith('dev::') ? p.data.target.slice(5) : p.data.target;
-      return `<b>${src}</b> → <b>${tgt}</b><br>${_fmtBw(p.data.value)}`;
+      return `<b>${esc(src)}</b> → <b>${esc(tgt)}</b><br>${_fmtBw(p.data.value)}`;
     }
     const name = p.name.startsWith('dev::') ? p.name.slice(5) : p.name;
-    return `<b>${name}</b><br>${_fmtBw(p.value)}`;
+    return `<b>${esc(name)}</b><br>${_fmtBw(p.value)}`;
   };
 
   const defaultLabel = p => {
@@ -4306,67 +4473,114 @@ async function saveLqosConf() {
 }
 
 // ── App Settings ──────────────────────────────────────────────────────────
+let appSettings = {};   // last loaded settings.json; saving keeps keys the form doesn't show
+
 async function loadAppSettings() {
   const r = await fetch('/api/settings');
   const d = await r.json();
   if (!d.ok) { toast(d.error || 'Failed to load settings', false); return; }
   const s = d.content || {};
+  appSettings = s;
 
-  const g = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  const g = (id, val) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
+  };
+  const pct = v => Math.round(v * 100);
 
-  g('set-scan-interval',      s.scanner?.scan_interval           ?? 600);
-  g('set-error-retry',        s.scanner?.error_retry_interval    ?? 30);
-  g('set-wan-interval',       s.wan_service?.default_interval    ?? 300);
-  g('set-wan-error-retry',    s.wan_service?.error_retry_interval ?? 30);
-  g('set-rebalance-threshold',s.wan_service?.rebalance_threshold ?? 1.10);
-  g('set-min-dl-pct',         Math.round((s.rates?.min_dl_rate_percentage ?? 0.5) * 100));
-  g('set-min-ul-pct',         Math.round((s.rates?.min_ul_rate_percentage ?? 0.5) * 100));
-  g('set-max-dl-pct',         Math.round((s.rates?.max_dl_rate_percentage ?? 1.0) * 100));
-  g('set-max-ul-pct',         Math.round((s.rates?.max_ul_rate_percentage ?? 1.0) * 100));
-  g('set-default-dl-bw',      s.rates?.default_dl_bandwidth ?? 100);
-  g('set-default-ul-bw',      s.rates?.default_ul_bandwidth ?? 100);
-  g('set-id-length',          s.rates?.id_length            ?? 8);
-  g('set-mt-group',           s.gui?.expected_mt_group   ?? 'API_READ');
-  g('set-core-group',         s.gui?.expected_core_group ?? 'API_WRITE');
+  g('set-scan-interval',   s.scanner?.scan_interval            ?? 600);
+  g('set-error-retry',     s.scanner?.error_retry_interval     ?? 30);
+  g('set-connect-retries', s.scanner?.connect_retries          ?? 3);
+  g('set-connect-delay',   s.scanner?.connect_retry_delay      ?? 5);
+  g('set-update-cmd',      s.scanner?.libreqos_update_command  ?? '/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly');
+  g('set-update-timeout',  s.scanner?.libreqos_update_timeout  ?? 300);
+  g('set-wan-interval',    s.wan_service?.default_interval     ?? 300);
+  g('set-wan-error-retry', s.wan_service?.error_retry_interval ?? 30);
+  g('set-rebalance-ratio', s.wan_service?.rebalance_imbalance_ratio ?? 1.5);
+  g('set-manual-cutoff',   s.wan_service?.manual_rebalance_active_cutoff ?? 1200);
+  g('set-min-dl-pct',      pct(s.rates?.min_dl_rate_percentage ?? 0));
+  g('set-min-ul-pct',      pct(s.rates?.min_ul_rate_percentage ?? 0));
+  g('set-max-dl-pct',      pct(s.rates?.max_dl_rate_percentage ?? 1.15));
+  g('set-max-ul-pct',      pct(s.rates?.max_ul_rate_percentage ?? 1.15));
+  g('set-default-dl-bw',   s.rates?.default_dl_bandwidth       ?? 100);
+  g('set-default-ul-bw',   s.rates?.default_ul_bandwidth       ?? 100);
+  g('set-id-length',       s.rates?.id_length                  ?? 8);
+  g('set-parent-mult',     s.topology?.parent_bandwidth_multiplier ?? 1.1);
+  g('set-skew-ratio',      s.topology?.skew_warn_ratio         ?? 2.0);
+  g('set-cpu-rebalance',   s.topology?.cpu_rebalance_ratio     ?? 1.5);
+  g('set-sticky-cpu',      s.topology?.sticky_cpu_assignment   ?? true);
+  g('set-node-ids',        s.topology?.node_ids                ?? true);
+  g('set-virtual-sites',   s.topology?.virtual_site_nodes      ?? false);
+  g('set-tc-u16',          s.database?.tc_u16_warn_threshold   ?? 60000);
+  g('set-circuit-cap',     s.database?.mapped_circuit_warn_threshold ?? 1000);
+  g('set-mt-group',        s.gui?.expected_mt_group            ?? 'API_READ');
+  g('set-core-group',      s.gui?.expected_core_group          ?? 'API_WRITE');
+  g('set-login-attempts',  s.gui?.login_max_attempts           ?? 5);
+  g('set-login-lockout',   s.gui?.login_lockout_seconds        ?? 60);
 }
 
 async function saveAppSettings() {
-  const iv   = id => document.getElementById(id)?.value ?? '';
-  const int_ = id => parseInt(iv(id))   || 0;
-  const flt  = id => parseFloat(iv(id)) || 0;
+  const el   = id => document.getElementById(id);
+  // A field's number, or the fallback when it is empty / not a number (0 is kept).
+  const num  = (id, fb) => { const v = parseFloat(el(id)?.value); return Number.isFinite(v) ? v : fb; };
+  const int_ = (id, fb) => Math.round(num(id, fb));
+  const chk  = id => !!el(id)?.checked;
 
-  const content = {
-    scanner: {
-      scan_interval:        int_('set-scan-interval') || 600,
-      error_retry_interval: int_('set-error-retry')   || 30,
-    },
-    wan_service: {
-      default_interval:     int_('set-wan-interval')       || 300,
-      error_retry_interval: int_('set-wan-error-retry')    || 30,
-      rebalance_threshold:  flt('set-rebalance-threshold') || 1.10,
-    },
-    rates: {
-      min_dl_rate_percentage: (int_('set-min-dl-pct') || 50) / 100,
-      min_ul_rate_percentage: (int_('set-min-ul-pct') || 50) / 100,
-      max_dl_rate_percentage: (int_('set-max-dl-pct') || 100) / 100,
-      max_ul_rate_percentage: (int_('set-max-ul-pct') || 100) / 100,
-      default_dl_bandwidth:   int_('set-default-dl-bw') || 100,
-      default_ul_bandwidth:   int_('set-default-ul-bw') || 100,
-      id_length:              int_('set-id-length')      || 8,
-    },
-    gui: {
-      expected_mt_group:   iv('set-mt-group').trim(),
-      expected_core_group: iv('set-core-group').trim(),
-    },
-  };
+  const s = JSON.parse(JSON.stringify(appSettings || {}));
+  const sec = name => (s[name] = (s[name] && typeof s[name] === 'object') ? s[name] : {});
+
+  Object.assign(sec('scanner'), {
+    scan_interval:           int_('set-scan-interval', 600),
+    error_retry_interval:    int_('set-error-retry', 30),
+    connect_retries:         int_('set-connect-retries', 3),
+    connect_retry_delay:     num('set-connect-delay', 5),
+    libreqos_update_command: (el('set-update-cmd')?.value ?? '').trim(),
+    libreqos_update_timeout: int_('set-update-timeout', 300),
+  });
+  Object.assign(sec('wan_service'), {
+    default_interval:               int_('set-wan-interval', 300),
+    error_retry_interval:           int_('set-wan-error-retry', 30),
+    rebalance_imbalance_ratio:      num('set-rebalance-ratio', 1.5),
+    manual_rebalance_active_cutoff: int_('set-manual-cutoff', 1200),
+  });
+  delete s.wan_service.rebalance_threshold;   // replaced by rebalance_imbalance_ratio
+  Object.assign(sec('rates'), {
+    min_dl_rate_percentage: num('set-min-dl-pct', 0) / 100,
+    min_ul_rate_percentage: num('set-min-ul-pct', 0) / 100,
+    max_dl_rate_percentage: num('set-max-dl-pct', 115) / 100,
+    max_ul_rate_percentage: num('set-max-ul-pct', 115) / 100,
+    default_dl_bandwidth:   int_('set-default-dl-bw', 100),
+    default_ul_bandwidth:   int_('set-default-ul-bw', 100),
+    id_length:              int_('set-id-length', 8),
+  });
+  Object.assign(sec('topology'), {
+    parent_bandwidth_multiplier: num('set-parent-mult', 1.1),
+    skew_warn_ratio:             num('set-skew-ratio', 2.0),
+    cpu_rebalance_ratio:         num('set-cpu-rebalance', 1.5),
+    sticky_cpu_assignment:       chk('set-sticky-cpu'),
+    node_ids:                    chk('set-node-ids'),
+    virtual_site_nodes:          chk('set-virtual-sites'),
+  });
+  Object.assign(sec('database'), {
+    tc_u16_warn_threshold:         int_('set-tc-u16', 60000),
+    mapped_circuit_warn_threshold: int_('set-circuit-cap', 1000),
+  });
+  Object.assign(sec('gui'), {
+    expected_mt_group:     (el('set-mt-group')?.value ?? '').trim(),
+    expected_core_group:   (el('set-core-group')?.value ?? '').trim(),
+    login_max_attempts:    int_('set-login-attempts', 5),
+    login_lockout_seconds: int_('set-login-lockout', 60),
+  });
 
   const r = await fetch('/api/settings', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({content}),
+    body: JSON.stringify({content: s}),
   });
   const d = await r.json();
   if (d.ok) {
+    appSettings = s;
     toast('Settings saved — restart services for changes to take effect');
   } else {
     toast(d.error || 'Save failed', false);

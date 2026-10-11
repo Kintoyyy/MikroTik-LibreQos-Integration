@@ -7,14 +7,12 @@ User=root
 Group=root
 WorkingDirectory=/opt/libreqos/src
 Environment="VIRTUAL_ENV=/opt/libreqos/venv"
-Environment="PATH=/opt/libreqos/venv/bin:$PATH"
+# systemd does not expand $PATH here, so spell the full search path out
+Environment="PATH=/opt/libreqos/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/opt/libreqos/venv/bin/python3 /opt/libreqos/src/updatecsv.py
 Restart=always
 RestartSec=10
 Environment="PYTHONUNBUFFERED=1"
-PermissionsStartOnly=true
-ExecStartPre=/bin/chown -R root:root /opt/libreqos/src
-ExecStartPre=/bin/chmod -R 755 /opt/libreqos/src
 
 [Install]
 WantedBy=multi-user.target

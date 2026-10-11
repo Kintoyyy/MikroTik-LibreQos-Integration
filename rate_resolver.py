@@ -2,7 +2,6 @@ import re
 import random
 import string
 import logging
-from datetime import datetime
 
 from settings import (
     MIN_DL_RATE_PERCENTAGE, MIN_UL_RATE_PERCENTAGE,
@@ -74,15 +73,25 @@ class RateResolver:
                 return rx, tx
         return None
 
+    # LibreQoS rejects ShapedDevices.csv rows with min < 1 Mbps or max < 2 Mbps.
+    MIN_RATE_FLOOR = 1
+    MAX_RATE_FLOOR = 2
+
     @staticmethod
     def calculate_min_rates(max_rx, max_tx):
+        """Min (guaranteed) rate = max x MIN_*_RATE_PERCENTAGE, at least 1 Mbps and never above max."""
         try:
             rx, tx = float(max_rx), float(max_tx)
         except (ValueError, TypeError):
             rx, tx = 0, 0
+
+        def _min(max_rate, pct):
+            floor = RateResolver.MIN_RATE_FLOOR
+            return min(max(int(max_rate * pct), floor), max(int(max_rate), floor))
+
         return (
-            max(int(rx * RateResolver.MIN_DL_RATE_PERCENTAGE), 1),
-            max(int(tx * RateResolver.MIN_UL_RATE_PERCENTAGE), 1),
+            _min(rx, RateResolver.MIN_DL_RATE_PERCENTAGE),
+            _min(tx, RateResolver.MIN_UL_RATE_PERCENTAGE),
         )
 
     @staticmethod
@@ -92,16 +101,22 @@ class RateResolver:
         except (ValueError, TypeError):
             rx_f, tx_f = 0, 0
         return (
-            max(int(rx_f * RateResolver.MAX_DL_RATE_PERCENTAGE), 1),
-            max(int(tx_f * RateResolver.MAX_UL_RATE_PERCENTAGE), 1),
+            max(int(rx_f * RateResolver.MAX_DL_RATE_PERCENTAGE), RateResolver.MAX_RATE_FLOOR),
+            max(int(tx_f * RateResolver.MAX_UL_RATE_PERCENTAGE), RateResolver.MAX_RATE_FLOOR),
         )
 
     @staticmethod
-    def build_comment(source, rate_str, rate_failed, scan_time):
-        """Format: 'source | rate | YYYY-MM-DD HH:MM:SS'"""
+    def build_comment(source, rate_str, rate_failed, label=''):
+        """
+        Format: 'source | rate' or 'source | label | rate'.
+        No timestamp: the comment is part of change detection, and a value
+        that differs every scan would make every device look updated.
+        The last_seen column already records when a device was seen.
+        """
         rate_label = '[default]' if rate_failed else (rate_str or '[default]')
-        ts = datetime.fromtimestamp(scan_time).strftime('%Y-%m-%d %H:%M:%S')
-        return f"{source} | {rate_label} | {ts}"
+        if label:
+            return f"{source} | {label} | {rate_label}"
+        return f"{source} | {rate_label}"
 
     @staticmethod
     def extract_first_rate(text):

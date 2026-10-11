@@ -13,15 +13,20 @@ import secrets
 import functools
 import socket
 import re
+import hmac
+import contextlib
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 from wan_manager import WANManager
+from rate_resolver import RateResolver
 from settings import (
     MANAGED_SERVICES as _SETTINGS_MANAGED_SERVICES,
     EXPECTED_MT_GROUP as _SETTINGS_MT_GROUP,
     EXPECTED_MT_POLICY as _SETTINGS_MT_POLICY,
     EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
     EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
+    LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF,
+    atomic_write_text,
 )
 
 try:
@@ -37,6 +42,8 @@ except ImportError:
     HAS_ROUTEROS_API = False
 
 app = Flask(__name__)
+# SameSite=Strict: the session cookie is never sent on cross-site requests (CSRF).
+app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True)
 
 # ---------------------------------------------------------------------------
 # Path resolution: prefer the installed production location, fall back to
@@ -84,14 +91,39 @@ def _load_auth() -> dict:
         "salt":          salt,
         "secret_key":    secret_key,
     }
-    AUTH_PATH.write_text(json.dumps(data, indent=2))
+    _save_auth(data)
     return data
+
+def _save_auth(data: dict):
+    # 0600: the secret_key signs session cookies; anyone who can read it can log in.
+    atomic_write_text(AUTH_PATH, json.dumps(data, indent=2), mode=0o600)
 
 _auth = _load_auth()
 app.secret_key = _auth["secret_key"]
+try:
+    os.chmod(AUTH_PATH, 0o600)  # tighten files created by older versions
+except OSError:
+    pass
 
 def _verify_password(password: str) -> bool:
-    return _hash_password(password, _auth["salt"]) == _auth["password_hash"]
+    return hmac.compare_digest(_hash_password(password, _auth["salt"]), _auth["password_hash"])
+
+# Failed logins per client IP: {ip: (failure_count, locked_until)}
+_login_failures: dict = {}
+_login_lock = threading.Lock()
+
+@app.before_request
+def _csrf_guard():
+    """
+    Reject state-changing API calls that lack the X-Requested-With header.
+    The frontend adds it to every fetch; a cross-site form or image cannot
+    set custom headers, and a cross-site fetch with one needs CORS approval
+    this app never grants.
+    """
+    if (request.path.startswith("/api/")
+            and request.method not in ("GET", "HEAD", "OPTIONS")
+            and request.headers.get("X-Requested-With") != "fetch"):
+        return jsonify({"ok": False, "error": "Missing X-Requested-With header"}), 403
 
 def require_auth(f):
     @functools.wraps(f)
@@ -372,9 +404,28 @@ def _connect_router_api(router: dict):
         plaintext_login=True,
     )
 
+@contextlib.contextmanager
 def _connect_for_wan(router: dict):
-    """Adapter for WANManager: returns API object (not pool)."""
-    return _connect_router_api(router).get_api()
+    """Adapter for WANManager: yields an API object (or None) and closes the connection."""
+    pool = api = None
+    try:
+        pool = _connect_router_api(router)
+        api = pool.get_api()
+    except Exception:
+        api = None
+    try:
+        yield api
+    finally:
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
+
+
+def _wan_enabled(cfg: dict) -> bool:
+    """WAN assignment is optional and off unless explicitly enabled."""
+    return bool((cfg.get("wan_assignment") or {}).get("enabled", False))
 
 _wan_manager = WANManager(_connect_for_wan)
 
@@ -406,7 +457,8 @@ def _broadcast_loop():
             dead = []
             for q in _metric_listeners:
                 try:
-                    q.append(data)
+                    if len(q) < 30:   # a stalled client must not grow memory forever
+                        q.append(data)
                 except Exception:
                     dead.append(q)
             for q in dead:
@@ -435,10 +487,28 @@ def auth_check():
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    data = request.get_json(force=True)
-    if _verify_password(data.get("password", "")):
+    ip  = request.remote_addr or "?"
+    now = time.time()
+    with _login_lock:
+        count, locked_until = _login_failures.get(ip, (0, 0))
+        if locked_until > now:
+            wait = int(locked_until - now) + 1
+            return jsonify({"ok": False, "error": f"Too many attempts — try again in {wait}s"}), 429
+
+    data = request.get_json(silent=True) or {}
+    if _verify_password(str(data.get("password", ""))):
+        with _login_lock:
+            _login_failures.pop(ip, None)
+        session.clear()
         session["authed"] = True
         return jsonify({"ok": True})
+
+    with _login_lock:
+        count += 1
+        if count >= LOGIN_MAX_ATTEMPTS:
+            _login_failures[ip] = (0, now + LOGIN_LOCKOUT_SECONDS)
+        else:
+            _login_failures[ip] = (count, 0)
     return jsonify({"ok": False, "error": "Invalid password"}), 401
 
 @app.route("/api/logout", methods=["POST"])
@@ -450,9 +520,9 @@ def logout():
 @require_auth
 def change_password():
     global _auth
-    data = request.get_json(force=True)
-    current  = data.get("current", "")
-    new_pass = data.get("new", "")
+    data = request.get_json(silent=True) or {}
+    current  = str(data.get("current", ""))
+    new_pass = str(data.get("new", ""))
     if not _verify_password(current):
         return jsonify({"ok": False, "error": "Current password is incorrect"}), 400
     if len(new_pass) < 6:
@@ -460,7 +530,7 @@ def change_password():
     salt = secrets.token_hex(16)
     _auth["salt"]          = salt
     _auth["password_hash"] = _hash_password(new_pass, salt)
-    AUTH_PATH.write_text(json.dumps(_auth, indent=2))
+    _save_auth(_auth)
     return jsonify({"ok": True})
 
 
@@ -498,15 +568,31 @@ def get_config():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+def _config_error(content):
+    """Return why content is not a usable config.json, or None."""
+    if not isinstance(content, dict):
+        return "config must be a JSON object"
+    bras = content.get("bras", [])
+    if not isinstance(bras, list):
+        return "'bras' must be a list"
+    for i, r in enumerate(bras):
+        if not isinstance(r, dict) or not str(r.get("name", "")).strip() or not str(r.get("address", "")).strip():
+            return f"BRAS #{i + 1} needs a name and an address"
+    if not isinstance(content.get("cores", []), list):
+        return "'cores' must be a list"
+    return None
+
+
 @app.route("/api/config", methods=["POST"])
 @require_auth
 def save_config():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(silent=True) or {}
         content = data.get("content")
-        # validate JSON
-        json.dumps(content)
-        CONFIG_PATH.write_text(json.dumps(content, indent=4))
+        err = _config_error(content)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        atomic_write_text(CONFIG_PATH, json.dumps(content, indent=4))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -526,10 +612,11 @@ def get_settings():
 @require_auth
 def save_settings():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(silent=True) or {}
         content = data.get("content")
-        json.dumps(content)  # validate serialisable
-        SETTINGS_PATH.write_text(json.dumps(content, indent=4))
+        if not isinstance(content, dict):
+            return jsonify({"ok": False, "error": "settings must be a JSON object"}), 400
+        atomic_write_text(SETTINGS_PATH, json.dumps(content, indent=4))
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -555,9 +642,19 @@ def save_yaml(name):
     if not path:
         return jsonify({"ok": False, "error": "unknown file"}), 404
     try:
-        data    = request.get_json(force=True)
+        data    = request.get_json(silent=True) or {}
         content = data.get("content", "")
         apply   = data.get("apply_netplan", False)
+
+        if str(path).endswith(".json"):
+            try:
+                parsed = json.loads(content)
+            except ValueError as je:
+                return jsonify({"ok": False, "error": f"Invalid JSON: {je}"}), 400
+            if name == "config_json":
+                err = _config_error(parsed)
+                if err:
+                    return jsonify({"ok": False, "error": err}), 400
 
         # Files under /etc/netplan are root-owned; use sudo to write them.
         # Other files (under /opt/libreqos) are writable directly by www-data.
@@ -583,7 +680,7 @@ def save_yaml(name):
             except Exception as e:
                 return jsonify({"ok": False, "error": str(e)}), 500
         else:
-            path.write_text(content)
+            atomic_write_text(path, content)
 
         netplan_out = None
         if apply:
@@ -633,9 +730,27 @@ def _random_id(length=8):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
 def _db_con():
-    con = sqlite3.connect(str(DB_PATH))
+    # timeout: the scanner and wan_service write to the same DB
+    con = sqlite3.connect(str(DB_PATH), timeout=30)
     con.row_factory = sqlite3.Row
     return con
+
+
+def _device_rates(d: dict):
+    """
+    Validate GUI-entered max rates and derive min rates the same way the
+    scanner does. Returns (dl_max, ul_max, dl_min, ul_min) or raises ValueError.
+    """
+    try:
+        dl = int(float(d.get("download_max_mbps", 100)))
+        ul = int(float(d.get("upload_max_mbps", 100)))
+    except (TypeError, ValueError):
+        raise ValueError("Download and upload rates must be numbers")
+    floor = RateResolver.MAX_RATE_FLOOR
+    if dl < floor or ul < floor:
+        raise ValueError(f"Download and upload max must be at least {floor} Mbps")
+    dl_min, ul_min = RateResolver.calculate_min_rates(dl, ul)
+    return dl, ul, dl_min, ul_min
 
 
 @app.route("/api/devices")
@@ -644,8 +759,7 @@ def get_devices():
     try:
         if not DB_PATH.exists():
             return jsonify({"ok": False, "error": "devices.db not found"}), 404
-        con = sqlite3.connect(str(DB_PATH))
-        con.row_factory = sqlite3.Row
+        con = _db_con()
         cur = con.execute("""
             SELECT code, circuit_id, device_id, parent_node, mac, ipv4, ipv6,
                    download_min_mbps, upload_min_mbps,
@@ -667,8 +781,7 @@ def wan_stats():
     """Return per-WAN device counts and bandwidth totals, plus wan_assignment config."""
     try:
         cfg = _load_config()
-        wan_cfg = cfg.get("wan_assignment", {})
-        enabled = wan_cfg.get("enabled", True)
+        enabled = _wan_enabled(cfg)
 
         stats = {"enabled": enabled, "wans": []}
         if not enabled:
@@ -677,8 +790,7 @@ def wan_stats():
         if not DB_PATH.exists():
             return jsonify({"ok": True, **stats})
 
-        con = sqlite3.connect(str(DB_PATH))
-        con.row_factory = sqlite3.Row
+        con = _db_con()
         rows = con.execute("""
             SELECT core_name, wan_name,
                    COUNT(*) AS device_count,
@@ -696,7 +808,7 @@ def wan_stats():
         limits = {}
         for core in cfg.get("cores", []):
             for i, wan in enumerate(core.get("wans", []), start=1):
-                al = wan.get("address_list", f"WAN{i}")
+                al = wan.get("address_list") or f"WAN{i}"
                 limits[(core["name"], al)] = {
                     "dl_limit": wan.get("download_limit", 0),
                     "ul_limit": wan.get("upload_limit", 0),
@@ -747,7 +859,7 @@ def wan_rebalance():
     try:
         cfg = _load_config()
         wan_cfg = cfg.get("wan_assignment", {})
-        if not wan_cfg.get("enabled", True):
+        if not _wan_enabled(cfg):
             return jsonify({"ok": False, "error": "WAN assignment is disabled"}), 400
 
         cores = cfg.get("cores", [])
@@ -766,9 +878,9 @@ def wan_rebalance():
             excl_sql = f"(source NOT IN ({placeholders}) OR source IS NULL) AND "
 
         # Consider stale dynamic rows as offline for manual rebalance cleanup.
-        active_cutoff = time.time() - 1200
+        active_cutoff = time.time() - WAN_MANUAL_ACTIVE_CUTOFF
 
-        con = sqlite3.connect(str(DB_PATH))
+        con = _db_con()
         try:
             active_codes = [r[0] for r in con.execute(
                 "SELECT code FROM devices WHERE " + excl_sql + "(is_static = 1 OR last_seen >= ?)",
@@ -841,7 +953,7 @@ def wan_purge():
 
     # ── Step 2: clear WAN assignments in DB ──────────────────────────────────
     try:
-        con = sqlite3.connect(str(DB_PATH))
+        con = _db_con()
         try:
             con.execute("UPDATE devices SET core_name='', wan_name=''")
             con.commit()
@@ -858,6 +970,10 @@ def wan_purge():
             "errors": purge_errors,
         }), 502
 
+    # With WAN assignment off, purge only cleans up — nothing is reassigned.
+    if not _wan_enabled(cfg):
+        return jsonify({"ok": True, "purged": purge_results, "assigned": 0, "synced": None})
+
     # ── Step 3: rebalance ────────────────────────────────────────────────────
     try:
         excluded = []
@@ -871,8 +987,8 @@ def wan_purge():
             placeholders = ",".join("?" * len(excluded))
             excl_sql = f"(source NOT IN ({placeholders}) OR source IS NULL) AND "
 
-        active_cutoff = time.time() - 1200
-        con = sqlite3.connect(str(DB_PATH))
+        active_cutoff = time.time() - WAN_MANUAL_ACTIVE_CUTOFF
+        con = _db_con()
         try:
             active_codes = [r[0] for r in con.execute(
                 "SELECT code FROM devices WHERE " + excl_sql + "(is_static = 1 OR last_seen >= ?)",
@@ -902,11 +1018,11 @@ def wan_purge():
 @require_auth
 def add_device():
     try:
-        d = request.get_json(force=True)
-        dl = int(d.get("download_max_mbps", 100))
-        ul = int(d.get("upload_max_mbps", 100))
-        dl_min = max(1, int(dl * 0.5))
-        ul_min = max(1, int(ul * 0.5))
+        d = request.get_json(silent=True) or {}
+        try:
+            dl, ul, dl_min, ul_min = _device_rates(d)
+        except ValueError as ve:
+            return jsonify({"ok": False, "error": str(ve)}), 400
         code = d.get("code", "").strip()
         if not code:
             return jsonify({"ok": False, "error": "Code is required"}), 400
@@ -954,11 +1070,11 @@ def add_device():
 @require_auth
 def update_device(code):
     try:
-        d = request.get_json(force=True)
-        dl = int(d.get("download_max_mbps", 100))
-        ul = int(d.get("upload_max_mbps", 100))
-        dl_min = max(1, int(dl * 0.5))
-        ul_min = max(1, int(ul * 0.5))
+        d = request.get_json(silent=True) or {}
+        try:
+            dl, ul, dl_min, ul_min = _device_rates(d)
+        except ValueError as ve:
+            return jsonify({"ok": False, "error": str(ve)}), 400
         ipv4 = d.get("ipv4", "").strip() or None
         ipv6 = d.get("ipv6", "").strip() or None
         con = _db_con()
@@ -1054,23 +1170,15 @@ def restart_ubuntu_host():
 # ---------------------------------------------------------------------------
 GITHUB_REPO_URL = "https://github.com/Kintoyyy/MikroTik-LibreQos-Integration"
 
-# Application code kept in sync with GitHub by "Update App". Deliberately
-# excludes anything holding live state or credentials — config.json,
-# settings.json, gui_auth.json, devices.db, ShapedDevices.csv, network.json,
-# lqos.conf, and the systemd unit files are never touched, so an update
-# can't silently roll back routers, WAN assignments, or the login password.
-UPDATE_CODE_FILES = [
-    "gui.py",
-    "updatecsv.py",
-    "wan_service.py",
-    "rate_resolver.py",
-    "device_database.py",
-    "node_assigner.py",
-    "router_scanner.py",
-    "wan_manager.py",
-    "settings.py",
-]
-UPDATE_SERVICES = ["updatecsv.service", "wan_service.service"]  # gui.service restarts itself, separately, last
+# "Update App" replaces every top-level *.py file plus templates/ with the
+# GitHub copy, so modules added later are picked up too. Anything holding
+# live state or credentials — config.json, settings.json, gui_auth.json,
+# devices.db, ShapedDevices.csv, network.json, lqos.conf, and the systemd
+# unit files — is never touched, so an update can't silently roll back
+# routers, WAN assignments, or the login password.
+# Services are try-restarted: stopped or disabled ones (e.g. wan_service with
+# WAN assignment off) stay that way. gui.service restarts itself, separately, last.
+UPDATE_SERVICES = ["updatecsv.service", "wan_service.service"]
 
 
 def _installed_version_path():
@@ -1099,7 +1207,7 @@ def update_app():
     """
     Pull the latest code from GitHub and reinstall it in place.
 
-    Only the files in UPDATE_CODE_FILES plus templates/ are replaced. A copy
+    Only the top-level *.py files plus templates/ are replaced. A copy
     of every file about to be overwritten is stashed in a timestamped backup
     folder next to gui.py first, so a bad update can be rolled back by hand.
     """
@@ -1123,10 +1231,8 @@ def update_app():
         backup_dir.mkdir(parents=True, exist_ok=True)
 
         updated = []
-        for name in UPDATE_CODE_FILES:
-            src = src_root / name
-            if not src.exists():
-                continue
+        for src in sorted(src_root.glob("*.py")):
+            name = src.name
             dest = SCRIPT_DIR / name
             if dest.exists():
                 shutil.copy2(dest, backup_dir / name)
@@ -1152,7 +1258,7 @@ def update_app():
         restart_errors = []
         for svc in UPDATE_SERVICES:
             try:
-                result = _systemctl("restart", svc, capture_output=True, text=True)
+                result = _systemctl("try-restart", svc, capture_output=True, text=True)
                 if result.returncode != 0:
                     restart_errors.append(f"{svc}: {result.stderr.strip()}")
             except Exception as ex:
@@ -1206,7 +1312,7 @@ def _get_service_info(name):
     try:
         info = _systemctl(
             "show", svc,
-            "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp,LoadState",
+            "--property=ActiveState,SubState,MainPID,ExecMainStartTimestamp,LoadState,UnitFileState",
             capture_output=True, text=True
         )
         props = {}
@@ -1223,6 +1329,7 @@ def _get_service_info(name):
         "pid":       props.get("MainPID",     "0"),
         "started":   props.get("ExecMainStartTimestamp", ""),
         "loaded":    props.get("LoadState",   "not-found"),
+        "enabled":   props.get("UnitFileState", ""),
     }
 
 @app.route("/api/services")
@@ -1242,10 +1349,18 @@ def get_services():
 def manage_service(name, action):
     if name not in MANAGED_SERVICES:
         return jsonify({"ok": False, "error": "unknown service"}), 400
-    if action not in ("start", "stop", "restart"):
+    # enable/disable also start/stop the unit and keep it that way across reboots
+    commands = {
+        "start":   ["start"],
+        "stop":    ["stop"],
+        "restart": ["restart"],
+        "enable":  ["enable", "--now"],
+        "disable": ["disable", "--now"],
+    }
+    if action not in commands:
         return jsonify({"ok": False, "error": "invalid action"}), 400
     try:
-        result = _systemctl(action, _svc_name(name), capture_output=True, text=True)
+        result = _systemctl(*commands[action], _svc_name(name), capture_output=True, text=True)
         if result.returncode != 0:
             return jsonify({"ok": False, "error": result.stderr.strip()}), 500
         time.sleep(1)
@@ -1307,7 +1422,7 @@ def flush_data():
     # Clear devices.db
     try:
         if DB_PATH.exists():
-            con = sqlite3.connect(str(DB_PATH))
+            con = _db_con()
             con.execute("DELETE FROM devices")
             con.commit()
             con.close()
@@ -1320,14 +1435,14 @@ def flush_data():
     # Clear ShapedDevices.csv (write header only)
     try:
         header = "Circuit ID,Circuit Name,Device ID,Device Name,Parent Node,MAC,IPv4,IPv6,Download Min Mbps,Upload Min Mbps,Download Max Mbps,Upload Max Mbps,Comment\n"
-        YAML_FILES["shaped_devices"].write_text(header)
+        atomic_write_text(YAML_FILES["shaped_devices"], header)
         results["ShapedDevices.csv"] = "cleared"
     except Exception as e:
         errors.append(f"ShapedDevices.csv: {e}")
 
     # Clear network.json (write empty object)
     try:
-        YAML_FILES["network_json"].write_text("{}\n")
+        atomic_write_text(YAML_FILES["network_json"], "{}\n")
         results["network.json"] = "cleared"
     except Exception as e:
         errors.append(f"network.json: {e}")
@@ -1494,7 +1609,7 @@ def dashboard_mikrotik_resource():
     try:
         cfg = _load_config()
         bras_stats  = _fetch_router_stats(cfg.get("bras") or [])
-        cores_stats = _fetch_router_stats(cfg.get("cores") or [])
+        cores_stats = _fetch_router_stats(cfg.get("cores") or []) if _wan_enabled(cfg) else []
         return jsonify({
             "ok": True,
             "count": len(bras_stats) + len(cores_stats),
@@ -1709,7 +1824,7 @@ def get_lqos_conf():
 def save_lqos_conf():
     path = _find_lqos_conf()
     try:
-        updates = request.get_json(force=True).get("updates", {})
+        updates = (request.get_json(silent=True) or {}).get("updates", {})
         # updates = { "section|key": value, ...} where section="" means top-level
         if not path.exists():
             return jsonify({"ok": False, "error": "lqos.conf not found"}), 404
@@ -1720,7 +1835,7 @@ def save_lqos_conf():
             else:
                 sec, k = None, field_key
             text = _toml_update(text, sec or None, k, value)
-        path.write_text(text)
+        atomic_write_text(path, text)
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

@@ -7,7 +7,8 @@ User=root
 Group=root
 WorkingDirectory=/opt/libreqos/src
 Environment="VIRTUAL_ENV=/opt/libreqos/venv"
-Environment="PATH=/opt/libreqos/venv/bin:$PATH"
+# systemd does not expand $PATH here, so spell the full search path out
+Environment="PATH=/opt/libreqos/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/opt/libreqos/venv/bin/python3 /opt/libreqos/src/gui.py
 Restart=always
 RestartSec=5

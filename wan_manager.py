@@ -3,15 +3,23 @@ import ipaddress
 import logging
 import time
 
-from settings import WAN_REBALANCE_THRESHOLD, WAN_FULL_RECONCILE_INTERVAL
+from settings import WAN_REBALANCE_IMBALANCE, WAN_FULL_RECONCILE_INTERVAL
 
 logger = logging.getLogger(__name__)
 
 MANAGED_COMMENT = 'libreqos-managed'
 
 
+def _wan_list(core):
+    """[(wan_name, wan_cfg)] for a core; wan_name is the address-list name."""
+    return [
+        (wan.get('address_list') or f"WAN{i}", wan)
+        for i, wan in enumerate(core.get('wans', []), start=1)
+    ]
+
+
 class WANManager:
-    WAN_REBALANCE_THRESHOLD = WAN_REBALANCE_THRESHOLD
+    WAN_REBALANCE_IMBALANCE = WAN_REBALANCE_IMBALANCE
     # Even when the in-memory cache says nothing changed, force a live
     # re-verify against the router at least this often. This is the safety
     # net against drift: manual router edits, another process touching the
@@ -21,7 +29,9 @@ class WANManager:
     FULL_RECONCILE_INTERVAL = WAN_FULL_RECONCILE_INTERVAL
 
     def __init__(self, connect_fn):
-        # connect_fn is connect_to_router from updatecsv.py, injected to avoid circular imports
+        # connect_fn(router) is a context manager yielding a RouterOS API object
+        # (or None) and closing the connection on exit — e.g. RouterScanner.open_api.
+        # Injected to avoid circular imports.
         self._connect = connect_fn
         # Per-core cache: {core_address: {(list_name, ip): entry_id}}
         # Populated on first contact, updated incrementally — avoids re-fetching every cycle.
@@ -31,20 +41,31 @@ class WANManager:
         # Per-core timestamp of the last live reconciliation against the router.
         self._last_verified: dict = {}
 
+    @staticmethod
+    def _utilization(w):
+        cap = w['dl_limit'] + w['ul_limit']
+        return (w['used_dl'] + w['used_ul']) / cap if cap > 0 else float('inf')
+
     def assign_wan_nodes(self, conn, cores, wan_sources=None):
         """
-        Assign only NEW (unassigned) devices to WANs using greedy bin-packing
-        weighted by WAN capacity. Existing assignments are never touched, so the
+        Assign NEW (unassigned) devices to WANs using greedy bin-packing
+        weighted by WAN capacity. Existing assignments are kept, so the
         address lists on core routers only receive incremental adds/removes.
+
+        When there are no new devices and the WANs are out of balance (the
+        busiest WAN's utilization is more than WAN_REBALANCE_IMBALANCE times
+        the least busy one's), as few devices as possible are moved to even
+        them out — every move changes a subscriber's exit WAN and breaks
+        their NAT sessions.
+
         Returns {(core_name, wan_name): (total_dl_mbps, total_ul_mbps)}.
         """
         wans = []
         for core in cores:
-            core_name = core['name']
-            for i, wan in enumerate(core.get('wans', []), start=1):
+            for wan_name, wan in _wan_list(core):
                 wans.append({
-                    'core':     core_name,
-                    'wan':      wan.get('address_list', f"WAN{i}"),
+                    'core':     core['name'],
+                    'wan':      wan_name,
                     'dl_limit': wan.get('download_limit', 1000),
                     'ul_limit': wan.get('upload_limit', 1000),
                     'used_dl':  0,
@@ -54,16 +75,6 @@ class WANManager:
         if not wans:
             logger.info("No cores/WANs defined — skipping WAN assignment")
             return {}
-
-        # Seed each WAN's current load from the DB so new devices are balanced
-        # against what is already assigned, not from zero.
-        for w in wans:
-            row = conn.execute(
-                "SELECT COALESCE(SUM(download_max_mbps),0), COALESCE(SUM(upload_max_mbps),0) "
-                "FROM devices WHERE core_name=? AND wan_name=?",
-                (w['core'], w['wan'])
-            ).fetchone()
-            w['used_dl'], w['used_ul'] = row[0], row[1]
 
         if wan_sources is None:
             wan_sources = {}
@@ -78,70 +89,132 @@ class WANManager:
             placeholders = ','.join('?' * len(excluded))
             excl_sql = f" AND (source NOT IN ({placeholders}) OR source IS NULL)"
 
+            # Devices of a source that is now excluded leave the WAN lists.
+            cur = conn.execute(
+                f"UPDATE devices SET core_name='', wan_name='' WHERE source IN ({placeholders}) "
+                "AND (COALESCE(core_name, '') != '' OR COALESCE(wan_name, '') != '')",
+                excluded
+            )
+            if cur.rowcount:
+                logger.info(f"Cleared WAN assignment of {cur.rowcount} device(s) from excluded sources")
+
+        # Devices pinned to a WAN that is no longer configured get reassigned.
+        configured = {(w['core'], w['wan']) for w in wans}
+        for core_name, wan_name in conn.execute(
+            "SELECT DISTINCT core_name, wan_name FROM devices "
+            "WHERE COALESCE(core_name, '') != '' OR COALESCE(wan_name, '') != ''"
+        ).fetchall():
+            if (core_name, wan_name) not in configured:
+                cur = conn.execute(
+                    "UPDATE devices SET core_name='', wan_name='' WHERE core_name IS ? AND wan_name IS ?",
+                    (core_name, wan_name)
+                )
+                logger.info(
+                    f"WAN {core_name}/{wan_name} is no longer configured — "
+                    f"reassigning {cur.rowcount} device(s)"
+                )
+
+        # Seed each WAN's current load from the DB so new devices are balanced
+        # against what is already assigned, not from zero.
+        for w in wans:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(download_max_mbps),0), COALESCE(SUM(upload_max_mbps),0) "
+                "FROM devices WHERE core_name=? AND wan_name=?" + excl_sql,
+                [w['core'], w['wan']] + excluded
+            ).fetchone()
+            w['used_dl'], w['used_ul'] = row[0], row[1]
+
         # Only process devices that have not been assigned yet
         new_devices = conn.execute(
             "SELECT code, download_max_mbps, upload_max_mbps FROM devices "
             "WHERE (core_name IS NULL OR core_name = '' OR wan_name IS NULL OR wan_name = '')"
-            + excl_sql + " ORDER BY weight DESC",
+            + excl_sql + " ORDER BY weight DESC, code",
             excluded
         ).fetchall()
 
-        totals = {(w['core'], w['wan']): (w['used_dl'], w['used_ul']) for w in wans}
+        if new_devices:
+            heap = [(self._utilization(w), i) for i, w in enumerate(wans)]
+            heapq.heapify(heap)
 
-        if not new_devices:
-            # Check if any WAN is overloaded beyond the rebalance threshold
-            rebalance_needed = False
-            for w in wans:
-                cap = w['dl_limit'] + w['ul_limit']
-                if cap > 0:
-                    util = (w['used_dl'] + w['used_ul']) / cap
-                    if util > self.WAN_REBALANCE_THRESHOLD:
-                        logger.info(
-                            f"WAN {w['wan']} on {w['core']} utilization {util:.0%} exceeds "
-                            f"threshold {self.WAN_REBALANCE_THRESHOLD:.0%} — triggering rebalance"
-                        )
-                        rebalance_needed = True
-                        break
-
-            if not rebalance_needed:
-                return totals
-
-            # Full rebalance without wiping assignments first: recompute all placements,
-            # then update rows in place.
-            logger.info("Rebalancing all WAN assignments (delta update mode)...")
-            for w in wans:
-                w['used_dl'] = w['used_ul'] = 0
-            new_devices = conn.execute(
-                "SELECT code, download_max_mbps, upload_max_mbps FROM devices"
-                + (excl_sql.replace("AND (source", "WHERE (source") if excl_sql else "")
-                + " ORDER BY weight DESC",
-                excluded
-            ).fetchall()
-
-        def _utilization(w):
-            cap = w['dl_limit'] + w['ul_limit']
-            return (w['used_dl'] + w['used_ul']) / cap if cap > 0 else float('inf')
-
-        heap = [(_utilization(w), i) for i, w in enumerate(wans)]
-        heapq.heapify(heap)
-
-        assignments = []
-        for code, dl, ul in new_devices:
-            ratio, idx = heapq.heappop(heap)
-            wan = wans[idx]
-            assignments.append((wan['core'], wan['wan'], code))
-            wan['used_dl'] += dl
-            wan['used_ul'] += ul
-            heapq.heappush(heap, (_utilization(wan), idx))
+            assignments = []
+            for code, dl, ul in new_devices:
+                _, idx = heapq.heappop(heap)
+                wan = wans[idx]
+                assignments.append((wan['core'], wan['wan'], code))
+                wan['used_dl'] += dl
+                wan['used_ul'] += ul
+                heapq.heappush(heap, (self._utilization(wan), idx))
+            logger.info(f"Assigned {len(new_devices)} new device(s) across {len(wans)} WAN(s)")
+        else:
+            assignments = self._rebalance_moves(conn, wans, excl_sql, excluded)
 
         conn.executemany(
             "UPDATE devices SET core_name=?, wan_name=? WHERE code=?",
             assignments
         )
         conn.commit()
-        logger.info(f"Assigned {len(new_devices)} new device(s) across {len(wans)} WAN(s)")
 
         return {(w['core'], w['wan']): (w['used_dl'], w['used_ul']) for w in wans}
+
+    def _rebalance_moves(self, conn, wans, excl_sql, excluded):
+        """
+        Move as few devices as possible from the busiest WAN to the least busy
+        one until their utilization ratio is within WAN_REBALANCE_IMBALANCE.
+        Updates the in-memory WAN loads and returns [(core, wan, code)] moves.
+        """
+        usable = [w for w in wans if w['dl_limit'] + w['ul_limit'] > 0]
+        if len(usable) < 2:
+            return []
+
+        devices_by_wan = {}
+        for w in usable:
+            devices_by_wan[(w['core'], w['wan'])] = conn.execute(
+                "SELECT code, download_max_mbps, upload_max_mbps FROM devices "
+                "WHERE core_name=? AND wan_name=?" + excl_sql + " ORDER BY weight DESC, code",
+                [w['core'], w['wan']] + excluded
+            ).fetchall()
+
+        moves, moved = [], set()
+        while True:
+            hi = max(usable, key=self._utilization)
+            lo = min(usable, key=self._utilization)
+            u_hi, u_lo = self._utilization(hi), self._utilization(lo)
+            if u_hi == 0 or (u_lo > 0 and u_hi / u_lo <= self.WAN_REBALANCE_IMBALANCE):
+                break
+
+            if not moves:
+                logger.info(
+                    f"WAN imbalance: {hi['core']}/{hi['wan']} at {u_hi:.0%} vs "
+                    f"{lo['core']}/{lo['wan']} at {u_lo:.0%} "
+                    f"(limit {self.WAN_REBALANCE_IMBALANCE:g}x) — moving devices"
+                )
+
+            # Load that, moved from hi to lo, would equalize their utilization.
+            # Moving more than this only flips the imbalance the other way.
+            cap_hi = hi['dl_limit'] + hi['ul_limit']
+            cap_lo = lo['dl_limit'] + lo['ul_limit']
+            target = ((hi['used_dl'] + hi['used_ul']) * cap_lo
+                      - (lo['used_dl'] + lo['used_ul']) * cap_hi) / (cap_hi + cap_lo)
+
+            pick = next(
+                (d for d in devices_by_wan[(hi['core'], hi['wan'])]
+                 if d[0] not in moved and d[1] + d[2] <= target),
+                None
+            )
+            if pick is None:
+                break
+
+            code, dl, ul = pick
+            hi['used_dl'] -= dl
+            hi['used_ul'] -= ul
+            lo['used_dl'] += dl
+            lo['used_ul'] += ul
+            moved.add(code)
+            moves.append((lo['core'], lo['wan'], code))
+
+        if moves:
+            logger.info(f"Rebalance moved {len(moves)} device(s)")
+        return moves
 
     def check_wan_capacity(self, wan_totals, cores):
         """
@@ -150,8 +223,8 @@ class WANManager:
         """
         wan_limits = {}
         for core in cores:
-            for i, wan in enumerate(core.get('wans', []), start=1):
-                wan_limits[(core['name'], wan.get('address_list', f"WAN{i}"))] = (
+            for wan_name, wan in _wan_list(core):
+                wan_limits[(core['name'], wan_name)] = (
                     wan.get('download_limit', 1000),
                     wan.get('upload_limit', 1000),
                 )
@@ -191,8 +264,7 @@ class WANManager:
         so the address-list is smaller and changes less frequently.
         """
         target = set()
-        for i, wan in enumerate(core.get('wans', []), start=1):
-            wan_name = wan.get('address_list', f"WAN{i}")
+        for wan_name, _ in _wan_list(core):
             ips = [row[0] for row in conn.execute(
                 "SELECT ipv4 FROM devices WHERE core_name=? AND wan_name=? AND ipv4 IS NOT NULL",
                 (core['name'], wan_name)
@@ -226,12 +298,8 @@ class WANManager:
         in the same address-list are never adopted, diffed, or removed by us.
         """
         cache = {}
-        wan_names = [
-            wan.get('address_list', f"WAN{i}")
-            for i, wan in enumerate(core.get('wans', []), start=1)
-        ]
         resource = api.get_resource('/ip/firewall/address-list')
-        for wan_name in wan_names:
+        for wan_name, _ in _wan_list(core):
             try:
                 for e in resource.get(list=wan_name):
                     if e.get('address') and '.id' in e and e.get('comment') == MANAGED_COMMENT:
@@ -289,60 +357,60 @@ class WANManager:
                     continue
 
             # Phase 2 — subnets changed, or periodic reconcile is due; verify against live state.
-            api = self._connect(core)
-            if api is None:
-                logger.warning(f"Skipping core {core_name} — connection failed.")
-                self._cache.pop(core_key, None)
-                core_result['error'] = 'connection failed'
-                summary['ok'] = False
-                summary['errors'].append(f"{core_name}: connection failed")
-                summary['cores'].append(core_result)
-                continue
+            with self._connect(core) as api:
+                if api is None:
+                    logger.warning(f"Skipping core {core_name} — connection failed.")
+                    self._cache.pop(core_key, None)
+                    core_result['error'] = 'connection failed'
+                    summary['ok'] = False
+                    summary['errors'].append(f"{core_name}: connection failed")
+                    summary['cores'].append(core_result)
+                    continue
 
-            try:
-                resource = api.get_resource('/ip/firewall/address-list')
+                try:
+                    resource = api.get_resource('/ip/firewall/address-list')
 
-                # Re-fetch from router so we never add subnets already present,
-                # and so any entries added/removed by drift are picked up.
-                self._cache[core_key] = self._build_wan_cache(api, core)
-                cache = self._cache[core_key]
+                    # Re-fetch from router so we never add subnets already present,
+                    # and so any entries added/removed by drift are picked up.
+                    self._cache[core_key] = self._build_wan_cache(api, core)
+                    cache = self._cache[core_key]
 
-                to_add    = target - set(cache)
-                to_remove = set(cache) - target
+                    to_add    = target - set(cache)
+                    to_remove = set(cache) - target
 
-                for key in to_remove:
-                    list_name, subnet = key
-                    try:
-                        resource.remove(id=cache[key])
-                        cache.pop(key, None)
-                        core_result['removed'] += 1
-                        logger.info(f"Removed {subnet} from {list_name} on {core_name}")
-                    except Exception as ex:
-                        # Do NOT pop from cache — keep tracking it so the next
-                        # cycle retries the removal instead of forgetting it.
-                        logger.warning(f"Failed to remove {subnet} from {list_name}: {ex} — will retry")
+                    for key in to_remove:
+                        list_name, subnet = key
+                        try:
+                            resource.remove(id=cache[key])
+                            cache.pop(key, None)
+                            core_result['removed'] += 1
+                            logger.info(f"Removed {subnet} from {list_name} on {core_name}")
+                        except Exception as ex:
+                            # Do NOT pop from cache — keep tracking it so the next
+                            # cycle retries the removal instead of forgetting it.
+                            logger.warning(f"Failed to remove {subnet} from {list_name}: {ex} — will retry")
 
-                for key in to_add:
-                    list_name, subnet = key
-                    try:
-                        new_id = resource.add(list=list_name, address=subnet, comment=MANAGED_COMMENT)
-                        cache[key] = new_id
-                        core_result['added'] += 1
-                        logger.info(f"Added {subnet} to {list_name} on {core_name}")
-                    except Exception as ex:
-                        logger.warning(f"Failed to add {subnet} to {list_name}: {ex} — will retry")
+                    for key in to_add:
+                        list_name, subnet = key
+                        try:
+                            new_id = resource.add(list=list_name, address=subnet, comment=MANAGED_COMMENT)
+                            cache[key] = new_id
+                            core_result['added'] += 1
+                            logger.info(f"Added {subnet} to {list_name} on {core_name}")
+                        except Exception as ex:
+                            logger.warning(f"Failed to add {subnet} to {list_name}: {ex} — will retry")
 
-                self._last_verified[core_key] = now
+                    self._last_verified[core_key] = now
 
-                if core_result['added'] or core_result['removed']:
-                    logger.info(f"{core_name} WAN sync: +{core_result['added']} / -{core_result['removed']}")
+                    if core_result['added'] or core_result['removed']:
+                        logger.info(f"{core_name} WAN sync: +{core_result['added']} / -{core_result['removed']}")
 
-            except Exception as ex:
-                logger.error(f"Error syncing address lists on {core_name}: {ex}")
-                self._cache.pop(core_key, None)
-                core_result['error'] = str(ex)
-                summary['ok'] = False
-                summary['errors'].append(f"{core_name}: {ex}")
+                except Exception as ex:
+                    logger.error(f"Error syncing address lists on {core_name}: {ex}")
+                    self._cache.pop(core_key, None)
+                    core_result['error'] = str(ex)
+                    summary['ok'] = False
+                    summary['errors'].append(f"{core_name}: {ex}")
 
             summary['total_added'] += core_result['added']
             summary['total_removed'] += core_result['removed']
@@ -376,38 +444,34 @@ class WANManager:
             removed = 0
             error = None
 
-            api = self._connect(core)
-            if api is None:
-                results.append({'core': core_name, 'removed': 0, 'error': 'connection failed'})
-                continue
+            with self._connect(core) as api:
+                if api is None:
+                    results.append({'core': core_name, 'removed': 0, 'error': 'connection failed'})
+                    continue
 
-            try:
-                resource = api.get_resource('/ip/firewall/address-list')
-                wan_names = {
-                    wan.get('address_list', f"WAN{i}")
-                    for i, wan in enumerate(core.get('wans', []), start=1)
-                }
-                for wan_name in wan_names:
-                    try:
-                        entries = resource.get(list=wan_name)
-                    except Exception as ex:
-                        logger.warning(f"Purge fetch {wan_name} on {core_name}: {ex}")
-                        continue
-                    for e in entries:
-                        if e.get('comment') == MANAGED_COMMENT and '.id' in e:
-                            try:
-                                resource.remove(id=e['.id'])
-                                removed += 1
-                            except Exception as ex:
-                                logger.warning(f"Purge remove failed on {core_name}/{wan_name}: {ex}")
-            except Exception as ex:
-                error = str(ex)
-                logger.error(f"Purge error on {core_name}: {ex}")
-            finally:
-                # Force the next sync to rebuild from live router state —
-                # never trust the pre-purge cache again.
-                self._cache.pop(core_key, None)
-                self._last_verified.pop(core_key, None)
+                try:
+                    resource = api.get_resource('/ip/firewall/address-list')
+                    for wan_name in {name for name, _ in _wan_list(core)}:
+                        try:
+                            entries = resource.get(list=wan_name)
+                        except Exception as ex:
+                            logger.warning(f"Purge fetch {wan_name} on {core_name}: {ex}")
+                            continue
+                        for e in entries:
+                            if e.get('comment') == MANAGED_COMMENT and '.id' in e:
+                                try:
+                                    resource.remove(id=e['.id'])
+                                    removed += 1
+                                except Exception as ex:
+                                    logger.warning(f"Purge remove failed on {core_name}/{wan_name}: {ex}")
+                except Exception as ex:
+                    error = str(ex)
+                    logger.error(f"Purge error on {core_name}: {ex}")
+                finally:
+                    # Force the next sync to rebuild from live router state —
+                    # never trust the pre-purge cache again.
+                    self._cache.pop(core_key, None)
+                    self._last_verified.pop(core_key, None)
 
             result = {'core': core_name, 'removed': removed}
             if error:

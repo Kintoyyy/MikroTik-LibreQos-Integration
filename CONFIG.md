@@ -194,7 +194,7 @@ Tracks DHCP leases from `/ip/dhcp-server/lease`.
 **How rates are resolved for DHCP:**
 The lease must have a valid rate in its `address-list` field (e.g., `50M/50M`), **and** the lease IP must appear in the firewall address list. Leases that don't meet both conditions are skipped.
 
-Device code format: `DHCP-{hostname}` or `DHCP-{MAC}` if hostname is unavailable.
+Device code format: `DHCP-{MAC}` (MAC without colons). Host-names are chosen by the client and are not unique, so the host-name goes into the comment instead. Existing `DHCP-{hostname}` rows are re-keyed automatically and keep their circuit IDs. Disabled leases and leases without an address are skipped.
 
 ---
 
@@ -216,7 +216,7 @@ Processes standalone firewall address list entries from `/ip/firewall/address-li
 
 > Note: `address_list` has no `enabled` flag — it is always active. Entries are only included if their list name parses as a valid rate (e.g., `100M/100M`) and are not disabled.
 
-Device code format: the entry's `comment` field if set, otherwise `ADDR-{IP}`.
+Device code format: the entry's `comment` field if set (and not already used by another entry in the same scan), otherwise `ADDR-{IP}`.
 
 ---
 
@@ -231,9 +231,9 @@ Rates are expressed as `{download}/{upload}` with an optional unit suffix:
 | `1G/1G` | 1000 Mbps down / 1000 Mbps up |
 | `512k/256k` | 0.51 Mbps down / 0.26 Mbps up |
 
-The script applies these multipliers automatically:
-- **Max rate** = parsed value × 1.15
-- **Min rate** = max rate × 0.50
+The script applies these multipliers automatically (defaults follow LibreQoS's recommendation, and both are configurable in `settings.json` → `rates` or in **App Settings**):
+- **Max rate** = parsed value × `max_*_rate_percentage` (default 1.15), at least 2 Mbps
+- **Min rate** = max rate × `min_*_rate_percentage` (default 0), at least 1 Mbps and never above max
 
 ---
 
@@ -260,7 +260,7 @@ Any device stored in the SQLite database with `is_static = 1` is never overwritt
 UPDATE devices SET is_static = 1 WHERE code = 'PPP-myuser';
 ```
 
-Static devices retain their `parent_node`, rate limits, and all other fields across scans.
+Static devices keep their rate limits, IPs, and other fields across scans, and always win an IP conflict with a scanned device. Their parent node follows the topology strategy.
 
 ---
 
@@ -274,6 +274,48 @@ If two routers in the `routers` array share the same `name`, the script automati
 ```
 
 This suffix also affects parent node names in `ap_only`/`ap_site`/`full` strategies, so prefer unique router names.
+
+---
+
+## WAN Assignment (optional)
+
+WAN assignment is **off by default**. `wan_service` is installed but not enabled, and core routers are ignored until you turn it on.
+
+```json
+"wan_assignment": { "enabled": true, "include_hotspot": false, "include_dhcp": false, "interval": 300 }
+```
+
+Turning **Enable WAN Assignment** on or off in the GUI and saving enables or disables `wan_service` (including at boot). Turning it off leaves the `libreqos-managed` address-list entries on the core routers; run **Purge** in Troubleshooting to remove them.
+
+New devices are balanced across WANs by capacity. Existing devices move only when the busiest WAN's utilization is more than `rebalance_imbalance_ratio` (default 1.5) times the least busy WAN's, and then as few as possible move, since each move breaks that subscriber's NAT sessions.
+
+---
+
+## Tuning (`settings.json`)
+
+Every tunable value lives in `settings.json` and can be edited in **App Settings**. Restart the services after changing it. Missing keys use these defaults:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `scanner.scan_interval` | 600 | Seconds between router scans |
+| `scanner.connect_retries` / `connect_retry_delay` | 3 / 5 | Connection attempts per router, and seconds between them. An unreachable router keeps its devices |
+| `scanner.libreqos_update_command` | `/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly` | Run when `ShapedDevices.csv` or `network.json` changes. Empty: nothing runs, and `lqos_scheduler` applies the files on its next refresh |
+| `scanner.libreqos_update_timeout` | 300 | Seconds before a hung apply is stopped (it is retried next cycle) |
+| `rates.min_*_rate_percentage` | 0.0 | Min rate as a fraction of max (0 → 1 Mbps) |
+| `rates.max_*_rate_percentage` | 1.15 | Max rate as a multiple of the plan rate |
+| `topology.parent_bandwidth_multiplier` | 1.1 | `network.json` node size = sum of its devices' max rates × this |
+| `topology.skew_warn_ratio` | 2.0 | Warn when the busiest top-level/CPU node carries this many times the lightest one's load |
+| `topology.sticky_cpu_assignment` | true | `cpu` strategy: devices stay on their CPU node (fewer queue rebuilds). New devices go to the least loaded node |
+| `topology.cpu_rebalance_ratio` | 1.5 | Sticky mode: move devices only when the busiest CPU node exceeds this many times the lightest |
+| `topology.node_ids` | true | Add a stable `id` (`mikrotik:cpu:CPU0`, `mikrotik:router:…`) to every `network.json` node |
+| `topology.virtual_site_nodes` | false | `ap_site`/`full`: mark site nodes `virtual` (grouping only, not shaped) |
+| `database.tc_u16_warn_threshold` | 60000 | Warn when one CPU queue approaches the tc class ID limit (`TC_U16_OVERFLOW`) |
+| `database.mapped_circuit_warn_threshold` | 1000 | Warn when circuits exceed LibreQoS's unlicensed limit. `ShapedDevices.csv` lists manual devices first, then sources by priority, so the least important circuits are dropped first. 0 disables |
+| `wan_service.rebalance_imbalance_ratio` | 1.5 | See WAN Assignment |
+| `wan_service.manual_rebalance_active_cutoff` | 1200 | The GUI Rebalance button treats dynamic devices not seen for this many seconds as offline |
+| `gui.login_max_attempts` / `login_lockout_seconds` | 5 / 60 | Login rate limit per client address |
+
+`updatecsv` also checks `/etc/lqos.conf` (Python 3.11+) and logs a warning when `[topology] compile_mode = "flat"` would ignore the parent hierarchy, or when device IPs fall outside `allow_subnets` or inside `ignore_subnets`.
 
 ---
 

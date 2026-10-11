@@ -8,8 +8,11 @@ enabled state changes take effect without a restart.
 Typical usage:
     python wan_service.py
 
+WAN assignment is optional and off by default. The service is installed
+disabled; the GUI enables/starts it when WAN Assignment is turned on.
+
 config.json knobs (under wan_assignment):
-    enabled   (bool, default true)  — master on/off switch
+    enabled   (bool, default false) — master on/off switch
     interval  (int,  default 300)   — seconds between sync cycles
 """
 
@@ -26,7 +29,6 @@ from settings import WAN_DEFAULT_INTERVAL as DEFAULT_INTERVAL, WAN_ERROR_RETRY_I
 CONFIG_JSON        = 'config.json'
 DB_FILE            = 'devices.db'
 SHAPED_DEVICES_CSV = 'ShapedDevices.csv'
-NETWORK_JSON       = 'network.json'
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ def _read_wan_config():
         wan_cfg = config.get('wan_assignment', {})
 
         wan_sources = {
-            'enabled':         wan_cfg.get('enabled',         True),
+            'enabled':         wan_cfg.get('enabled',         False),
             'include_hotspot': wan_cfg.get('include_hotspot', False),
             'include_dhcp':    wan_cfg.get('include_dhcp',    False),
         }
@@ -66,16 +68,16 @@ def _read_wan_config():
 def main():
     logger.info("Starting WAN service")
 
-    db = DeviceDatabase(DB_FILE, SHAPED_DEVICES_CSV, NETWORK_JSON)
+    db = DeviceDatabase(DB_FILE, SHAPED_DEVICES_CSV)
     db.open()
 
-    wan_mgr = WANManager(RouterScanner.connect)
+    wan_mgr = WANManager(RouterScanner.open_api)
 
     while True:
         cores, wan_sources, interval = _read_wan_config()
 
         try:
-            if not wan_sources.get('enabled', True):
+            if not wan_sources.get('enabled', False):
                 logger.info("WAN assignment disabled in config — sleeping.")
             elif not cores:
                 logger.info("No cores configured — sleeping.")

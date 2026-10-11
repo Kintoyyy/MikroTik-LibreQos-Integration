@@ -45,7 +45,7 @@ log_delete "$SRC_DIR/wan_service.py"
 log_delete "$SRC_DIR/gui.py"
 
 # Python modules
-for module in rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py; do
+for module in settings.py rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py; do
     log_delete "$SRC_DIR/$module"
 done
 
@@ -53,6 +53,8 @@ done
 log_delete "$SRC_DIR/templates"
 log_delete "$SRC_DIR/config.json"
 log_delete "$SRC_DIR/config.json.bak"
+log_delete "$SRC_DIR/settings.json"
+log_delete "$SRC_DIR/.installed_version"
 log_delete "$SRC_DIR/devices.db"
 log_delete "$SRC_DIR/gui_auth.json"
 log_delete "$SRC_DIR/network.json"
@@ -67,10 +69,16 @@ log_delete "$GUI_SERVICE_FILE"
 
 # ── Remove Python venv ────────────────────────────────────────────────────
 
+# LibreQoS itself (v2.0+) runs from the same /opt/libreqos/venv, so keep it
+# whenever LibreQoS is still installed.
 if [ -d "$LIBREQOS_DIR/venv" ]; then
-    printf "${BLUE}➜ Removing Python virtual environment...${NC}\n"
-    rm -rf "$LIBREQOS_DIR/venv"
-    DELETED_FILES+=("$LIBREQOS_DIR/venv")
+    if [ -f "$SRC_DIR/LibreQoS.py" ] || systemctl list-unit-files lqos_scheduler.service >/dev/null 2>&1; then
+        printf "${YELLOW}➜ Keeping $LIBREQOS_DIR/venv — LibreQoS still uses it.${NC}\n"
+    else
+        printf "${BLUE}➜ Removing Python virtual environment...${NC}\n"
+        rm -rf "$LIBREQOS_DIR/venv"
+        DELETED_FILES+=("$LIBREQOS_DIR/venv")
+    fi
 fi
 
 # ── Reload systemd ────────────────────────────────────────────────────────

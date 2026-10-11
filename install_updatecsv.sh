@@ -94,12 +94,14 @@ cp -r templates/. "$TEMPLATES_DIR/"
 
 # ── config.json ───────────────────────────────────────────────────────────
 
-if [ -f "config.json" ] && jq empty config.json >/dev/null 2>&1; then
+# Never overwrite an existing config.json: it holds the production routers.
+if [ -s "$CONFIG_JSON" ]; then
+    printf "${YELLOW}➜ Keeping existing config.json.${NC}\n"
+elif [ -f "config.json" ] && jq empty config.json >/dev/null 2>&1; then
     printf "${YELLOW}➜ Copying config.json...${NC}\n"
     cp "config.json" "$CONFIG_JSON"
-    chmod 640 "$CONFIG_JSON"
 else
-    printf "${YELLOW}➜ config.json missing or invalid — keeping existing or writing default.${NC}\n"
+    printf "${YELLOW}➜ config.json missing or invalid — writing default.${NC}\n"
 fi
 
 if [ -f "settings.json" ] && jq empty settings.json >/dev/null 2>&1 && [ ! -s "$SETTINGS_JSON" ]; then
@@ -144,27 +146,7 @@ if [ ! -s "$CONFIG_JSON" ]; then
             }
         }
     ],
-    "cores": [
-        {
-            "name": "Mikrotik CORE",
-            "address": "192.168.88.1",
-            "port": 8728,
-            "username": "admin",
-            "password": "password",
-            "wans": [
-                {
-                    "download_limit": 1000,
-                    "name": "ISP1-PLDT",
-                    "upload_limit": 1000
-                },
-                {
-                    "download_limit": 500,
-                    "name": "ISP2-GLOBE",
-                    "upload_limit": 500
-                }
-            ]
-        }
-    ],
+    "cores": [],
     "wan_assignment": {
         "enabled": false,
         "include_hotspot": false,
@@ -173,7 +155,15 @@ if [ ! -s "$CONFIG_JSON" ]; then
     }
 }
 EOF
-    chmod 640 "$CONFIG_JSON"
+fi
+
+# Router passwords and the GUI session key are readable by root only.
+chmod 600 "$CONFIG_JSON"
+[ -f "$SRC_DIR/gui_auth.json" ] && chmod 600 "$SRC_DIR/gui_auth.json"
+
+# Record the installed version (shown in the GUI) when installing from a git checkout.
+if git rev-parse --short HEAD >/dev/null 2>&1; then
+    git rev-parse --short HEAD > "$SRC_DIR/.installed_version"
 fi
 
 # ── updatecsv.service ─────────────────────────────────────────────────────
@@ -277,8 +267,15 @@ systemctl daemon-reload
 printf "${BLUE}➜ Starting and enabling updatecsv service...${NC}\n"
 systemctl enable --now updatecsv.service
 
-printf "${BLUE}➜ Starting and enabling wan_service...${NC}\n"
-systemctl enable --now wan_service.service
+# WAN assignment is optional: wan_service runs only when config.json enables it.
+# The GUI enables/disables the service when WAN Assignment is toggled.
+if jq -e '.wan_assignment.enabled == true' "$CONFIG_JSON" >/dev/null 2>&1; then
+    printf "${BLUE}➜ WAN assignment enabled — starting and enabling wan_service...${NC}\n"
+    systemctl enable --now wan_service.service
+else
+    printf "${BLUE}➜ WAN assignment disabled — wan_service installed but not enabled.${NC}\n"
+    systemctl disable --now wan_service.service >/dev/null 2>&1
+fi
 
 printf "${BLUE}➜ Starting and enabling GUI service...${NC}\n"
 systemctl enable --now gui.service
@@ -291,6 +288,8 @@ printf "\n"
 printf "${BLUE}Service status:${NC}\n"
 systemctl status updatecsv.service --no-pager -l
 printf "\n"
-systemctl status wan_service.service --no-pager -l
-printf "\n"
+if systemctl is-enabled --quiet wan_service.service; then
+    systemctl status wan_service.service --no-pager -l
+    printf "\n"
+fi
 systemctl status gui.service --no-pager -l

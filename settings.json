@@ -1,25 +1,39 @@
 {
     "scanner": {
         "scan_interval": 600,
-        "error_retry_interval": 30
+        "error_retry_interval": 30,
+        "connect_retries": 3,
+        "connect_retry_delay": 5,
+        "libreqos_update_command": "/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly",
+        "libreqos_update_timeout": 300
     },
     "wan_service": {
         "default_interval": 300,
         "error_retry_interval": 30,
-        "rebalance_threshold": 1.10,
-        "full_reconcile_interval": 1800
+        "rebalance_imbalance_ratio": 1.5,
+        "full_reconcile_interval": 1800,
+        "manual_rebalance_active_cutoff": 1200
     },
     "rates": {
-        "min_dl_rate_percentage": 0.5,
-        "min_ul_rate_percentage": 0.5,
-        "max_dl_rate_percentage": 1.0,
-        "max_ul_rate_percentage": 1.0,
+        "min_dl_rate_percentage": 0.0,
+        "min_ul_rate_percentage": 0.0,
+        "max_dl_rate_percentage": 1.15,
+        "max_ul_rate_percentage": 1.15,
         "default_dl_bandwidth": 100,
         "default_ul_bandwidth": 100,
         "id_length": 8
     },
+    "topology": {
+        "parent_bandwidth_multiplier": 1.1,
+        "skew_warn_ratio": 2.0,
+        "sticky_cpu_assignment": true,
+        "cpu_rebalance_ratio": 1.5,
+        "node_ids": true,
+        "virtual_site_nodes": false
+    },
     "database": {
         "tc_u16_warn_threshold": 60000,
+        "mapped_circuit_warn_threshold": 1000,
         "source_priority": {
             "pppoe": 4,
             "hotspot": 3,
@@ -32,6 +46,8 @@
         "expected_mt_group": "API_READ",
         "expected_mt_policy": "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,!write,!test,!winbox,!password,!web,!sniff,!romon",
         "expected_core_group": "API_WRITE",
-        "expected_core_policy": "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,!winbox,!password,!web,!sniff,!romon"
+        "expected_core_policy": "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,!winbox,!password,!web,!sniff,!romon",
+        "login_max_attempts": 5,
+        "login_lockout_seconds": 60
     }
 }
