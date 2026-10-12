@@ -138,17 +138,14 @@ LQOS_CONF_PATH = find_file("lqos.conf", base=Path("/etc"))
 def _find_lqos_conf():
     return LQOS_CONF_PATH
 
+# Files the Files tab may read and write: LibreQoS's own files and the netplan
+# files for its bridge and management port. Never this app's code or config.
 YAML_FILES = {
-    "libreqos":      find_file("libreqos.yaml", base=NETPLAN_DIR),
-    "lqos":          LQOS_CONF_PATH,
-    "network_json":  LIBREQOS_DIR / "network.json",
-    "config_json":   CONFIG_PATH,
-    "settings_json": SETTINGS_PATH,
+    "libreqos":       find_file("libreqos.yaml", base=NETPLAN_DIR),
+    "network":        find_file("50-cloud-init.yaml", base=NETPLAN_DIR),
+    "lqos":           LQOS_CONF_PATH,
+    "network_json":   LIBREQOS_DIR / "network.json",
     "shaped_devices": LIBREQOS_DIR / "ShapedDevices.csv",
-    "updatecsv":     SCRIPT_DIR / "updatecsv.py",
-    "rate_resolver": SCRIPT_DIR / "rate_resolver.py",
-    "wan_manager":   SCRIPT_DIR / "wan_manager.py",
-    "network":       find_file("50-cloud-init.yaml", base=NETPLAN_DIR),
 }
 
 EXPECTED_MT_GROUP    = _SETTINGS_MT_GROUP
@@ -1157,13 +1154,9 @@ def save_yaml(name):
 
         if str(path).endswith(".json"):
             try:
-                parsed = json.loads(content)
+                json.loads(content)
             except ValueError as je:
                 return jsonify({"ok": False, "error": f"Invalid JSON: {je}"}), 400
-            if name == "config_json":
-                err = _config_error(parsed)
-                if err:
-                    return jsonify({"ok": False, "error": err}), 400
 
         if Path(str(path)).parent == NETPLAN_DIR:
             # Netplan files are root-owned and must not be world-readable.

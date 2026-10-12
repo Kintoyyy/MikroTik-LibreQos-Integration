@@ -58,6 +58,14 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, 'S
 .ss-row .v { font-family: var(--mono); color: var(--strong); font-size: .76rem; }
 .ss-warn { color: #ff7b72; font-family: var(--mono); font-size: .74rem; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-sep { color: var(--border); }
+.ss-count { font-family: var(--mono); font-size: .74rem; color: var(--muted); }
+.rchip { display: inline-flex; align-items: center; gap: .4rem; border: 1px solid var(--border); background: var(--bg); border-radius: 12px; padding: .12rem .6rem; font-size: .76rem; color: var(--text); cursor: pointer; max-width: 340px; }
+.rchip:hover { border-color: var(--muted); }
+.rchip b { font-weight: 600; color: var(--strong); white-space: nowrap; }
+.rchip .v { white-space: nowrap; }
+.rchip .ss-warn { max-width: 200px; }
+.svc-pill { cursor: pointer; border-radius: 6px; padding: .3rem .5rem; }
+.svc-pill:hover { background: var(--raised); color: var(--strong); }
 
 /* ── Tabs ── */
 .tab-nav { border-bottom: 1px solid var(--border); display: flex; gap: .15rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
@@ -480,18 +488,11 @@ code { font-size: .8rem; color: #94a3b8; }
     <span class="brand-text">LQ <span class="brand-accent">Sync</span></span>
   </div>
   <div class="topbar-actions">
-    <span class="svc-pill" title="updatecsv sync service">
+    <button class="hbtn svc-pill" onclick="switchTab('services')" title="Sync service — open Services">
       <span class="dot dot-grey" id="svc-dot"></span><span id="svc-label">checking…</span>
-    </span>
-    <div class="btn-group-svc">
-      <button class="hbtn-icon" onclick="serviceAction('start')"   title="Start sync service"><i class="bi bi-play-fill"></i></button>
-      <button class="hbtn-icon" onclick="serviceAction('restart')" title="Restart sync service"><i class="bi bi-arrow-clockwise"></i></button>
-      <button class="hbtn-icon" onclick="serviceAction('stop')"    title="Stop sync service"><i class="bi bi-stop-fill"></i></button>
-    </div>
-    <button class="hbtn" onclick="switchTab('troubleshoot')" title="Troubleshooting"><i class="bi bi-bug"></i><span>Troubleshoot</span></button>
+    </button>
     <button class="hbtn" onclick="switchTab('appsettings')" title="App settings"><i class="bi bi-sliders2"></i><span>Settings</span></button>
     <button class="hbtn-primary" onclick="switchTab('devices'); openDeviceModal()"><i class="bi bi-plus-lg"></i><span>Add Device</span></button>
-    <button class="hbtn-icon" onclick="restartUbuntuHost()" title="Restart host"><i class="bi bi-power"></i></button>
     <button class="hbtn-icon" onclick="openChpw()" title="Change password"><i class="bi bi-key"></i></button>
     <button class="hbtn-icon" onclick="doLogout()" title="Log out"><i class="bi bi-box-arrow-right"></i></button>
   </div>
@@ -512,14 +513,12 @@ code { font-size: .8rem; color: #94a3b8; }
   <button class="tab-btn"        data-tab="devices"      onclick="switchTab('devices')"><i class="bi bi-table"></i>Devices <span class="tab-badge" id="tab-badge-devices">0</span></button>
   <button class="tab-btn"        data-tab="topology"     onclick="switchTab('topology')"><i class="bi bi-diagram-3"></i>Topology</button>
   <button class="tab-btn"        data-tab="config"       onclick="switchTab('config')"><i class="bi bi-hdd-stack"></i>Routers</button>
-  <button class="tab-btn"        data-tab="services"     onclick="switchTab('services')"><i class="bi bi-grid-3x2-gap"></i>Services</button>
-  <button class="tab-btn"        data-tab="troubleshoot" onclick="switchTab('troubleshoot')"><i class="bi bi-tools"></i>Troubleshooting</button>
   <button class="tab-btn"        data-tab="network"      onclick="switchTab('network')"><i class="bi bi-hdd-network"></i>Network</button>
-  <button class="tab-btn"        data-tab="mgmt"         onclick="switchTab('mgmt')"><i class="bi bi-ethernet"></i>Management Port</button>
-  <button class="tab-btn"        data-tab="yaml"         onclick="switchTab('yaml')"><i class="bi bi-file-code"></i>Files</button>
-  <button class="tab-btn"        data-tab="lqos"         onclick="switchTab('lqos')"><i class="bi bi-gear-wide-connected"></i>LibreQoS Config</button>
-  <button class="tab-btn"        data-tab="appsettings"  onclick="switchTab('appsettings')"><i class="bi bi-sliders2"></i>App Settings</button>
-  <button class="tab-btn"        data-tab="credits"      onclick="switchTab('credits')"><i class="bi bi-heart"></i>Credits</button>
+  <button class="tab-btn"        data-tab="lqos"         onclick="switchTab('lqos')"><i class="bi bi-gear-wide-connected"></i>LibreQoS</button>
+  <button class="tab-btn"        data-tab="yaml"         onclick="switchTab('yaml')"><i class="bi bi-file-earmark-code"></i>Files</button>
+  <button class="tab-btn"        data-tab="services"     onclick="switchTab('services')"><i class="bi bi-grid-3x2-gap"></i>Services</button>
+  <button class="tab-btn"        data-tab="troubleshoot" onclick="switchTab('troubleshoot')"><i class="bi bi-tools"></i>Troubleshoot</button>
+  <button class="tab-btn"        data-tab="appsettings"  onclick="switchTab('appsettings')"><i class="bi bi-sliders2"></i>Settings</button>
 </nav>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -868,7 +867,10 @@ code { font-size: .8rem; color: #94a3b8; }
       <h2 style="font-size:1.1rem;font-weight:700;margin:0">Services</h2>
       <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Monitor and control LibreQoS system services</p>
     </div>
-    <button class="btn-ghost" onclick="loadServices()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn-ghost" onclick="loadServices()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+      <button class="btn-danger-ghost" onclick="restartUbuntuHost()"><i class="bi bi-power"></i> Restart host</button>
+    </div>
   </div>
 
   <!-- Service cards grid -->
@@ -1108,12 +1110,18 @@ code { font-size: .8rem; color: #94a3b8; }
 <div class="page" id="page-network">
 
   <!-- Header -->
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem">
     <div>
-      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Network Setup</h2>
-      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Configure Netplan for LibreQoS shaping interfaces</p>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Network</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Netplan for the LibreQoS shaping bridge and the management port</p>
     </div>
-    <button class="btn-ghost" onclick="loadInterfaces()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+    <div style="display:flex;align-items:center;gap:.6rem">
+      <div class="seg" id="net-section">
+        <button class="seg-btn active" data-sec="bridge" onclick="setNetSection('bridge')">Shaping bridge</button>
+        <button class="seg-btn"        data-sec="mgmt"   onclick="setNetSection('mgmt')">Management port</button>
+      </div>
+      <button class="btn-ghost" onclick="loadNetwork()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+    </div>
   </div>
 
   <!-- Interface cards -->
@@ -1121,6 +1129,9 @@ code { font-size: .8rem; color: #94a3b8; }
     <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.65rem">System Interfaces</div>
     <div id="iface-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.75rem"></div>
   </div>
+
+  <!-- Shaping bridge -->
+  <div id="net-sec-bridge">
 
   <!-- Bridge mode selector -->
   <div style="margin-bottom:1rem">
@@ -1200,20 +1211,10 @@ code { font-size: .8rem; color: #94a3b8; }
     <div class="card-bd" style="padding:.5rem"><textarea id="netplan-preview-editor"></textarea></div>
   </div>
 
-</div>
-
-<!-- ══════════════════════════════════════════════════════════════════════
-     MANAGEMENT PORT
-════════════════════════════════════════════════════════════════════════ -->
-<div class="page" id="page-mgmt">
-
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem">
-    <div>
-      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Management Port</h2>
-      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Configure the management interface IP via <code style="font-size:.75rem">50-cloud-init.yaml</code></p>
-    </div>
-    <button class="btn-ghost" onclick="loadMgmt()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
   </div>
+
+  <!-- Management port -->
+  <div id="net-sec-mgmt" style="display:none">
 
   <!-- Current status card -->
   <div class="card" style="margin-bottom:1.25rem" id="mgmt-status-card">
@@ -1344,6 +1345,7 @@ code { font-size: .8rem; color: #94a3b8; }
     <div id="mgmt-log" style="display:none;margin:.25rem .5rem .5rem;background:#0b0f14;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;font-family:monospace;white-space:pre-wrap"></div>
   </div>
 
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -1352,21 +1354,20 @@ code { font-size: .8rem; color: #94a3b8; }
 <div class="page" id="page-yaml">
   <div class="card">
     <div class="card-hd">
-      <div style="display:flex;flex-wrap:wrap;gap:.5rem" id="yaml-switcher">
-        <button class="btn-primary" onclick="loadYaml('libreqos')">libreqos.yaml</button>
-        <button class="btn-ghost"   onclick="loadYaml('lqos')">lqos.conf</button>
-        <button class="btn-ghost"   onclick="loadYaml('network')">50-cloud-init.yaml</button>
-        <button class="btn-ghost"   onclick="loadYaml('config_json')">config.json</button>
-        <button class="btn-ghost"   onclick="loadYaml('network_json')">network.json</button>
-        <button class="btn-ghost"   onclick="loadYaml('shaped_devices')">ShapedDevices.csv</button>
-        <button class="btn-ghost"   onclick="loadYaml('updatecsv')">updatecsv.py</button>
-        <button class="btn-ghost"   onclick="loadYaml('rate_resolver')">rate_resolver.py</button>
-        <button class="btn-ghost"   onclick="loadYaml('wan_manager')">wan_manager.py</button>
+      <div class="seg" id="yaml-switcher">
+        <button class="seg-btn active" data-file="libreqos"       onclick="loadYaml('libreqos')">libreqos.yaml</button>
+        <button class="seg-btn"        data-file="network"        onclick="loadYaml('network')">50-cloud-init.yaml</button>
+        <button class="seg-btn"        data-file="lqos"           onclick="loadYaml('lqos')">lqos.conf</button>
+        <button class="seg-btn"        data-file="network_json"   onclick="loadYaml('network_json')">network.json</button>
+        <button class="seg-btn"        data-file="shaped_devices" onclick="loadYaml('shaped_devices')">ShapedDevices.csv</button>
       </div>
       <div style="display:flex;align-items:center;gap:.75rem">
         <span style="font-size:.72rem;color:var(--muted)" id="yaml-path"></span>
         <button class="btn-primary" onclick="saveYaml()"><i class="bi bi-floppy-fill"></i> Save</button>
       </div>
+    </div>
+    <div id="yaml-note" style="display:none;padding:.55rem 1rem;font-size:.78rem;color:var(--yellow);border-bottom:1px solid var(--border)">
+      <i class="bi bi-info-circle"></i> Generated by LQ-Sync from the routers — manual edits are replaced on the next scan that changes it.
     </div>
     <div class="card-bd" style="padding:.5rem"><textarea id="yaml-editor"></textarea></div>
   </div>
@@ -1983,6 +1984,7 @@ code { font-size: .8rem; color: #94a3b8; }
 <footer style="border-top:1px solid var(--border);padding:.85rem 1.25rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--muted)">
   <span><i class="bi bi-router-fill" style="color:var(--blue)"></i> LQ-Sync Integration — by <strong style="color:var(--text)">Kintoyyy</strong></span>
   <span style="display:flex;gap:1rem">
+    <a href="#credits" onclick="switchTab('credits'); return false;" style="color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:.3rem"><i class="bi bi-info-circle"></i> About</a>
     <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank" style="color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:.3rem" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'"><i class="bi bi-github"></i> GitHub</a>
     <a href="https://paypal.me/Kintoyyyy?country.x=PH" target="_blank" style="color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:.3rem" onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'"><i class="bi bi-heart-fill" style="color:#f472b6"></i> Donate</a>
   </span>
@@ -2013,14 +2015,14 @@ window.fetch = (url, opts = {}) => {
 
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
+  if (name === 'mgmt') { name = 'network'; netSection = 'mgmt'; }   // old link / bookmark
   if (!document.getElementById('page-' + name)) name = 'dashboard';
   try { history.replaceState(null, '', '#' + name); } catch (e) {}   // refresh keeps the tab
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   if (name === 'config')       renderConfig();
-  if (name === 'network')      loadInterfaces();
-  if (name === 'mgmt')         loadMgmt();
+  if (name === 'network')      loadNetwork();
   if (name === 'services')     loadServices();
   if (name === 'troubleshoot') loadTroubleshooting();
   if (name === 'topology')     { loadTopology(); loadWanStats(); }
@@ -3035,23 +3037,18 @@ const yamlCM = CodeMirror.fromTextArea(document.getElementById('yaml-editor'), {
   mode:'yaml', theme:'dracula', lineNumbers:true, indentUnit:2
 });
 const YAML_MODES = {
-  libreqos:    'yaml',
-  lqos:        'text/plain',
-  network:     'yaml',
-  config_json: 'application/json',
-  network_json:'application/json',
-  shaped_devices:'text/plain',
-  updatecsv:      'text/x-python',
-  rate_resolver:  'text/x-python',
-  wan_manager:    'text/x-python',
+  libreqos:       'yaml',
+  network:        'yaml',
+  lqos:           'text/plain',
+  network_json:   'application/json',
+  shaped_devices: 'text/plain',
 };
-const YAML_NAMES = ['libreqos','lqos','network','config_json','network_json','shaped_devices','updatecsv','rate_resolver','wan_manager'];
 
 async function loadYaml(name) {
   currentYaml = name;
-  document.querySelectorAll('#yaml-switcher button').forEach((b,i) => {
-    b.className = YAML_NAMES[i] === name ? 'btn-primary' : 'btn-ghost';
-  });
+  document.querySelectorAll('#yaml-switcher .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.file === name));
+  document.getElementById('yaml-note').style.display =
+    (name === 'network_json' || name === 'shaped_devices') ? '' : 'none';
   const r = await fetch(`/api/yaml/${name}`);
   const d = await r.json();
   if (!d.ok) { toast(d.error, false); return; }
@@ -3068,7 +3065,24 @@ async function saveYaml() {
   toast(d.ok ? 'File saved' : d.error, d.ok);
 }
 
-// ── Network tab ───────────────────────────────────────────────────────────
+// ── Network tab: shaping bridge + management port ─────────────────────────
+let netSection = 'bridge';
+
+function setNetSection(sec) {
+  netSection = sec;
+  document.querySelectorAll('#net-section .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.sec === sec));
+  document.getElementById('net-sec-bridge').style.display = sec === 'bridge' ? '' : 'none';
+  document.getElementById('net-sec-mgmt').style.display   = sec === 'mgmt'   ? '' : 'none';
+  // CodeMirror can only measure itself while visible
+  setTimeout(() => { if (netplanCM) netplanCM.refresh(); if (mgmtCM) mgmtCM.refresh(); }, 0);
+}
+
+function loadNetwork() {
+  loadInterfaces();
+  loadMgmt();
+  setNetSection(netSection);
+}
+
 let selectedNetplan = null;
 let ifaceList = [];
 let netplanCM = null;
@@ -4788,12 +4802,23 @@ function renderStatusStrip(d) {
       <span>not configured — Routers tab → BRAS</span>
       <span class="ss-warn"><i class="bi bi-exclamation-triangle"></i> router not configured</span>`;
   } else {
-    const anyBad = routers.some(r => r.ok === false), allOk = routers.every(r => r.ok);
-    rEl.innerHTML = `<i class="bi bi-hdd-stack"></i><span class="dot ${anyBad ? 'dot-red' : allOk ? 'dot-green' : 'dot-grey'}"></span>
-      <b>${routers.length === 1 ? 'Router' : 'Routers'}</b>` + routers.map(r => `<span>${esc(r.name)}</span>` + (
-        r.ok ? `<span class="v">cpu ${fmtPct(r.cpu)} · ${Math.round(r.api_ms || 0)} ms</span>`
-        : r.ok === false ? `<span class="ss-warn" title="${esc(r.error)}"><i class="bi bi-exclamation-triangle"></i> ${esc(r.error || 'unreachable')}</span>`
-        : `<span>waiting for first poll</span>`)).join('<span class="ss-sep">|</span>');
+    const up = routers.filter(r => r.ok).length, down = routers.filter(r => r.ok === false).length;
+    // Problems first, then the rest in config order; long lists collapse into "+N more"
+    const ordered = [...routers.filter(r => r.ok === false), ...routers.filter(r => r.ok !== false)];
+    const MAX_CHIPS = 8;
+    const chip = r => `<span class="rchip" onclick="switchTab('pollers')"
+        title="${esc(`${r.kind === 'core' ? 'Core' : 'BRAS'} ${r.name} · ${r.address}${r.error ? ' — ' + r.error : ''}`)}">
+        <span class="dot ${r.ok ? 'dot-green' : r.ok === false ? 'dot-red' : 'dot-grey'}"></span><b>${esc(r.name)}</b>${
+        r.ok ? `<span class="v">${fmtPct(r.cpu)} · ${Math.round(r.api_ms || 0)} ms</span>`
+        : r.ok === false ? `<span class="ss-warn">${esc(r.error || 'unreachable')}</span>`
+        : '<span>waiting…</span>'}</span>`;
+    rEl.innerHTML = `<i class="bi bi-hdd-stack"></i>
+      <span class="dot ${down ? 'dot-red' : up === routers.length ? 'dot-green' : 'dot-grey'}"></span>
+      <b>${routers.length === 1 ? 'Router' : 'Routers'}</b>
+      <span class="ss-count">${up}/${routers.length} up</span>` +
+      ordered.slice(0, MAX_CHIPS).map(chip).join('') +
+      (ordered.length > MAX_CHIPS
+        ? `<span class="rchip" onclick="switchTab('pollers')">+${ordered.length - MAX_CHIPS} more</span>` : '');
   }
   const h = d.host || {}, lq = d.libreqos || {};
   const lqOk = lq.lqosd === 'active';
