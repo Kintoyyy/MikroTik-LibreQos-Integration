@@ -25,9 +25,10 @@ except ImportError:
 CONFIG_JSON = 'config.json'
 DB_FILE     = 'devices.db'
 LQOS_CONF   = '/etc/lqos.conf'
-# ShapedDevices.csv and network.json are written where LibreQoS reads them.
-SHAPED_DEVICES_CSV = os.path.join(libreqos_dir(), 'ShapedDevices.csv')
-NETWORK_JSON       = os.path.join(libreqos_dir(), 'network.json')
+# ShapedDevices.csv and network.json stay in LibreQoS's directory, where LibreQoS reads them.
+LIBREQOS_DIR       = libreqos_dir()
+SHAPED_DEVICES_CSV = os.path.join(LIBREQOS_DIR, 'ShapedDevices.csv')
+NETWORK_JSON       = os.path.join(LIBREQOS_DIR, 'network.json')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -123,6 +124,9 @@ def run_libreqos_update() -> str:
     try:
         result = subprocess.run(
             shlex.split(LIBREQOS_UPDATE_COMMAND),
+            # LibreQoS.py opens network.json / ShapedDevices.csv relative to its
+            # working directory, so run it from LibreQoS's directory, not ours.
+            cwd=LIBREQOS_DIR,
             capture_output=True, text=True, check=True, timeout=LIBREQOS_UPDATE_TIMEOUT
         )
         logger.info("LibreQoS updated: " + result.stdout.strip())
