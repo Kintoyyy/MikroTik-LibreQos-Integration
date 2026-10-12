@@ -1,0 +1,18 @@
+[Unit]
+Description=LQ-Sync WAN assignment and address-list sync (optional)
+After=network.target updatecsv.service
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/opt/lq-sync
+Environment="VIRTUAL_ENV=/opt/lq-sync/venv"
+# systemd does not expand $PATH here, so spell the full search path out
+Environment="PATH=/opt/lq-sync/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/lq-sync/venv/bin/python3 /opt/lq-sync/wan_service.py
+Restart=always
+RestartSec=10
+Environment="PYTHONUNBUFFERED=1"
+
+[Install]
+WantedBy=multi-user.target

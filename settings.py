@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import tempfile
 
@@ -16,6 +17,9 @@ _DEFAULTS = {
         # on its own refresh (queue_refresh_interval_mins in lqos.conf).
         "libreqos_update_command": "/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly",
         "libreqos_update_timeout": 300,
+        # Where LibreQoS reads ShapedDevices.csv / network.json.
+        # Empty: lqos_directory from /etc/lqos.conf, else /opt/libreqos/src.
+        "libreqos_dir": "",
     },
     "wan_service": {
         "default_interval": 300,
@@ -148,6 +152,30 @@ def write_if_changed(path, text):
         pass
     atomic_write_text(path, text)
     return True
+
+
+DEFAULT_LIBREQOS_DIR = '/opt/libreqos/src'
+
+
+def libreqos_dir():
+    """
+    Directory LibreQoS reads ShapedDevices.csv and network.json from:
+    scanner.libreqos_dir if set, else lqos_directory from /etc/lqos.conf,
+    else /opt/libreqos/src. This app lives in its own directory and only
+    writes those two files into LibreQoS's tree.
+    """
+    configured = str(_s["scanner"].get("libreqos_dir") or "").strip()
+    if configured:
+        return configured
+    try:
+        with open('/etc/lqos.conf') as f:
+            for line in f:
+                m = re.match(r'\s*lqos_directory\s*=\s*"([^"]+)"', line)
+                if m:
+                    return m.group(1)
+    except OSError:
+        pass
+    return DEFAULT_LIBREQOS_DIR
 
 # ── Rate resolver constants ───────────────────────────────────────────────────
 MIN_DL_RATE_PERCENTAGE = float(_s["rates"]["min_dl_rate_percentage"])

@@ -1,9 +1,11 @@
+import contextlib
 import csv
 import io
 import logging
 import math
 import os
 import sqlite3
+import time
 
 from rate_resolver import RateResolver
 from settings import (
@@ -41,6 +43,96 @@ FIELDNAMES = [
     'MAC', 'IPv4', 'IPv6', 'Download Min Mbps', 'Upload Min Mbps',
     'Download Max Mbps', 'Upload Max Mbps', 'Comment'
 ]
+
+# One row per background job (router scan, LibreQoS apply, WAN sync, stats
+# poll). Every service records its own runs; the GUI shows them in the
+# Pollers table and graphs their CPU, duration and errors.
+_CREATE_JOBS_SQL = """
+    CREATE TABLE IF NOT EXISTS jobs (
+        name          TEXT PRIMARY KEY,
+        kind          TEXT DEFAULT '',
+        service       TEXT DEFAULT '',
+        every         REAL DEFAULT 0,
+        status        TEXT DEFAULT '',
+        last_run      REAL DEFAULT 0,
+        took          REAL DEFAULT 0,
+        cpu_last      REAL DEFAULT 0,
+        cpu_total     REAL DEFAULT 0,
+        runs          INTEGER DEFAULT 0,
+        errors        INTEGER DEFAULT 0,
+        last_error    TEXT DEFAULT '',
+        last_error_at REAL DEFAULT 0
+    )
+"""
+
+
+def ensure_jobs_table(conn):
+    conn.execute(_CREATE_JOBS_SQL)
+    conn.commit()
+
+
+def record_job(conn, name, kind, service, every, started, took, cpu, error=''):
+    """
+    Record one run of a job. error='' means it succeeded.
+    every is the job's interval in seconds (0 = runs only when needed).
+    """
+    failed = 1 if error else 0
+    conn.execute("""
+        INSERT INTO jobs (name, kind, service, every, status, last_run, took,
+                          cpu_last, cpu_total, runs, errors, last_error, last_error_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+            kind = excluded.kind, service = excluded.service, every = excluded.every,
+            status = excluded.status, last_run = excluded.last_run, took = excluded.took,
+            cpu_last = excluded.cpu_last, cpu_total = jobs.cpu_total + excluded.cpu_last,
+            runs = jobs.runs + 1, errors = jobs.errors + excluded.errors,
+            last_error    = CASE WHEN excluded.errors > 0 THEN excluded.last_error    ELSE jobs.last_error    END,
+            last_error_at = CASE WHEN excluded.errors > 0 THEN excluded.last_error_at ELSE jobs.last_error_at END
+    """, (name, kind, service, every, 'error' if failed else 'ok', started, took,
+          cpu, cpu, failed, str(error)[:500], started if failed else 0))
+    conn.commit()
+
+
+def prune_jobs(conn, service, kind, keep_names):
+    """Drop job rows of service/kind not in keep_names (e.g. a router removed from config)."""
+    names = list(keep_names)
+    sql = "DELETE FROM jobs WHERE service = ? AND kind = ?"
+    if names:
+        sql += f" AND name NOT IN ({','.join('?' * len(names))})"
+    conn.execute(sql, [service, kind] + names)
+    conn.commit()
+
+
+def _cpu_seconds():
+    """CPU used by the calling thread plus finished child processes (e.g. LibreQoS.py)."""
+    t = os.times()
+    return time.thread_time() + t.children_user + t.children_system
+
+
+@contextlib.contextmanager
+def timed_job(conn, name, kind, service, every):
+    """
+    Time a job's wall clock and CPU and record it:
+
+        with timed_job(conn, 'scan BRAS', 'poller', 'updatecsv', 600) as job:
+            ...
+            job['error'] = 'connection failed'   # failure the body handled itself
+
+    An exception is recorded as the error and re-raised.
+    """
+    job = {'error': ''}
+    started, t0, c0 = time.time(), time.monotonic(), _cpu_seconds()
+    try:
+        yield job
+    except Exception as e:
+        job['error'] = str(e) or type(e).__name__
+        raise
+    finally:
+        try:
+            record_job(conn, name, kind, service, every, started,
+                       time.monotonic() - t0, _cpu_seconds() - c0, job['error'])
+        except sqlite3.Error as e:
+            logger.warning(f"Could not record job {name}: {e}")
 
 
 class DeviceDatabase:
@@ -108,6 +200,7 @@ class DeviceDatabase:
         if cur.rowcount > 0:
             logger.info(f"Re-keyed {cur.rowcount} DHCP device(s) by MAC address")
 
+        self.conn.execute(_CREATE_JOBS_SQL)
         self.conn.commit()
 
     def _new_ids(self):

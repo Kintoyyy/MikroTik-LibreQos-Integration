@@ -17,3 +17,5 @@ devices.db
 .installed_version
 .update_backup_*/
 gui_auth.json
+rrd/
+migrated-from-libreqos-src-*/

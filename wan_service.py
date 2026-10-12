@@ -21,14 +21,17 @@ import logging
 import os
 import time
 
-from device_database import DeviceDatabase
+from device_database import DeviceDatabase, timed_job
 from wan_manager import WANManager
 from router_scanner import RouterScanner
-from settings import WAN_DEFAULT_INTERVAL as DEFAULT_INTERVAL, WAN_ERROR_RETRY_INTERVAL as ERROR_RETRY_INTERVAL
+from settings import (
+    WAN_DEFAULT_INTERVAL as DEFAULT_INTERVAL, WAN_ERROR_RETRY_INTERVAL as ERROR_RETRY_INTERVAL,
+    libreqos_dir,
+)
 
 CONFIG_JSON        = 'config.json'
 DB_FILE            = 'devices.db'
-SHAPED_DEVICES_CSV = 'ShapedDevices.csv'
+SHAPED_DEVICES_CSV = os.path.join(libreqos_dir(), 'ShapedDevices.csv')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -82,9 +85,12 @@ def main():
             elif not cores:
                 logger.info("No cores configured — sleeping.")
             else:
-                wan_totals = wan_mgr.assign_wan_nodes(db.conn, cores, wan_sources)
-                wan_mgr.check_wan_capacity(wan_totals, cores)
-                wan_mgr.sync_wan_address_lists(db.conn, cores)
+                with timed_job(db.conn, 'wan assign', 'wan', 'wan_service', interval):
+                    wan_totals = wan_mgr.assign_wan_nodes(db.conn, cores, wan_sources)
+                    wan_mgr.check_wan_capacity(wan_totals, cores)
+                with timed_job(db.conn, 'wan sync', 'wan', 'wan_service', interval) as job:
+                    summary = wan_mgr.sync_wan_address_lists(db.conn, cores)
+                    job['error'] = '; '.join(summary['errors'])
                 logger.info(f"WAN cycle complete. Next in {interval}s.")
 
         except Exception as e:

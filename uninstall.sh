@@ -1,4 +1,8 @@
 #!/bin/bash
+#
+# Remove LQ-Sync: its services and its directory, /opt/lq-sync (code, config,
+# GUI login, device database, graphs). LibreQoS is not touched — its venv,
+# ShapedDevices.csv and network.json stay, so shaping keeps the last state.
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -6,21 +10,14 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-LIBREQOS_DIR="/opt/libreqos"
-SRC_DIR="$LIBREQOS_DIR/src"
-SERVICE_FILE="/etc/systemd/system/updatecsv.service"
-WAN_SERVICE_FILE="/etc/systemd/system/wan_service.service"
-GUI_SERVICE_FILE="/etc/systemd/system/gui.service"
+APP_DIR="/opt/lq-sync"
+LEGACY_DIR="/opt/libreqos/src"        # where older versions installed themselves
+UNIT_DIR="/etc/systemd/system"
+SERVICES="updatecsv wan_service gui"
+LEGACY_FILES="updatecsv.py wan_service.py gui.py settings.py rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py config.json settings.json gui_auth.json devices.db devices.db-wal devices.db-shm .installed_version"
+OURS='routeros|RouterScanner|DeviceDatabase|RateResolver|NodeAssigner|WANManager|_SETTINGS_PATH|LQ-Sync|LQ <span|"bras"|password_hash|wan_assignment'
 
 DELETED_FILES=()
-
-log_delete() {
-    local path="$1"
-    if [ -f "$path" ] || [ -d "$path" ]; then
-        rm -rf "$path"
-        DELETED_FILES+=("$path")
-    fi
-}
 
 if [[ $EUID -ne 0 ]]; then
     printf "${RED}✘ This script must be run as root. Use sudo.${NC}\n"
@@ -30,60 +27,45 @@ fi
 # ── Stop and disable services ─────────────────────────────────────────────
 
 printf "${BLUE}➜ Stopping and disabling services...${NC}\n"
-for svc in updatecsv.service wan_service.service gui.service; do
-    systemctl stop "$svc"    2>/dev/null
-    systemctl disable "$svc" 2>/dev/null
-done
-
-# ── Remove installed files ────────────────────────────────────────────────
-
-printf "${BLUE}➜ Removing installed files...${NC}\n"
-
-# Main scripts
-log_delete "$SRC_DIR/updatecsv.py"
-log_delete "$SRC_DIR/wan_service.py"
-log_delete "$SRC_DIR/gui.py"
-
-# Python modules
-for module in settings.py rate_resolver.py device_database.py node_assigner.py router_scanner.py wan_manager.py; do
-    log_delete "$SRC_DIR/$module"
-done
-
-# Assets and data
-log_delete "$SRC_DIR/templates"
-log_delete "$SRC_DIR/config.json"
-log_delete "$SRC_DIR/config.json.bak"
-log_delete "$SRC_DIR/settings.json"
-log_delete "$SRC_DIR/.installed_version"
-log_delete "$SRC_DIR/devices.db"
-log_delete "$SRC_DIR/gui_auth.json"
-log_delete "$SRC_DIR/network.json"
-log_delete "$SRC_DIR/network.json.bak"
-log_delete "$SRC_DIR/ShapedDevices.csv"
-log_delete "$SRC_DIR/ShapedDevices.csv.bak"
-
-# Systemd unit files
-log_delete "$SERVICE_FILE"
-log_delete "$WAN_SERVICE_FILE"
-log_delete "$GUI_SERVICE_FILE"
-
-# ── Remove Python venv ────────────────────────────────────────────────────
-
-# LibreQoS itself (v2.0+) runs from the same /opt/libreqos/venv, so keep it
-# whenever LibreQoS is still installed.
-if [ -d "$LIBREQOS_DIR/venv" ]; then
-    if [ -f "$SRC_DIR/LibreQoS.py" ] || systemctl list-unit-files lqos_scheduler.service >/dev/null 2>&1; then
-        printf "${YELLOW}➜ Keeping $LIBREQOS_DIR/venv — LibreQoS still uses it.${NC}\n"
-    else
-        printf "${BLUE}➜ Removing Python virtual environment...${NC}\n"
-        rm -rf "$LIBREQOS_DIR/venv"
-        DELETED_FILES+=("$LIBREQOS_DIR/venv")
+for svc in $SERVICES; do
+    systemctl stop "$svc.service"    2>/dev/null
+    systemctl disable "$svc.service" 2>/dev/null
+    if [ -f "$UNIT_DIR/$svc.service" ]; then
+        rm -f "$UNIT_DIR/$svc.service"
+        DELETED_FILES+=("$UNIT_DIR/$svc.service")
     fi
+done
+systemctl daemon-reload
+
+# ── Remove the app directory ──────────────────────────────────────────────
+
+if [ -d "$APP_DIR" ]; then
+    printf "${BLUE}➜ Removing $APP_DIR...${NC}\n"
+    rm -rf --one-file-system "$APP_DIR"
+    DELETED_FILES+=("$APP_DIR")
 fi
 
-# ── Reload systemd ────────────────────────────────────────────────────────
+# ── Leftovers of an old install inside LibreQoS's directory ───────────────
+# Only files that are recognisably this app's are removed.
 
-systemctl daemon-reload
+OUR_DB=0
+[ -f "$LEGACY_DIR/devices.db" ] && grep -qa "circuit_id" "$LEGACY_DIR/devices.db" && OUR_DB=1
+for f in $LEGACY_FILES; do
+    p="$LEGACY_DIR/$f"
+    [ -f "$p" ] || continue
+    case "$f" in
+        devices.db*)        [ "$OUR_DB" = 1 ] || continue ;;   # its schema has circuit_id
+        .installed_version) ;;                                  # named only by this app
+        *)                  grep -qE "$OURS" "$p" || continue ;;
+    esac
+    rm -f "$p"
+    DELETED_FILES+=("$p")
+done
+if [ -f "$LEGACY_DIR/templates/index.html" ] && grep -qE "$OURS" "$LEGACY_DIR/templates/index.html"; then
+    rm -f "$LEGACY_DIR/templates/index.html"
+    rmdir "$LEGACY_DIR/templates" 2>/dev/null
+    DELETED_FILES+=("$LEGACY_DIR/templates/index.html")
+fi
 
 # ── Summary ───────────────────────────────────────────────────────────────
 
@@ -92,9 +74,10 @@ if [ ${#DELETED_FILES[@]} -gt 0 ]; then
     for f in "${DELETED_FILES[@]}"; do
         printf "${YELLOW}  • $f${NC}\n"
     done
-    printf "\n${GREEN}✔ Total removed: ${#DELETED_FILES[@]}${NC}\n"
 else
-    printf "${YELLOW}➜ Nothing to remove — files not found.${NC}\n"
+    printf "${YELLOW}➜ Nothing to remove — LQ-Sync is not installed.${NC}\n"
 fi
 
+printf "\n${BLUE}LibreQoS was left untouched: its venv, ShapedDevices.csv and network.json stay,\n"
+printf "so shaping keeps the last state this app wrote.${NC}\n"
 printf "${GREEN}✔ LQ-Sync uninstall complete.${NC}\n"

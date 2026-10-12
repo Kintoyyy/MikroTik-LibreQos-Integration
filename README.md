@@ -98,12 +98,12 @@ sudo ./install_updatecsv.sh
 ```
 
 The installer will:
-- Install system dependencies (`python3`, `python3-venv`, `jq`, `git`)
-- Create a Python virtual environment at `/opt/libreqos/venv`
-- Install Python dependencies (`routeros-api`, `flask`, `psutil`)
-- Copy `updatecsv.py`, `gui.py`, and `templates/` to `/opt/libreqos/src/`
-- Create and enable `updatecsv.service` and `gui.service`
-- Print the GUI URL and default credentials on completion
+- Install system dependencies (`python3`, `python3-venv`, `jq`, `git`, `rrdtool`)
+- Install the app into its own directory, **`/opt/lq-sync`**, with its own virtual environment (`/opt/lq-sync/venv`). LibreQoS keeps `/opt/libreqos` to itself; only `ShapedDevices.csv` and `network.json` are written there
+- Move an older install out of `/opt/libreqos/src` automatically, keeping its config, login, device database and graphs (old copies go to `/opt/lq-sync/migrated-from-libreqos-src-*`)
+- Never overwrite an existing `config.json` or `settings.json`
+- Create and enable `updatecsv.service` and `gui.service`. `wan_service` is installed but only enabled when WAN assignment is on
+- Print the GUI URL (and the default password on a first install)
 
 After installation, open the GUI in your browser:
 
@@ -161,7 +161,7 @@ journalctl -u updatecsv.service -f
 
 ## Configuration
 
-Edit `/opt/libreqos/src/config.json` after installation (or use the Settings tab in the GUI):
+Edit `/opt/lq-sync/config.json` after installation (or use the Routers tab in the GUI):
 
 ```json
 {

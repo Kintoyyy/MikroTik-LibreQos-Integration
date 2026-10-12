@@ -12,46 +12,76 @@
 /* ── Base ── */
 :root {
   --bg:      #0d1117;
-  --surface: #161b27;
-  --card:    #1a2035;
-  --border:  #2a3350;
-  --muted:   #64748b;
-  --text:    #e2e8f0;
-  --blue:    #3b82f6;
-  --green:   #22c55e;
-  --yellow:  #f59e0b;
-  --purple:  #8b5cf6;
-  --red:     #ef4444;
-  --cyan:    #06b6d4;
+  --surface: #161b22;
+  --card:    #161b22;
+  --card-hd: #161b22;
+  --raised:  #1c2128;
+  --border:  #30363d;
+  --muted:   #8b949e;
+  --text:    #c9d1d9;
+  --strong:  #e6edf3;
+  --blue:    #2f81f7;
+  --accent:  #58a6ff;
+  --green:   #3fb950;
+  --yellow:  #d29922;
+  --purple:  #a371f7;
+  --red:     #f85149;
+  --cyan:    #39c5cf;
+  --mono:    ui-monospace, SFMono-Regular, "DejaVu Sans Mono", Menlo, Consolas, monospace;
 }
 *, *::before, *::after { box-sizing: border-box; }
-body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; margin: 0; }
 
-/* ── Navbar ── */
-.topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: .6rem 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
-.brand  { font-weight: 700; font-size: 1rem; display: flex; align-items: center; gap: .5rem; color: var(--text); }
-.brand i { color: var(--blue); font-size: 1.2rem; }
+/* ── Header ── */
+.topbar { background: var(--bg); border-bottom: 1px solid var(--border); padding: .55rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: .75rem; position: sticky; top: 0; z-index: 100; }
+.brand { font-weight: 700; font-size: 1.05rem; display: flex; align-items: center; gap: .55rem; color: var(--strong); }
+.brand-logo { width: 26px; height: 26px; border-radius: 6px; background: var(--blue); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: .95rem; }
+.brand-accent { color: var(--accent); }
+.topbar-actions { display: flex; align-items: center; gap: .3rem; flex-wrap: nowrap; }
+.hbtn, .hbtn-primary, .hbtn-icon { border-radius: 6px; font-size: .85rem; cursor: pointer; display: inline-flex; align-items: center; gap: .4rem; white-space: nowrap; transition: background .15s, color .15s; }
+.hbtn { background: none; border: none; color: var(--text); padding: .4rem .65rem; }
+.hbtn:hover { background: var(--raised); color: var(--strong); }
+.hbtn-primary { background: var(--blue); border: 1px solid #388bfd; color: #fff; padding: .4rem .8rem; font-weight: 500; }
+.hbtn-primary:hover { background: #388bfd; }
+.hbtn-icon { background: none; border: none; color: var(--muted); padding: .4rem .5rem; font-size: 1rem; }
+.hbtn-icon:hover { background: var(--raised); color: var(--strong); }
+.svc-pill { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; color: var(--muted); padding: 0 .4rem; }
+
+/* ── Page container ── */
+.wrap { max-width: 1480px; margin: 0 auto; padding: 1rem 1rem 0; }
+
+/* ── Status strip ── */
+.status-strip { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1rem; font-size: .8rem; }
+.ss-row { display: flex; align-items: center; gap: .55rem; padding: .5rem .8rem; flex-wrap: wrap; color: var(--muted); }
+.ss-row + .ss-row { border-top: 1px solid var(--border); }
+.ss-row b { color: var(--strong); font-weight: 600; }
+.ss-row .v { font-family: var(--mono); color: var(--strong); font-size: .76rem; }
+.ss-warn { color: #ff7b72; font-family: var(--mono); font-size: .74rem; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-sep { color: var(--border); }
 
 /* ── Tabs ── */
-.tab-nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 1.25rem; display: flex; gap: .25rem; }
-.tab-btn { background: none; border: none; color: var(--muted); padding: .75rem 1rem; font-size: .875rem; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; transition: all .2s; display: flex; align-items: center; gap: .4rem; }
-.tab-btn:hover  { color: var(--text); }
-.tab-btn.active { color: var(--blue); border-bottom-color: var(--blue); }
+.tab-nav { border-bottom: 1px solid var(--border); display: flex; gap: .15rem; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.tab-nav::-webkit-scrollbar { display: none; }
+.tab-btn { background: none; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; color: var(--muted); padding: .55rem .85rem; margin-bottom: -1px; font-size: .875rem; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: .45rem; white-space: nowrap; flex-shrink: 0; transition: color .15s; }
+.tab-btn:hover  { color: var(--strong); }
+.tab-btn.active { color: var(--strong); background: var(--surface); border-color: var(--border); font-weight: 600; }
+.tab-badge { font-family: var(--mono); font-size: .66rem; font-weight: 600; line-height: 1; background: #30363d; color: var(--text); border-radius: 10px; padding: .2rem .42rem; }
+.tab-badge.err { background: #f8514926; color: #ff7b72; }
 
 /* ── Layout ── */
-.page { display: none; padding: 1.25rem; }
+.page { display: none; padding: 1rem 0; }
 .page.active { display: block; }
 
 /* ── Cards ── */
-.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-.card-hd { background: #1e2740; border-bottom: 1px solid var(--border); padding: .75rem 1rem; font-weight: 600; font-size: .875rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.card-hd { background: var(--card-hd); border-bottom: 1px solid var(--border); padding: .7rem 1rem; font-weight: 600; font-size: .9rem; color: var(--strong); display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
 .card-bd { padding: 1rem; }
-.card-hd i { color: var(--blue); }
+.card-hd i { color: var(--text); }
 
 /* ── Stat cards ── */
 .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
 @media(max-width:768px){ .stat-grid { grid-template-columns: repeat(2,1fr); } }
-.stat-card { background: linear-gradient(135deg, #1a2b4a, var(--card)); border: 1px solid #2563eb2a; border-radius: 12px; padding: 1rem 1.25rem; }
+.stat-card { background: linear-gradient(135deg, #161b22, var(--card)); border: 1px solid #2563eb2a; border-radius: 12px; padding: 1rem 1.25rem; }
 .stat-val { font-size: 1.875rem; font-weight: 700; color: var(--blue); line-height: 1; }
 .stat-lbl { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: .3rem; }
 
@@ -64,7 +94,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .cpu-bar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(28px, 1fr)); gap: 6px; margin-top: .75rem; width: 100%; }
 .cpu-bar-item { min-width: 0; text-align: center; }
 .cpu-bar-item .lbl { font-size: 9px; color: var(--muted); }
-.cpu-bar-item .prog { height: 5px; background: #2d3748; border-radius: 3px; overflow: hidden; margin-top: 2px; }
+.cpu-bar-item .prog { height: 5px; background: #30363d; border-radius: 3px; overflow: hidden; margin-top: 2px; }
 .cpu-bar-item .fill { height: 100%; background: var(--blue); transition: width .35s; border-radius: 3px; }
 
 /* ── System info chips ── */
@@ -128,7 +158,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .toggle-wrap { display: flex; align-items: center; gap: .6rem; cursor: pointer; user-select: none; }
 .toggle { position: relative; width: 38px; height: 22px; flex-shrink: 0; }
 .toggle input { opacity: 0; width: 0; height: 0; }
-.toggle-track { position: absolute; inset: 0; background: #2d3748; border-radius: 11px; transition: background .2s; }
+.toggle-track { position: absolute; inset: 0; background: #30363d; border-radius: 11px; transition: background .2s; }
 .toggle input:checked + .toggle-track { background: var(--blue); }
 .toggle-thumb { position: absolute; width: 16px; height: 16px; background: white; border-radius: 50%; top: 3px; left: 3px; transition: transform .2s; box-shadow: 0 1px 3px #0005; }
 .toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
@@ -137,7 +167,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .strategy-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: .6rem; }
 @media(max-width:700px){ .strategy-grid { grid-template-columns: repeat(2,1fr); } }
 .strategy-card { border: 2px solid var(--border); border-radius: 10px; padding: .75rem; cursor: pointer; transition: all .15s; text-align: center; background: #0d1117; }
-.strategy-card:hover { border-color: #3b82f655; background: #1a2035; }
+.strategy-card:hover { border-color: #3b82f655; background: #161b22; }
 .strategy-card.selected { border-color: var(--blue); background: #1d3fbb22; }
 .strategy-card i { font-size: 1.4rem; display: block; margin-bottom: .35rem; color: var(--muted); }
 .strategy-card.selected i { color: var(--blue); }
@@ -145,9 +175,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .strategy-card .s-desc { font-size: .65rem; color: var(--muted); margin-top: .2rem; line-height: 1.3; }
 
 /* ── Router cards ── */
-.router-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 1rem; background: #131929; transition: border-color .2s; }
+.router-card { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 1rem; background: #11161d; transition: border-color .2s; }
 .router-card:hover { border-color: #3b82f655; }
-.router-hd { background: #1a2240; padding: .8rem 1rem; display: flex; align-items: center; gap: .75rem; cursor: pointer; user-select: none; }
+.router-hd { background: #1c2128; padding: .8rem 1rem; display: flex; align-items: center; gap: .75rem; cursor: pointer; user-select: none; }
 .router-hd .router-num { background: var(--blue); color: #fff; width: 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: .75rem; font-weight: 700; flex-shrink: 0; }
 .router-hd .router-title { flex: 1; }
 .router-hd .router-name { font-weight: 600; font-size: .9rem; }
@@ -160,7 +190,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 .source-hd { padding: .6rem .85rem; display: flex; align-items: center; gap: .75rem; background: #0d1117; cursor: pointer; }
 .source-hd .src-icon { font-size: .95rem; }
 .source-hd .src-label { flex: 1; font-size: .85rem; font-weight: 600; }
-.source-body { padding: .75rem; background: #080d16; display: none; border-top: 1px solid var(--border); }
+.source-body { padding: .75rem; background: #0b0f14; display: none; border-top: 1px solid var(--border); }
 .source-body.open { display: block; }
 
 /* ── Source colors ── */
@@ -172,9 +202,9 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', syste
 /* ── Devices table ── */
 .devices-wrap { overflow-x: auto; max-height: 80vh; overflow-y: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .8rem; }
-thead th { background: #1e2740; padding: .55rem .75rem; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; white-space: nowrap; }
-tbody td { padding: .5rem .75rem; border-bottom: 1px solid #1a2035; white-space: nowrap; }
-tbody tr:hover { background: #1a2240; }
+thead th { background: #161b22; padding: .55rem .75rem; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); border-bottom: 1px solid var(--border); position: sticky; top: 0; white-space: nowrap; }
+tbody td { padding: .5rem .75rem; border-bottom: 1px solid #161b22; white-space: nowrap; }
+tbody tr:hover { background: #1c2128; }
 code { font-size: .8rem; color: #94a3b8; }
 
 /* ── Toolbar ── */
@@ -212,7 +242,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
 /* ── Troubleshooting ── */
 .trouble-step { display: flex; gap: .85rem; align-items: flex-start; }
-.trouble-step-num { width: 26px; height: 26px; border-radius: 50%; background: #1e274022; border: 1px solid var(--border); color: var(--muted); font-size: .75rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: .1rem; }
+.trouble-step-num { width: 26px; height: 26px; border-radius: 50%; background: #161b2222; border: 1px solid var(--border); color: var(--muted); font-size: .75rem; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: .1rem; }
 
 /* ── Interface cards ── */
 .iface-card { background: #0d1117; border: 1px solid var(--border); border-radius: 10px; padding: .85rem 1rem; transition: border-color .2s; }
@@ -226,15 +256,15 @@ code { font-size: .8rem; color: #94a3b8; }
 /* ── Netplan option cards ── */
 @media(max-width:640px){ #netplan-options { grid-template-columns: 1fr !important; } }
 .netplan-option-card { border: 2px solid var(--border); border-radius: 14px; cursor: pointer; transition: all .2s; position: relative; background: #0d1117; }
-.netplan-option-card:hover { border-color: #3b82f655; background: #131929; }
-.netplan-option-card.selected { border-color: var(--blue); background: #1a2b4a22; }
+.netplan-option-card:hover { border-color: #3b82f655; background: #11161d; }
+.netplan-option-card.selected { border-color: var(--blue); background: #161b2222; }
 .netplan-option-card.selected .netplan-option-inner { opacity: 1; }
 .netplan-option-inner { padding: 1.1rem 1.1rem 1rem; }
 .netplan-option-check { position: absolute; top: .75rem; right: .75rem; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--border); background: transparent; display: flex; align-items: center; justify-content: center; font-size: .7rem; color: #fff; transition: all .2s; }
 .netplan-option-card.selected .netplan-option-check { background: var(--blue); border-color: var(--blue); }
 .netplan-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0; }
 .netplan-pill { font-size: .68rem; font-weight: 600; padding: .2em .6em; border-radius: 20px; }
-.cmd-line { display: flex; align-items: center; gap: .75rem; background: #080d16; border: 1px solid var(--border); border-radius: 8px; padding: .55rem .85rem; }
+.cmd-line { display: flex; align-items: center; gap: .75rem; background: #0b0f14; border: 1px solid var(--border); border-radius: 8px; padding: .55rem .85rem; }
 .cmd-line code { flex: 1; font-size: .82rem; color: #94a3b8; font-family: 'Consolas','Courier New',monospace; }
 .btn-copy { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 6px; padding: .2rem .5rem; cursor: pointer; font-size: .75rem; transition: all .15s; }
 .btn-copy:hover { border-color: var(--blue); color: var(--text); }
@@ -280,7 +310,42 @@ code { font-size: .8rem; color: #94a3b8; }
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+
+/* ── Pollers page ── */
+.hd-sub { color: var(--muted); font-weight: 400; font-size: .78rem; margin-left: .35rem; }
+.mon-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+@media(max-width:1000px){ .mon-cards { grid-template-columns: 1fr; } }
+.kv { display: grid; grid-template-columns: 82px minmax(0, 1fr); row-gap: .5rem; column-gap: .75rem; align-items: center; font-size: .82rem; }
+.kv-k { color: var(--muted); }
+.kv-v { font-family: var(--mono); font-size: .76rem; color: var(--strong); display: flex; align-items: center; gap: .6rem; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kv-v .dim, .dim { color: var(--muted); }
+.kv-v .bad { color: #ff7b72; white-space: normal; }
+.mbar { width: 90px; height: 4px; background: #30363d; border-radius: 2px; overflow: hidden; flex-shrink: 0; display: inline-block; }
+.mbar > span { display: block; height: 100%; background: var(--green); }
+.mbar.warn > span { background: var(--yellow); }
+.mbar.bad > span  { background: var(--red); }
+.mon-router + .mon-router { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .8rem; }
+.mon-router-hd { display: flex; align-items: center; gap: .5rem; font-weight: 600; color: var(--strong); font-size: .85rem; margin-bottom: .55rem; }
+.seg { display: inline-flex; gap: .3rem; flex-wrap: wrap; }
+.seg-btn { background: #21262d; border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: .28rem .6rem; font-size: .78rem; font-weight: 600; cursor: pointer; }
+.seg-btn:hover  { border-color: var(--muted); }
+.seg-btn.active { background: var(--blue); border-color: #388bfd; color: #fff; }
+.graphs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1rem; }
+@media(max-width:1100px){ .graphs-grid { grid-template-columns: 1fr; } }
+.graph-cell { min-height: 210px; display: flex; align-items: flex-start; justify-content: center; }
+.graph-cell .graph-empty { align-self: center; }
+.graph-cell img { max-width: 100%; height: auto; display: block; border-radius: 4px; }
+.graph-empty { color: var(--muted); font-size: .8rem; text-align: center; padding: 2rem 1rem; }
+.jobs-table thead th { background: none; text-transform: none; letter-spacing: 0; font-size: .82rem; color: var(--strong); padding: .6rem .9rem; position: static; }
+.jobs-table td { font-family: var(--mono); font-size: .76rem; padding: .5rem .9rem; color: var(--text); border-bottom: 1px solid #21262d; vertical-align: top; }
+.jobs-table td.name { font-family: inherit; font-size: .82rem; color: var(--strong); }
+.jobs-table td.errs { color: #ff7b72; font-weight: 600; }
+.job-err { display: block; color: #ff7b72; font-family: var(--mono); font-size: .72rem; white-space: normal; max-width: 560px; margin-top: .2rem; }
+.st { font-weight: 600; }
+.st-ok    { color: var(--green); }
+.st-error { color: #ff7b72; }
+.st-late  { color: var(--yellow); }
 
 /* ══════════════════════════════════════════════
    MOBILE — tablet (≤ 768px)
@@ -288,6 +353,8 @@ code { font-size: .8rem; color: #94a3b8; }
 @media(max-width:768px) {
   /* Topbar */
   .topbar { padding: .5rem .75rem; gap: .5rem; }
+  .hbtn span, .hbtn-primary span { display: none; }
+  .wrap { padding: .75rem .6rem 0; }
   #svc-label { display: none; }
   .btn-group-svc { gap: .2rem; }
 
@@ -373,7 +440,7 @@ code { font-size: .8rem; color: #94a3b8; }
 <!-- ── Login overlay ── -->
 <div id="login-overlay">
   <div class="login-card">
-    <h1><i class="bi bi-router-fill" style="color:var(--blue)"></i> LQ-Sync</h1>
+    <h1><span class="brand-logo"><i class="bi bi-activity"></i></span> LQ <span class="brand-accent">Sync</span></h1>
     <p style="margin:0;font-size:.82rem;color:var(--muted)">Sign in to continue</p>
     <div>
       <label style="font-size:.78rem;color:var(--muted);display:block;margin-bottom:.4rem">Password</label>
@@ -406,43 +473,54 @@ code { font-size: .8rem; color: #94a3b8; }
   </div>
 </div>
 
-<!-- ── Topbar ── -->
-<div class="topbar">
-  <div class="brand"><i class="bi bi-router-fill"></i><span class="brand-text"> LQ-Sync</span></div>
-  <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:nowrap;">
-    <div style="display:flex;align-items:center;gap:.5rem;font-size:.8rem;">
-      <span class="dot dot-grey" id="svc-dot"></span>
-      <span id="svc-label" style="color:var(--muted)">checking…</span>
-    </div>
-    <div class="btn-group-svc">
-      <button class="btn-ghost" onclick="serviceAction('start')"   title="Start">  <i class="bi bi-play-fill"      style="color:var(--green)"></i></button>
-      <button class="btn-ghost" onclick="serviceAction('restart')" title="Restart"><i class="bi bi-arrow-clockwise" style="color:var(--yellow)"></i></button>
-      <button class="btn-ghost" onclick="serviceAction('stop')"    title="Stop">   <i class="bi bi-stop-fill"       style="color:var(--red)"></i></button>
-    </div>
-    <button class="btn-ghost" onclick="restartUbuntuHost()" title="Restart Ubuntu host">
-      <i class="bi bi-power" style="color:var(--yellow)"></i>
-    </button>
-    <div style="width:1px;height:18px;background:var(--border)"></div>
-    <button class="btn-ghost" onclick="openChpw()" title="Change password"><i class="bi bi-key-fill" style="color:var(--muted)"></i></button>
-    <button class="btn-ghost" onclick="doLogout()" title="Logout"><i class="bi bi-box-arrow-right" style="color:var(--muted)"></i></button>
+<!-- ── Header ── -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-logo"><i class="bi bi-activity"></i></span>
+    <span class="brand-text">LQ <span class="brand-accent">Sync</span></span>
   </div>
+  <div class="topbar-actions">
+    <span class="svc-pill" title="updatecsv sync service">
+      <span class="dot dot-grey" id="svc-dot"></span><span id="svc-label">checking…</span>
+    </span>
+    <div class="btn-group-svc">
+      <button class="hbtn-icon" onclick="serviceAction('start')"   title="Start sync service"><i class="bi bi-play-fill"></i></button>
+      <button class="hbtn-icon" onclick="serviceAction('restart')" title="Restart sync service"><i class="bi bi-arrow-clockwise"></i></button>
+      <button class="hbtn-icon" onclick="serviceAction('stop')"    title="Stop sync service"><i class="bi bi-stop-fill"></i></button>
+    </div>
+    <button class="hbtn" onclick="switchTab('troubleshoot')" title="Troubleshooting"><i class="bi bi-bug"></i><span>Troubleshoot</span></button>
+    <button class="hbtn" onclick="switchTab('appsettings')" title="App settings"><i class="bi bi-sliders2"></i><span>Settings</span></button>
+    <button class="hbtn-primary" onclick="switchTab('devices'); openDeviceModal()"><i class="bi bi-plus-lg"></i><span>Add Device</span></button>
+    <button class="hbtn-icon" onclick="restartUbuntuHost()" title="Restart host"><i class="bi bi-power"></i></button>
+    <button class="hbtn-icon" onclick="openChpw()" title="Change password"><i class="bi bi-key"></i></button>
+    <button class="hbtn-icon" onclick="doLogout()" title="Log out"><i class="bi bi-box-arrow-right"></i></button>
+  </div>
+</header>
+
+<main class="wrap">
+
+<!-- ── Status strip ── -->
+<div class="status-strip">
+  <div class="ss-row" id="ss-routers"><i class="bi bi-hdd-stack"></i><span class="dot dot-grey"></span><b>Router</b><span>checking…</span></div>
+  <div class="ss-row" id="ss-host"><i class="bi bi-display"></i><span class="dot dot-grey"></span><b>this host</b><span>checking…</span></div>
 </div>
 
 <!-- ── Tab nav ── -->
-<div class="tab-nav">
-  <button class="tab-btn active" onclick="switchTab('dashboard')"><i class="bi bi-speedometer2"></i>Dashboard</button>
-  <button class="tab-btn"        onclick="switchTab('config')">   <i class="bi bi-sliders"></i>Settings</button>
-  <button class="tab-btn"        onclick="switchTab('services')"> <i class="bi bi-grid-3x2-gap-fill"></i>Services</button>
-  <button class="tab-btn"        onclick="switchTab('troubleshoot')"> <i class="bi bi-tools"></i>Troubleshooting</button>
-  <button class="tab-btn"        onclick="switchTab('network')">  <i class="bi bi-hdd-network"></i>Network</button>
-  <button class="tab-btn"        onclick="switchTab('mgmt')">     <i class="bi bi-ethernet"></i>Management Port</button>
-  <button class="tab-btn"        onclick="switchTab('yaml')">     <i class="bi bi-file-code"></i>Files</button>
-  <button class="tab-btn"        onclick="switchTab('topology')"> <i class="bi bi-diagram-3"></i>Topology</button>
-  <button class="tab-btn"        onclick="switchTab('devices')">  <i class="bi bi-table"></i>Devices</button>
-  <button class="tab-btn"        onclick="switchTab('lqos')">     <i class="bi bi-gear-wide-connected"></i>Config</button>
-  <button class="tab-btn"        onclick="switchTab('appsettings')"><i class="bi bi-gear-fill"></i>App Settings</button>
-  <button class="tab-btn"        onclick="switchTab('credits')">  <i class="bi bi-heart-fill"></i>Credits</button>
-</div>
+<nav class="tab-nav">
+  <button class="tab-btn active" data-tab="dashboard"    onclick="switchTab('dashboard')"><i class="bi bi-activity"></i>Overview</button>
+  <button class="tab-btn"        data-tab="pollers"      onclick="switchTab('pollers')"><i class="bi bi-cpu"></i>Pollers <span class="tab-badge" id="tab-badge-pollers">0</span></button>
+  <button class="tab-btn"        data-tab="devices"      onclick="switchTab('devices')"><i class="bi bi-table"></i>Devices <span class="tab-badge" id="tab-badge-devices">0</span></button>
+  <button class="tab-btn"        data-tab="topology"     onclick="switchTab('topology')"><i class="bi bi-diagram-3"></i>Topology</button>
+  <button class="tab-btn"        data-tab="config"       onclick="switchTab('config')"><i class="bi bi-hdd-stack"></i>Routers</button>
+  <button class="tab-btn"        data-tab="services"     onclick="switchTab('services')"><i class="bi bi-grid-3x2-gap"></i>Services</button>
+  <button class="tab-btn"        data-tab="troubleshoot" onclick="switchTab('troubleshoot')"><i class="bi bi-tools"></i>Troubleshooting</button>
+  <button class="tab-btn"        data-tab="network"      onclick="switchTab('network')"><i class="bi bi-hdd-network"></i>Network</button>
+  <button class="tab-btn"        data-tab="mgmt"         onclick="switchTab('mgmt')"><i class="bi bi-ethernet"></i>Management Port</button>
+  <button class="tab-btn"        data-tab="yaml"         onclick="switchTab('yaml')"><i class="bi bi-file-code"></i>Files</button>
+  <button class="tab-btn"        data-tab="lqos"         onclick="switchTab('lqos')"><i class="bi bi-gear-wide-connected"></i>LibreQoS Config</button>
+  <button class="tab-btn"        data-tab="appsettings"  onclick="switchTab('appsettings')"><i class="bi bi-sliders2"></i>App Settings</button>
+  <button class="tab-btn"        data-tab="credits"      onclick="switchTab('credits')"><i class="bi bi-heart"></i>Credits</button>
+</nav>
 
 <!-- ══════════════════════════════════════════════════════════════════════
      DASHBOARD
@@ -504,7 +582,7 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
     <div class="card">
-      <div class="card-hd"><i class="bi bi-memory" style="color:var(--cyan)"></i> Memory</div>
+      <div class="card-hd"><span><i class="bi bi-memory" style="color:var(--cyan)"></i> Memory</span></div>
       <div class="card-bd">
         <div class="chart-wrap"><canvas id="mem-chart"></canvas></div>
         <div style="display:flex;justify-content:space-between;margin-top:.75rem;font-size:.78rem;color:var(--muted)">
@@ -515,11 +593,11 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
     <div class="card">
-      <div class="card-hd"><i class="bi bi-pie-chart-fill" style="color:var(--yellow)"></i> Devices by Source</div>
+      <div class="card-hd"><span><i class="bi bi-pie-chart-fill" style="color:var(--yellow)"></i> Devices by Source</span></div>
       <div class="card-bd"><div class="chart-wrap"><canvas id="src-chart"></canvas></div></div>
     </div>
     <div class="card">
-      <div class="card-hd"><i class="bi bi-bar-chart-fill" style="color:var(--green)"></i> Top 10 by Bandwidth</div>
+      <div class="card-hd"><span><i class="bi bi-bar-chart-fill" style="color:var(--green)"></i> Top 10 by Bandwidth</span></div>
       <div style="overflow-x:auto">
         <table>
           <thead><tr><th>Device</th><th>Source</th><th style="text-align:right">DL Mbps</th><th style="text-align:right">UL Mbps</th></tr></thead>
@@ -567,6 +645,51 @@ code { font-size: .8rem; color: #94a3b8; }
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
+     POLLERS — this app, this host, routers, RRD graphs, jobs
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-pollers">
+  <div class="mon-cards">
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-activity"></i> LQ-Sync <span class="hd-sub">this app</span></span></div>
+      <div class="card-bd kv" id="mon-app"><span class="kv-k">Status</span><span class="kv-v dim">collecting…</span></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-display"></i> <span id="mon-host-name">host</span> <span class="hd-sub">this host</span></span></div>
+      <div class="card-bd kv" id="mon-host"><span class="kv-k">Status</span><span class="kv-v dim">collecting…</span></div>
+    </div>
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-hdd-stack"></i> Routers</span><span class="hd-sub" id="mon-routers-sub"></span></div>
+      <div class="card-bd" id="mon-routers"><span class="dim" style="font-size:.82rem">checking…</span></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:1rem">
+    <div class="card-hd">
+      <span><i class="bi bi-graph-up"></i> Graphs</span>
+      <div class="seg" id="graph-range">
+        <button class="seg-btn" data-range="3h"   onclick="setGraphRange('3h')">3 hours</button>
+        <button class="seg-btn" data-range="30h"  onclick="setGraphRange('30h')">30 hours</button>
+        <button class="seg-btn" data-range="10d"  onclick="setGraphRange('10d')">10 days</button>
+        <button class="seg-btn" data-range="360d" onclick="setGraphRange('360d')">360 days</button>
+      </div>
+    </div>
+    <div class="graphs-grid" id="graphs-grid"></div>
+  </div>
+
+  <div class="card" style="margin-top:1rem">
+    <div class="card-hd">
+      <span><i class="bi bi-cpu"></i> Pollers and jobs <span class="hd-sub">CPU = share of one core over the last minute, measured per job</span></span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="jobs-table">
+        <thead><tr><th>Job</th><th>Kind</th><th>Status</th><th>Every</th><th>Last run</th><th>Took</th><th>CPU now</th><th>CPU total</th><th>Runs</th><th>Errors</th></tr></thead>
+        <tbody id="jobs-body"><tr><td colspan="10" class="dim">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
      SETTINGS
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-config">
@@ -593,7 +716,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <!-- Raw JSON panel (hidden by default) -->
   <div id="raw-config-panel" style="display:none;margin-bottom:1rem;">
     <div class="card">
-      <div class="card-hd"><i class="bi bi-code-slash"></i> Raw JSON <span style="font-size:.72rem;color:var(--muted)" id="config-path"></span></div>
+      <div class="card-hd"><span><i class="bi bi-code-slash"></i> Raw JSON <span style="font-size:.72rem;color:var(--muted)" id="config-path"></span></span></div>
       <div class="card-bd" style="padding:.5rem"><textarea id="config-editor"></textarea></div>
     </div>
   </div>
@@ -613,7 +736,7 @@ code { font-size: .8rem; color: #94a3b8; }
     <!-- Global settings -->
     <div class="card"
       style="margin-bottom:1rem">
-      <div class="card-hd"><i class="bi bi-toggles"></i> Global Settings</div>
+      <div class="card-hd"><span><i class="bi bi-toggles"></i> Global Settings</span></div>
       <div class="card-bd">
         <div style="margin-bottom:1.25rem">
           <div class="form-label"
@@ -696,7 +819,7 @@ code { font-size: .8rem; color: #94a3b8; }
     <div class="card"
       style="margin-bottom:1rem"
       id="wan-assignment-card">
-      <div class="card-hd"><i class="bi bi-arrow-left-right"></i> WAN Assignment</div>
+      <div class="card-hd"><span><i class="bi bi-arrow-left-right"></i> WAN Assignment</span></div>
       <div class="card-bd">
         <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-bottom:1rem">
           <label class="toggle-wrap">
@@ -807,7 +930,7 @@ code { font-size: .8rem; color: #94a3b8; }
   </div>
 
   <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-router-fill"></i> MikroTik Connection Tools</div>
+    <div class="card-hd"><span><i class="bi bi-router-fill"></i> MikroTik Connection Tools</span></div>
     <div class="card-bd">
       <div class="form-row form-row-3" style="margin-bottom:.9rem">
         <div>
@@ -1050,7 +1173,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
   <!-- Interface selectors + apply -->
   <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-ethernet"></i> Shaping Interface Assignment</div>
+    <div class="card-hd"><span><i class="bi bi-ethernet"></i> Shaping Interface Assignment</span></div>
     <div class="card-bd">
       <p style="font-size:.78rem;color:var(--muted);margin:0 0 1rem">Select the two interfaces LibreQoS will use for traffic shaping. The dropdowns are populated from interfaces detected on this system.</p>
       <div style="display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:1rem">
@@ -1067,13 +1190,13 @@ code { font-size: .8rem; color: #94a3b8; }
         </button>
       </div>
       <!-- Apply log -->
-      <div id="netplan-log" style="display:none;background:#080d16;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;color:#94a3b8;font-family:monospace;white-space:pre-wrap"></div>
+      <div id="netplan-log" style="display:none;background:#0b0f14;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;color:#94a3b8;font-family:monospace;white-space:pre-wrap"></div>
     </div>
   </div>
 
   <!-- Config preview -->
   <div class="card">
-    <div class="card-hd"><i class="bi bi-file-earmark-code"></i> Generated libreqos.yaml preview</div>
+    <div class="card-hd"><span><i class="bi bi-file-earmark-code"></i> Generated libreqos.yaml preview</span></div>
     <div class="card-bd" style="padding:.5rem"><textarea id="netplan-preview-editor"></textarea></div>
   </div>
 
@@ -1094,7 +1217,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
   <!-- Current status card -->
   <div class="card" style="margin-bottom:1.25rem" id="mgmt-status-card">
-    <div class="card-hd"><i class="bi bi-info-circle-fill" style="color:var(--cyan)"></i> Current Status</div>
+    <div class="card-hd"><span><i class="bi bi-info-circle-fill" style="color:var(--cyan)"></i> Current Status</span></div>
     <div class="card-bd">
       <div id="mgmt-status-body" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:1rem">
         <div style="color:var(--muted);font-size:.85rem">Loading…</div>
@@ -1104,7 +1227,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
   <!-- Interface selector -->
   <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><i class="bi bi-ethernet"></i> Management Interface</div>
+    <div class="card-hd"><span><i class="bi bi-ethernet"></i> Management Interface</span></div>
     <div class="card-bd">
       <div style="font-size:.78rem;color:var(--muted);margin-bottom:.75rem">Select the interface used for SSH, web access, and management traffic.</div>
       <div>
@@ -1164,7 +1287,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <!-- Static IP fields -->
   <div id="mgmt-static-fields" style="display:none;margin-bottom:1rem">
     <div class="card">
-      <div class="card-hd"><i class="bi bi-pencil-square"></i> Static IP Configuration</div>
+      <div class="card-hd"><span><i class="bi bi-pencil-square"></i> Static IP Configuration</span></div>
       <div class="card-bd">
         <div class="form-row form-row-2" style="margin-bottom:.85rem">
           <div>
@@ -1218,7 +1341,7 @@ code { font-size: .8rem; color: #94a3b8; }
     <div class="card-bd" style="padding:.5rem">
       <textarea id="mgmt-preview-editor"></textarea>
     </div>
-    <div id="mgmt-log" style="display:none;margin:.25rem .5rem .5rem;background:#080d16;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;font-family:monospace;white-space:pre-wrap"></div>
+    <div id="mgmt-log" style="display:none;margin:.25rem .5rem .5rem;background:#0b0f14;border:1px solid var(--border);border-radius:8px;padding:.75rem 1rem;font-size:.8rem;font-family:monospace;white-space:pre-wrap"></div>
   </div>
 
 </div>
@@ -1330,7 +1453,7 @@ code { font-size: .8rem; color: #94a3b8; }
 <div class="page" id="page-devices">
   <div class="card">
     <div class="card-hd">
-      <span><i class="bi bi-table"></i> Devices <span id="devices-count" style="background:#2d3748;color:#94a3b8;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.3rem">0</span></span>
+      <span><i class="bi bi-table"></i> Devices <span id="devices-count" style="background:#30363d;color:#94a3b8;font-size:.7rem;padding:.15em .6em;border-radius:20px;margin-left:.3rem">0</span></span>
       <div class="toolbar">
         <input class="search-input" id="device-search" placeholder="Search…" oninput="filterDevices()">
         <select class="search-input" id="device-source-filter" onchange="filterDevices()">
@@ -1539,6 +1662,13 @@ code { font-size: .8rem; color: #94a3b8; }
             <span class="input-suffix">sec</span>
           </div>
           <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">A hung apply is stopped after this and retried next cycle</div>
+        </div>
+      </div>
+      <div class="form-row form-row-2" style="margin-top:1rem">
+        <div>
+          <label class="form-label">LibreQoS Directory</label>
+          <input class="form-input" id="set-libreqos-dir" placeholder="empty = lqos_directory from /etc/lqos.conf">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Where ShapedDevices.csv and network.json are written. This app itself lives in /opt/lq-sync</div>
         </div>
       </div>
     </div>
@@ -1761,7 +1891,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
     <!-- Author -->
     <div class="card" style="margin-bottom:1rem;text-align:center">
-      <div class="card-hd"><i class="bi bi-person-fill"></i> Author</div>
+      <div class="card-hd"><span><i class="bi bi-person-fill"></i> Author</span></div>
       <div class="card-bd" style="padding:1.5rem">
         <div style="font-size:1.1rem;font-weight:700;margin-bottom:.3rem">Kintoyyy</div>
         <div style="font-size:.82rem;color:var(--muted);margin-bottom:1rem">Developer &amp; maintainer of this project</div>
@@ -1777,7 +1907,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
     <!-- Support -->
     <div class="card" style="margin-bottom:1rem">
-      <div class="card-hd"><i class="bi bi-heart-fill" style="color:#f472b6"></i> Support the Project</div>
+      <div class="card-hd"><span><i class="bi bi-heart-fill" style="color:#f472b6"></i> Support the Project</span></div>
       <div class="card-bd">
         <p style="font-size:.83rem;color:var(--muted);margin:0 0 1.1rem;line-height:1.6">
           If this project has saved you time or helped your network, consider supporting its development.
@@ -1805,7 +1935,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
     <!-- Links -->
     <div class="card" style="margin-bottom:1rem">
-      <div class="card-hd"><i class="bi bi-link-45deg"></i> Links</div>
+      <div class="card-hd"><span><i class="bi bi-link-45deg"></i> Links</span></div>
       <div class="card-bd" style="display:flex;flex-direction:column;gap:.6rem">
         <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank"
            style="display:flex;align-items:center;gap:.6rem;color:var(--blue);font-size:.85rem;text-decoration:none">
@@ -1828,7 +1958,7 @@ code { font-size: .8rem; color: #94a3b8; }
 
     <!-- Built with -->
     <div class="card">
-      <div class="card-hd"><i class="bi bi-code-slash"></i> Built With</div>
+      <div class="card-hd"><span><i class="bi bi-code-slash"></i> Built With</span></div>
       <div class="card-bd">
         <div style="display:flex;flex-wrap:wrap;gap:.5rem;font-size:.78rem">
           <span style="background:#0d1117;border:1px solid var(--border);padding:.25em .7em;border-radius:20px;color:var(--muted)">Python / Flask</span>
@@ -1846,6 +1976,8 @@ code { font-size: .8rem; color: #94a3b8; }
 
   </div>
 </div>
+
+</main>
 
 <!-- ── Footer ── -->
 <footer style="border-top:1px solid var(--border);padding:.85rem 1.25rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;font-size:.75rem;color:var(--muted)">
@@ -1881,10 +2013,9 @@ window.fetch = (url, opts = {}) => {
 
 // ── Tab routing ───────────────────────────────────────────────────────────
 function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach((b,i) => {
-    const names = ['dashboard','config','services','troubleshoot','network','mgmt','yaml','topology','devices','lqos','appsettings','credits'];
-    b.classList.toggle('active', names[i] === name);
-  });
+  if (!document.getElementById('page-' + name)) name = 'dashboard';
+  try { history.replaceState(null, '', '#' + name); } catch (e) {}   // refresh keeps the tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   if (name === 'config')       renderConfig();
@@ -1895,6 +2026,7 @@ function switchTab(name) {
   if (name === 'topology')     { loadTopology(); loadWanStats(); }
   if (name === 'lqos')         loadLqosConf();
   if (name === 'appsettings')  loadAppSettings();
+  if (name === 'pollers')      { if (monitorData) renderPollers(monitorData); loadMonitor(); loadGraphs(); }
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -2156,6 +2288,7 @@ async function loadDevices() {
   if (!d.ok) { toast(d.error, false); return; }
   allDevices = d.rows;
   document.getElementById('devices-count').textContent = d.count;
+  document.getElementById('tab-badge-devices').textContent = d.count;
   document.getElementById('stat-devices').textContent  = d.count;
   const counts = {pppoe:0,hotspot:0,dhcp:0,address_list:0};
   allDevices.forEach(r => { if(counts[r.source]!==undefined) counts[r.source]++; });
@@ -4117,7 +4250,7 @@ function _renderDetail(devices, parents, limit) {
       if (!d) return `<b>${esc(_strip(p.name))}</b>`;
       const tag = (label, val) =>
         `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${esc(val)}</b>`;
-      const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
+      const sep = '<div style="border-top:1px solid #30363d;margin:.35rem 0"></div>';
       return [
         `<b style="color:#e2e8f0">${esc(d.code)}</b>`,
         sep,
@@ -4193,7 +4326,7 @@ function _renderWanDevice(devices, limit) {
       if (!d) return `<b>${esc(p.name.slice(5))}</b>`;
       const tag = (label, val) =>
         `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${esc(val)}</b>`;
-      const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
+      const sep = '<div style="border-top:1px solid #30363d;margin:.35rem 0"></div>';
       return [
         `<b style="color:#e2e8f0">${esc(d.code)}</b>`,
         sep,
@@ -4266,7 +4399,7 @@ function _renderCpuDevice(devices, parents, limit) {
       if (!d) return `<b>${esc(p.name.slice(5))}</b>`;
       const tag = (label, val) =>
         `<span style="color:#64748b;font-size:.85em">${label}</span> <b>${esc(val)}</b>`;
-      const sep = '<div style="border-top:1px solid #2a3350;margin:.35rem 0"></div>';
+      const sep = '<div style="border-top:1px solid #30363d;margin:.35rem 0"></div>';
       return [
         `<b style="color:#e2e8f0">${esc(d.code)}</b>`,
         sep,
@@ -4382,8 +4515,8 @@ function _drawSankey(nodes, links, levels, labelFn, tooltipFn) {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'item',
-      backgroundColor: '#1a2035',
-      borderColor: '#2a3350',
+      backgroundColor: '#161b22',
+      borderColor: '#30363d',
       borderRadius: 8,
       padding: [8, 12],
       textStyle: { color: '#e2e8f0', fontSize: 12 },
@@ -4495,6 +4628,7 @@ async function loadAppSettings() {
   g('set-connect-delay',   s.scanner?.connect_retry_delay      ?? 5);
   g('set-update-cmd',      s.scanner?.libreqos_update_command  ?? '/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly');
   g('set-update-timeout',  s.scanner?.libreqos_update_timeout  ?? 300);
+  g('set-libreqos-dir',    s.scanner?.libreqos_dir             ?? '');
   g('set-wan-interval',    s.wan_service?.default_interval     ?? 300);
   g('set-wan-error-retry', s.wan_service?.error_retry_interval ?? 30);
   g('set-rebalance-ratio', s.wan_service?.rebalance_imbalance_ratio ?? 1.5);
@@ -4537,6 +4671,7 @@ async function saveAppSettings() {
     connect_retry_delay:     num('set-connect-delay', 5),
     libreqos_update_command: (el('set-update-cmd')?.value ?? '').trim(),
     libreqos_update_timeout: int_('set-update-timeout', 300),
+    libreqos_dir:            (el('set-libreqos-dir')?.value ?? '').trim(),
   });
   Object.assign(sec('wan_service'), {
     default_interval:               int_('set-wan-interval', 300),
@@ -4585,6 +4720,204 @@ async function saveAppSettings() {
   } else {
     toast(d.error || 'Save failed', false);
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// POLLERS / MONITORING
+// ══════════════════════════════════════════════════════════════════════════
+let monitorData = null;
+let graphList   = [];
+let graphRrd    = true;
+let graphRange  = '3h';
+try { graphRange = localStorage.getItem('graphRange') || '3h'; } catch (e) {}
+
+const fmtPct = v => v == null ? '—' : `${(+v).toFixed(+v < 10 ? 1 : 0)}%`;
+function fmtAgo(ts, now) {
+  if (!ts) return 'never';
+  const s = Math.max(0, (now || Date.now() / 1000) - ts);
+  if (s < 60)    return `${Math.round(s)}s ago`;
+  if (s < 3600)  return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${(s / 3600).toFixed(1)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+function fmtDur(s) {
+  if (s == null) return '—';
+  if (s < 1)  return `${Math.round(s * 1000)} ms`;
+  if (s < 60) return `${s.toFixed(1)} s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+function fmtUptime(s) {
+  if (!s) return '—';
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
+}
+function fmtEvery(s) {
+  if (!s) return 'on change';
+  if (s % 3600 === 0) return `${s / 3600}h`;
+  if (s % 60 === 0)   return `${s / 60}m`;
+  return `${s}s`;
+}
+function mbar(pct) {
+  const p = Math.max(0, Math.min(100, +pct || 0));
+  return `<span class="mbar ${p > 90 ? 'bad' : p > 75 ? 'warn' : ''}"><span style="width:${p}%"></span></span>`;
+}
+const kvRow = (k, v) => `<span class="kv-k">${esc(k)}</span><span class="kv-v">${v}</span>`;
+
+async function loadMonitor() {
+  try {
+    const r = await fetch('/api/monitor');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.ok) return;
+    monitorData = d;
+    renderStatusStrip(d);
+    const bad = d.jobs.filter(j => j.status !== 'ok').length;
+    const badge = document.getElementById('tab-badge-pollers');
+    badge.textContent = bad || d.jobs.length;
+    badge.classList.toggle('err', bad > 0);
+    badge.title = bad ? `${bad} job(s) failing or late` : `${d.jobs.length} jobs`;
+    if (document.getElementById('page-pollers').classList.contains('active')) renderPollers(d);
+  } catch (e) { /* offline: keep the last view */ }
+}
+
+function renderStatusStrip(d) {
+  const routers = d.routers || [];
+  const rEl = document.getElementById('ss-routers');
+  if (!routers.length) {
+    rEl.innerHTML = `<i class="bi bi-hdd-stack"></i><span class="dot dot-red"></span><b>Router</b>
+      <span>not configured — Routers tab → BRAS</span>
+      <span class="ss-warn"><i class="bi bi-exclamation-triangle"></i> router not configured</span>`;
+  } else {
+    const anyBad = routers.some(r => r.ok === false), allOk = routers.every(r => r.ok);
+    rEl.innerHTML = `<i class="bi bi-hdd-stack"></i><span class="dot ${anyBad ? 'dot-red' : allOk ? 'dot-green' : 'dot-grey'}"></span>
+      <b>${routers.length === 1 ? 'Router' : 'Routers'}</b>` + routers.map(r => `<span>${esc(r.name)}</span>` + (
+        r.ok ? `<span class="v">cpu ${fmtPct(r.cpu)} · ${Math.round(r.api_ms || 0)} ms</span>`
+        : r.ok === false ? `<span class="ss-warn" title="${esc(r.error)}"><i class="bi bi-exclamation-triangle"></i> ${esc(r.error || 'unreachable')}</span>`
+        : `<span>waiting for first poll</span>`)).join('<span class="ss-sep">|</span>');
+  }
+  const h = d.host || {}, lq = d.libreqos || {};
+  const lqOk = lq.lqosd === 'active';
+  document.getElementById('ss-host').innerHTML = `<i class="bi bi-display"></i>
+    <span class="dot ${lqOk ? 'dot-green' : 'dot-red'}"></span><b>${esc(h.hostname || 'host')}</b><span>this host</span>
+    CPU <span class="v">${fmtPct(h.cpu)}</span> mem <span class="v">${fmtPct(h.mem)}</span>
+    disk <span class="v">${fmtPct(h.disk)}</span> pollers <span class="v">${(d.jobs || []).length}</span>
+    lqosd <span class="v" style="color:${lqOk ? 'var(--green)' : '#ff7b72'}">${esc(lq.lqosd || '?')}</span>
+    scheduler <span class="v">${esc(lq.lqos_scheduler || '?')}</span>`;
+}
+
+function renderPollers(d) {
+  const now = d.now, jobs = d.jobs || [];
+
+  // ── this app ──
+  const services = (d.app && d.app.services) || {};
+  const list = Object.values(services);
+  const appEl = document.getElementById('mon-app');
+  if (!list.length) {
+    appEl.innerHTML = kvRow('Status', '<span class="dim">collecting — first sample within a minute</span>');
+  } else {
+    const cpu = list.reduce((a, s) => a + (s.cpu || 0), 0);
+    const mem = list.reduce((a, s) => a + (s.mem_mb || 0), 0);
+    const threads = list.reduce((a, s) => a + (s.threads || 0), 0);
+    const scans = jobs.filter(j => j.kind === 'poller');
+    const lastScan = Math.max(0, ...scans.map(j => j.last_run || 0));
+    const failing = jobs.filter(j => j.status !== 'ok').length;
+    appEl.innerHTML =
+      kvRow('CPU', `${mbar(cpu)}${cpu.toFixed(1)}% of one core`) +
+      kvRow('Memory', `${mem.toFixed(1)} MB`) +
+      kvRow('Last scan', lastScan
+        ? `${fmtDur(scans.reduce((a, j) => a + (j.took || 0), 0))}<span class="dim">· ${fmtAgo(lastScan, now)}</span>`
+        : '<span class="dim">no scan yet</span>') +
+      kvRow('Jobs', `${jobs.length}<span class="${failing ? 'bad' : 'dim'}">· ${failing ? failing + ' failing' : 'all ok'}</span>`) +
+      kvRow('Services', Object.entries(services).map(([n, s]) =>
+        `${esc(n)} <span class="dim">${fmtUptime(s.uptime_s)}</span>`).join('<span class="dim">·</span>')) +
+      kvRow('Threads', threads);
+  }
+
+  // ── this host ──
+  const h = d.host || {};
+  document.getElementById('mon-host-name').textContent = h.hostname || 'host';
+  document.getElementById('mon-host').innerHTML =
+    kvRow('CPU', `${mbar(h.cpu)}${fmtPct(h.cpu)} <span class="dim">${h.cores || '?'} cores</span>`) +
+    kvRow('Load', (h.load || []).map(v => v.toFixed(2)).join(' ') || '—') +
+    kvRow('Memory', `${mbar(h.mem)}${fmtBytes(h.mem_used || 0)} / ${fmtBytes(h.mem_total || 0)}`) +
+    kvRow('Disk', `${mbar(h.disk)}${fmtBytes(h.disk_used || 0)} / ${fmtBytes(h.disk_total || 0)}`) +
+    kvRow('Uptime', `${fmtUptime(h.uptime_s)} <span class="dim">· app ${fmtUptime(now - d.app_started)}</span>`);
+
+  // ── routers ──
+  const routers = d.routers || [];
+  document.getElementById('mon-routers-sub').textContent = routers.length ? `${routers.length} polled every minute` : '';
+  document.getElementById('mon-routers').innerHTML = !routers.length
+    ? '<span class="dim" style="font-size:.82rem">router not configured</span>'
+    : routers.map(r => `<div class="mon-router">
+        <div class="mon-router-hd"><span class="dot ${r.ok ? 'dot-green' : r.ok === false ? 'dot-red' : 'dot-grey'}"></span>
+          ${esc(r.name)} <span class="hd-sub">${esc(r.kind === 'core' ? 'core' : 'BRAS')} · ${esc(r.address)}</span></div>
+        <div class="kv">${r.ok
+          ? kvRow('CPU', `${mbar(r.cpu)}${fmtPct(r.cpu)}`) +
+            kvRow('Memory', `${mbar(r.mem)}${fmtPct(r.mem)}`) +
+            kvRow('Health', `${r.temp == null ? '—' : r.temp.toFixed(0) + ' C'} <span class="dim">·</span> ${r.volt == null ? '—' : r.volt.toFixed(1) + ' V'}`) +
+            kvRow('Uptime', `${esc(r.uptime || '—')} <span class="dim">· ${esc(r.board || '')} ${esc(r.version || '')}</span>`) +
+            kvRow('API', `${Math.round(r.api_ms || 0)} ms <span class="dim">· ${fmtAgo(r.at, now)}</span>`)
+          : r.ok === false
+            ? kvRow('Error', `<span class="bad">${esc(r.error || 'unreachable')}</span>`) + kvRow('Checked', fmtAgo(r.at, now))
+            : kvRow('Status', '<span class="dim">waiting for first poll</span>')}
+        </div></div>`).join('');
+
+  // ── jobs ──
+  document.getElementById('jobs-body').innerHTML = !jobs.length
+    ? '<tr><td colspan="10" class="dim">No jobs have run yet — each service records its first run within one interval.</td></tr>'
+    : jobs.map(j => `<tr>
+        <td class="name">${esc(j.name)}<span class="dim" style="font-size:.72rem"> ${esc(j.service)}</span>
+          ${j.status === 'error' && j.last_error ? `<span class="job-err">${esc(j.last_error)}</span>` : ''}
+          ${j.status === 'late' ? `<span class="job-err" style="color:var(--yellow)">no run for ${fmtAgo(j.last_run, now).replace(' ago', '')} — is ${esc(j.service)} running?</span>` : ''}</td>
+        <td>${esc(j.kind)}</td>
+        <td><span class="st st-${esc(j.status)}">${esc(j.status)}</span></td>
+        <td>${fmtEvery(j.every)}</td>
+        <td>${fmtAgo(j.last_run, now)}</td>
+        <td>${fmtDur(j.took)}</td>
+        <td>${j.cpu_now == null ? '—' : j.cpu_now.toFixed(2) + '%'}</td>
+        <td>${fmtDur(j.cpu_total)}</td>
+        <td>${j.runs}</td>
+        <td class="${j.errors ? 'errs' : ''}" title="${j.errors ? esc(`last error ${fmtAgo(j.last_error_at, now)}: ${j.last_error}`) : ''}">${j.errors}</td>
+      </tr>`).join('');
+}
+
+async function loadGraphs() {
+  try {
+    const r = await fetch('/api/graphs');
+    const d = await r.json();
+    if (!d.ok) return;
+    graphList = d.graphs || [];
+    graphRrd  = d.rrdtool;
+    renderGraphs();
+  } catch (e) { /* keep the last view */ }
+}
+
+function renderGraphs() {
+  document.querySelectorAll('#graph-range .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.range === graphRange));
+  const grid = document.getElementById('graphs-grid');
+  if (!graphRrd) {
+    grid.innerHTML = '<div class="graph-empty" style="grid-column:1/-1">rrdtool is not installed on this host — run <code>sudo apt install rrdtool</code>, then restart the gui service.</div>';
+    return;
+  }
+  const empty = '<div class="graph-empty">No data yet — graphs start within a minute</div>';
+  const t = Date.now();
+  grid.innerHTML = graphList.map(g => `<div class="graph-cell">${g.ready
+    ? `<img data-graph="${esc(g.id)}" alt="${esc(g.title)}" src="/api/graphs/${encodeURIComponent(g.id)}.png?range=${graphRange}&t=${t}">`
+    : empty}</div>`).join('');
+  grid.querySelectorAll('img').forEach(img => { img.onerror = () => { img.parentElement.innerHTML = empty; }; });
+}
+
+function refreshGraphImages() {
+  const t = Date.now();
+  document.querySelectorAll('#graphs-grid img[data-graph]').forEach(img => {
+    img.src = `/api/graphs/${encodeURIComponent(img.dataset.graph)}.png?range=${graphRange}&t=${t}`;
+  });
+}
+
+function setGraphRange(r) {
+  graphRange = r;
+  try { localStorage.setItem('graphRange', r); } catch (e) {}
+  renderGraphs();
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -4671,6 +5004,12 @@ function initApp() {
   loadAppSettings();
   loadMikrotikResource();
   loadWanStats();
+  loadMonitor();
+  setInterval(loadMonitor, 15000);
+  if (location.hash.length > 1) switchTab(location.hash.slice(1));
+  setInterval(() => {
+    if (document.getElementById('page-pollers').classList.contains('active')) { loadGraphs(); }
+  }, 60000);
   setInterval(loadDevices, 30000);
   setInterval(loadMikrotikResource, 15000);
   setInterval(loadWanStats, 60000);

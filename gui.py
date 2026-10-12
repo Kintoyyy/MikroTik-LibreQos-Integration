@@ -25,9 +25,10 @@ from settings import (
     EXPECTED_MT_POLICY as _SETTINGS_MT_POLICY,
     EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
     EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
-    LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF,
-    atomic_write_text,
+    LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
+    atomic_write_text, libreqos_dir,
 )
+from device_database import ensure_jobs_table, prune_jobs, timed_job
 
 try:
     import psutil
@@ -46,26 +47,25 @@ app = Flask(__name__)
 app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True)
 
 # ---------------------------------------------------------------------------
-# Path resolution: prefer the installed production location, fall back to
-# the script directory (so local/dev runs without root or without /opt,
-# /etc/netplan, /etc/lqos.conf present still find something to display).
+# Paths. The app and its state live in its own directory (SCRIPT_DIR,
+# /opt/lq-sync when installed); only ShapedDevices.csv and network.json are
+# written into LibreQoS's directory. System files fall back to the script
+# directory so local/dev runs without /etc/netplan or /etc/lqos.conf still
+# find something to display.
 # ---------------------------------------------------------------------------
-SCRIPT_DIR  = Path(__file__).parent.resolve()
-OPT_DIR     = Path("/opt/libreqos/src")
-NETPLAN_DIR = Path("/etc/netplan")
+SCRIPT_DIR   = Path(__file__).parent.resolve()
+LIBREQOS_DIR = Path(libreqos_dir())
+NETPLAN_DIR  = Path("/etc/netplan")
 
-def find_file(name, base=OPT_DIR):
-    """Return path to file, preferring the installed location, falling back to the script directory."""
-    opt_path = base / name
-    local_path = SCRIPT_DIR / name
-    if opt_path.exists():
-        return opt_path
-    return local_path
+def find_file(name, base):
+    """Return base/name if it exists, else the copy in the script directory."""
+    path = base / name
+    return path if path.exists() else SCRIPT_DIR / name
 
-CONFIG_PATH   = find_file("config.json")
-SETTINGS_PATH = find_file("settings.json")
-DB_PATH       = find_file("devices.db")
-AUTH_PATH     = find_file("gui_auth.json")
+CONFIG_PATH   = SCRIPT_DIR / "config.json"
+SETTINGS_PATH = SCRIPT_DIR / "settings.json"
+DB_PATH       = SCRIPT_DIR / "devices.db"
+AUTH_PATH     = SCRIPT_DIR / "gui_auth.json"
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -141,13 +141,13 @@ def _find_lqos_conf():
 YAML_FILES = {
     "libreqos":      find_file("libreqos.yaml", base=NETPLAN_DIR),
     "lqos":          LQOS_CONF_PATH,
-    "network_json":  find_file("network.json"),
+    "network_json":  LIBREQOS_DIR / "network.json",
     "config_json":   CONFIG_PATH,
     "settings_json": SETTINGS_PATH,
-    "shaped_devices": find_file("ShapedDevices.csv"),
-    "updatecsv":     find_file("updatecsv.py"),
-    "rate_resolver": find_file("rate_resolver.py"),
-    "wan_manager":   find_file("wan_manager.py"),
+    "shaped_devices": LIBREQOS_DIR / "ShapedDevices.csv",
+    "updatecsv":     SCRIPT_DIR / "updatecsv.py",
+    "rate_resolver": SCRIPT_DIR / "rate_resolver.py",
+    "wan_manager":   SCRIPT_DIR / "wan_manager.py",
     "network":       find_file("50-cloud-init.yaml", base=NETPLAN_DIR),
 }
 
@@ -173,6 +173,19 @@ def _which(cmd):
             return p
     return None
 
+def _as_root(cmd):
+    """
+    Run cmd as root: unchanged when this process is root (the service runs as
+    root), else prefixed with sudo. Binaries are resolved without relying on
+    PATH, which older unit files set to a literal "$PATH".
+    """
+    if os.geteuid() == 0:
+        return cmd
+    sudo = _which("sudo")
+    if not sudo:
+        raise RuntimeError("needs root, and sudo was not found")
+    return [sudo] + list(cmd)
+
 def _systemctl(*args, **kwargs):
     """Run /bin/systemctl directly."""
     try:
@@ -184,6 +197,7 @@ def _systemctl(*args, **kwargs):
 # SSE metrics broadcaster
 # ---------------------------------------------------------------------------
 _metric_listeners: list = []
+_live: dict = {}              # latest 1-second host CPU %, for the status strip
 _metric_lock = threading.Lock()
 _prev_net: dict = {}          # {iface: (bytes_recv, bytes_sent, ts)}
 _BRIDGE_EXCLUDE = {"lo"}      # interfaces to skip from the bridge graph
@@ -224,8 +238,11 @@ def _get_bridge_iface_from_lqos() -> str:
 def _detect_ram_type() -> str:
     """Best-effort detection of RAM DDR generation."""
     for cmd in (["dmidecode", "-t", "memory"], ["lshw", "-class", "memory"]):
+        binary = _which(cmd[0])
+        if not binary:
+            continue
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+            proc = subprocess.run([binary] + cmd[1:], capture_output=True, text=True, timeout=3)
             text = (proc.stdout or "") + "\n" + (proc.stderr or "")
             m = re.search(r"\bDDR\d\b", text, re.IGNORECASE)
             if m:
@@ -434,6 +451,7 @@ def _broadcast_loop():
         if HAS_PSUTIL:
             cpu_per  = psutil.cpu_percent(interval=1, percpu=True)
             cpu_avg  = sum(cpu_per) / len(cpu_per)
+            _live["cpu"] = cpu_avg
             mem      = psutil.virtual_memory()
             net      = _net_throughput()
             bridge_iface = _get_bridge_iface_from_lqos()
@@ -467,6 +485,497 @@ def _broadcast_loop():
         time.sleep(1)
 
 threading.Thread(target=_broadcast_loop, daemon=True).start()
+
+# ---------------------------------------------------------------------------
+# Monitoring. Once a minute, sample this host, this app's services, every
+# job's CPU / duration / errors, and each router's health. The latest values
+# feed the Pollers page; the history goes into RRD files for the graphs.
+# ---------------------------------------------------------------------------
+RRD_DIR      = SCRIPT_DIR / "rrd"
+RRDTOOL      = _which("rrdtool")
+MONITOR_STEP = 60                 # seconds between samples (the RRD step)
+APP_SCRIPTS  = {"updatecsv": "updatecsv.py", "wan_service": "wan_service.py", "gui": "gui.py"}
+# Job kind → CPU-by-job graph series
+JOB_SERIES   = {"poller": "cpu_poller", "config": "cpu_build", "build": "cpu_build",
+                "apply": "cpu_apply", "wan": "cpu_wan", "stats": "cpu_stats", "router": "cpu_stats"}
+_STARTED_AT  = time.time()
+
+# 1-minute rows for 5 h, 5-minute for 50 h, 30-minute for 15 days, 6-hour for 375 days
+_RRAS = [f"RRA:{cf}:0.5:{steps}:{rows}"
+         for cf in ("AVERAGE", "MAX")
+         for steps, rows in ((1, 300), (5, 600), (30, 720), (360, 1500))]
+
+RRD_SCHEMAS = {
+    "host":    ["cpu", "mem", "disk", "load1"],
+    "app":     ["cpu_poller", "cpu_build", "cpu_apply", "cpu_wan", "cpu_stats", "cpu_other",
+                "mem_updatecsv", "mem_wan_service", "mem_gui"],
+    "polling": ["scan_s", "build_s", "apply_s", "wan_s", "errors"],
+    "devices": ["pppoe", "hotspot", "dhcp", "address_list", "static"],
+    "router":  ["cpu", "mem", "temp", "volt", "api_ms"],   # one file per router
+}
+
+# Latest samples, shared with the request threads
+_mon = {"host": {}, "app": {}, "routers": {}, "job_cpu_now": {}}
+_mon_lock = threading.Lock()
+
+
+def _rrd_path(name):
+    return RRD_DIR / f"{name}.rrd"
+
+
+def _rrd_update(name, schema, values):
+    """Append one sample to RRD file `name` (created on first use). None is stored as unknown."""
+    if not RRDTOOL:
+        return
+    path = _rrd_path(name)
+    if not path.exists():
+        RRD_DIR.mkdir(parents=True, exist_ok=True)
+        ds = [f"DS:{ds}:GAUGE:{MONITOR_STEP * 2}:U:U" for ds in RRD_SCHEMAS[schema]]
+        subprocess.run([RRDTOOL, "create", str(path), "--step", str(MONITOR_STEP),
+                        "--start", "now-120"] + ds + _RRAS,
+                       capture_output=True, text=True, timeout=10, check=True)
+    sample = ":".join("U" if v is None else f"{v:.4f}" for v in values)
+    r = subprocess.run([RRDTOOL, "update", str(path), f"N:{sample}"],
+                       capture_output=True, text=True, timeout=10)
+    if r.returncode != 0:
+        raise RuntimeError(f"rrdtool update {path.name}: {r.stderr.strip()}")
+
+
+def _app_processes():
+    """{service: psutil.Process} for this app's running services."""
+    found = {"gui": psutil.Process(os.getpid())}
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        cmdline = proc.info.get("cmdline") or []
+        for service, script in APP_SCRIPTS.items():
+            if service in found:
+                continue
+            for arg in cmdline:
+                if arg == str(SCRIPT_DIR / script):
+                    found[service] = proc
+                elif arg == script:
+                    try:
+                        if Path(proc.cwd()) == SCRIPT_DIR:
+                            found[service] = proc
+                    except (psutil.Error, OSError):
+                        pass
+    return found
+
+
+def _sample_stats(conn, prev):
+    """One monitoring sample: host, app services, jobs, devices. Updates _mon and the RRDs."""
+    now = time.time()
+
+    vm, du = psutil.virtual_memory(), psutil.disk_usage("/")
+    host = {
+        "cpu":  psutil.cpu_percent(interval=None),
+        "mem":  vm.percent, "mem_used": vm.total - vm.available, "mem_total": vm.total,
+        "disk": du.percent, "disk_used": du.used, "disk_total": du.total,
+        "load": list(os.getloadavg()),
+    }
+
+    services, seen = {}, set()
+    for service, proc in _app_processes().items():
+        try:
+            with proc.oneshot():
+                t = proc.cpu_times()
+                cpu_s, rss = t.user + t.system, proc.memory_info().rss
+                threads, created = proc.num_threads(), proc.create_time()
+        except psutil.Error:
+            continue
+        key = (service, proc.pid)
+        seen.add(key)
+        last = prev["proc"].get(key)
+        prev["proc"][key] = (cpu_s, now)
+        services[service] = {
+            "pid": proc.pid, "threads": threads, "uptime_s": now - created,
+            "mem_mb": rss / 1048576,
+            "cpu": (cpu_s - last[0]) / (now - last[1]) * 100 if last else None,
+        }
+    prev["proc"] = {k: v for k, v in prev["proc"].items() if k in seen}
+
+    # Per-job CPU (% of one core) over the last sample window, from cpu_total deltas
+    series = dict.fromkeys(set(JOB_SERIES.values()), 0.0)
+    job_cpu_now, error_delta, have_prev = {}, 0, bool(prev["jobs"])
+    took = {"poller": 0.0, "build": None, "apply": None, "wan": 0.0}
+    for name, kind, cpu_total, errors, job_took in conn.execute(
+            "SELECT name, kind, cpu_total, errors, took FROM jobs"):
+        last = prev["jobs"].get(name)
+        if last:
+            pct = max(0.0, (cpu_total - last[0]) / (now - last[2]) * 100)
+            job_cpu_now[name] = pct
+            if kind in JOB_SERIES:
+                series[JOB_SERIES[kind]] += pct
+            error_delta += max(0, errors - last[1])
+        prev["jobs"][name] = (cpu_total, errors, now)
+        if kind in ("poller", "wan"):
+            took[kind] += job_took
+        elif kind in ("build", "apply"):
+            took[kind] = job_took
+
+    service_cpu = [s["cpu"] for s in services.values()]
+    if have_prev and service_cpu and None not in service_cpu:
+        in_jobs = sum(v for k, v in series.items() if k != "cpu_apply")   # apply runs in a child process
+        series["cpu_other"] = max(0.0, sum(service_cpu) - in_jobs)
+    else:
+        series["cpu_other"] = None
+
+    try:
+        by_source = dict(conn.execute(
+            "SELECT source, COUNT(*) FROM devices WHERE is_static = 0 GROUP BY source").fetchall())
+        static = conn.execute("SELECT COUNT(*) FROM devices WHERE is_static = 1").fetchone()[0]
+        devices = [by_source.get(s, 0) for s in ("pppoe", "hotspot", "dhcp", "address_list")] + [static]
+    except sqlite3.Error:
+        devices = [None] * 5   # the scanner has not created the table yet
+
+    with _mon_lock:
+        _mon["host"] = host
+        _mon["app"] = {"services": services, "at": now}
+        _mon["job_cpu_now"] = job_cpu_now
+
+    mem = lambda svc: services[svc]["mem_mb"] if svc in services else None
+    cpu = lambda ds: series[ds] if have_prev else None
+    _rrd_update("host", "host", [host["cpu"], host["mem"], host["disk"], host["load"][0]])
+    _rrd_update("app", "app", [cpu("cpu_poller"), cpu("cpu_build"), cpu("cpu_apply"), cpu("cpu_wan"),
+                               cpu("cpu_stats"), series["cpu_other"],
+                               mem("updatecsv"), mem("wan_service"), mem("gui")])
+    _rrd_update("polling", "polling", [took["poller"], took["build"], took["apply"], took["wan"],
+                                       error_delta if have_prev else None])
+    _rrd_update("devices", "devices", devices)
+
+
+def _health_values(rows):
+    """(temperature °C, voltage V) from /system/health: one row of fields (RouterOS 6) or name/value rows (7)."""
+    values = {}
+    for row in rows:
+        if "name" in row and "value" in row:
+            values[row["name"]] = row["value"]
+        else:
+            values.update(row)
+
+    def first(*keys):
+        for k in keys:
+            try:
+                return float(values[k])
+            except (KeyError, TypeError, ValueError):
+                pass
+        return None
+
+    return (first("temperature", "cpu-temperature", "board-temperature1", "board-temperature"),
+            first("voltage", "psu-voltage", "psu1-voltage"))
+
+
+def _router_targets(cfg):
+    """[(kind, router)] polled for health: every BRAS, plus core routers while WAN is on."""
+    targets = [("bras", r) for r in cfg.get("bras") or []]
+    if _wan_enabled(cfg):
+        targets += [("core", r) for r in cfg.get("cores") or []]
+    return [(kind, r) for kind, r in targets if r.get("address")]
+
+
+def _router_key(kind, name):
+    return f"router-{kind}-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", name or "router")
+
+
+def _poll_router(kind, router):
+    """Read CPU, memory, temperature and voltage from one router."""
+    info = {"name": router.get("name") or router.get("address", ""), "kind": kind,
+            "address": router.get("address", ""), "ok": False, "error": "", "at": time.time()}
+    t0, pool = time.monotonic(), None
+    try:
+        pool = _connect_router_api(router)
+        pool.socket_timeout = 5           # a dead router must not stall the poll loop
+        api = pool.get_api()
+        res = (api.get_resource("/system/resource").get() or [{}])[0]
+        ident = (api.get_resource("/system/identity").get() or [{}])[0]
+        try:
+            health = api.get_resource("/system/health").get()
+        except Exception:
+            health = []                   # not every board reports health
+        total = float(res.get("total-memory", 0) or 0)
+        free = float(res.get("free-memory", 0) or 0)
+        temp, volt = _health_values(health)
+        info.update(
+            ok=True, cpu=float(res.get("cpu-load", 0) or 0),
+            mem=(total - free) / total * 100 if total else None,
+            temp=temp, volt=volt, uptime=res.get("uptime", ""), identity=ident.get("name", ""),
+            version=res.get("version", ""), board=res.get("board-name", ""),
+            api_ms=(time.monotonic() - t0) * 1000,
+        )
+    except Exception as e:
+        info["error"] = str(e) or type(e).__name__
+    finally:
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
+    return info
+
+
+def _poll_routers(conn):
+    """Poll every configured router once, record each poll as a job, update the router RRDs."""
+    targets = _router_targets(_load_config())
+    latest, job_names = {}, []
+    for kind, router in targets:
+        name = router.get("name") or router.get("address", "")
+        job_names.append(f"router {name}")
+        with timed_job(conn, f"router {name}", "router", "gui", MONITOR_STEP) as job:
+            info = _poll_router(kind, router)
+            job["error"] = info["error"]
+        key = _router_key(kind, name)
+        latest[key] = info
+        try:
+            _rrd_update(key, "router", [info.get(k) for k in RRD_SCHEMAS["router"]])
+        except Exception as e:
+            app.logger.warning(f"router RRD {key}: {e}")
+    prune_jobs(conn, "gui", "router", job_names)
+    with _mon_lock:
+        _mon["routers"] = latest
+
+
+def _monitor_loop(work, name):
+    """Run work(conn) every MONITOR_STEP seconds on this thread's own DB connection."""
+    conn = None
+    while True:
+        started = time.time()
+        try:
+            if conn is None:
+                conn = sqlite3.connect(str(DB_PATH), timeout=30)
+                ensure_jobs_table(conn)
+            work(conn)
+        except Exception as e:
+            app.logger.warning(f"{name}: {e}")
+        time.sleep(max(1.0, MONITOR_STEP - (time.time() - started)))
+
+
+# Previous cumulative CPU / error counters, for per-minute deltas
+_stats_prev = {"proc": {}, "jobs": {}}
+
+
+def _stats_job(conn):
+    with timed_job(conn, "host & app stats", "stats", "gui", MONITOR_STEP):
+        _sample_stats(conn, _stats_prev)
+
+
+def start_monitoring():
+    if not HAS_PSUTIL:
+        return
+    threading.Thread(target=_monitor_loop, args=(_stats_job, "stats"), daemon=True).start()
+    threading.Thread(target=_monitor_loop, args=(_poll_routers, "router polls"), daemon=True).start()
+
+
+# ── Graphs (rendered by rrdtool, styled to match the GUI) ──────────────────
+GRAPH_RANGES = {"3h": "3 hours", "30h": "30 hours", "10d": "10 days", "360d": "360 days"}
+_GRAPH_STYLE = [
+    "--width", "620", "--height", "160", "--border", "0", "--slope-mode",
+    "--disable-rrdtool-tag", "--units-exponent", "0", "--lower-limit", "0",
+    "--color", "BACK#0d1117", "--color", "CANVAS#0d1117",
+    "--color", "SHADEA#0d1117", "--color", "SHADEB#0d1117",
+    "--color", "GRID#262c36", "--color", "MGRID#3a414c", "--color", "FONT#c9d1d9",
+    "--color", "AXIS#8b949e", "--color", "FRAME#30363d", "--color", "ARROW#8b949e",
+    "--grid-dash", "1:2",
+    "--font", "DEFAULT:7:DejaVu Sans Mono", "--font", "TITLE:8:DejaVu Sans Mono",
+]
+_graph_cache: dict = {}
+
+
+def _series(rrd, ds, var, label, color, draw="LINE1", unit="", stack=False):
+    """DEF/VDEF/draw/GPRINT arguments for one series with an avg / max / now legend."""
+    path = str(_rrd_path(rrd)).replace(":", "\\:")
+    fmt = "%6.2lf" + unit.replace("%", "%%")
+    label = label.replace(":", "\\:")
+    return [
+        f"DEF:{var}={path}:{ds}:AVERAGE",
+        f"DEF:{var}x={path}:{ds}:MAX",
+        f"VDEF:{var}a={var},AVERAGE",
+        f"VDEF:{var}m={var}x,MAXIMUM",
+        f"VDEF:{var}l={var},LAST",
+        f"{draw}:{var}#{color}:{label:<20}" + (":STACK" if stack else ""),
+        f"GPRINT:{var}a:avg {fmt}",
+        f"GPRINT:{var}m:max {fmt}",
+        f"GPRINT:{var}l:now {fmt}\\l",
+    ]
+
+
+def _graph_defs(cfg):
+    """{graph id: {title, vlabel, rrd, args}} for every graph the current config has."""
+    defs = {}
+
+    def graph(gid, title, vlabel, rrd, series):
+        args = []
+        for i, (ds, label, color, draw, unit, stack) in enumerate(series):
+            args += _series(rrd, ds, f"v{i}", label, color, draw, unit, stack)
+        defs[gid] = {"title": title, "vlabel": vlabel, "rrd": rrd, "args": args}
+
+    graph("app-cpu", "LQ-Sync CPU by job", "% of one core", "app", [
+        ("cpu_poller", "router scans",       "3b82f6", "AREA", "%", False),
+        ("cpu_build",  "build topology",     "8b5cf6", "AREA", "%", True),
+        ("cpu_apply",  "LibreQoS apply",     "22c55e", "AREA", "%", True),
+        ("cpu_wan",    "WAN sync",           "14b8a6", "AREA", "%", True),
+        ("cpu_stats",  "stats & router polls", "f59e0b", "AREA", "%", True),
+        ("cpu_other",  "UI / API & other",   "ef4444", "AREA", "%", True),
+    ])
+    graph("app-mem", "Memory by service", "MB", "app", [
+        ("mem_updatecsv",   "updatecsv",   "3b82f6", "LINE1", " MB", False),
+        ("mem_wan_service", "wan_service", "22c55e", "LINE1", " MB", False),
+        ("mem_gui",         "gui",         "f59e0b", "LINE1", " MB", False),
+    ])
+    graph("host", "This host", "%", "host", [
+        ("cpu",   "CPU %",        "3b82f6", "LINE1", "%", False),
+        ("mem",   "memory %",     "22c55e", "LINE1", "%", False),
+        ("disk",  "disk %",       "f59e0b", "LINE1", "%", False),
+        ("load1", "load (1 min)", "8b5cf6", "LINE1", "",  False),
+    ])
+    graph("polling", "Polling time and errors", "s / errors", "polling", [
+        ("scan_s",  "router scans",   "3b82f6", "LINE1", " s", False),
+        ("build_s", "build topology", "8b5cf6", "LINE1", " s", False),
+        ("apply_s", "LibreQoS apply", "22c55e", "LINE1", " s", False),
+        ("wan_s",   "WAN sync",       "14b8a6", "LINE1", " s", False),
+        ("errors",  "job errors",     "ef4444", "AREA",  "",   False),
+    ])
+    graph("devices", "Shaped devices by source", "devices", "devices", [
+        ("pppoe",        "PPPoE",        "3b82f6", "AREA", "", False),
+        ("hotspot",      "Hotspot",      "22c55e", "AREA", "", True),
+        ("dhcp",         "DHCP / IPoE",  "f59e0b", "AREA", "", True),
+        ("address_list", "Address list", "8b5cf6", "AREA", "", True),
+        ("static",       "manual",       "8b949e", "AREA", "", True),
+    ])
+    for kind, router in _router_targets(cfg):
+        name = router.get("name") or router.get("address", "")
+        key = _router_key(kind, name)
+        graph(key, f"{'Router' if kind == 'bras' else 'Core'} {name}", "% / C / V / ms", key, [
+            ("cpu",    "CPU %",         "3b82f6", "LINE1", "%",   False),
+            ("mem",    "memory %",      "22c55e", "LINE1", "%",   False),
+            ("temp",   "temperature C", "ef4444", "LINE1", " C",  False),
+            ("volt",   "voltage V",     "f59e0b", "LINE1", " V",  False),
+            ("api_ms", "API latency",   "8b5cf6", "LINE1", " ms", False),
+        ])
+    return defs
+
+
+@app.route("/api/graphs")
+@require_auth
+def graphs_list():
+    defs = _graph_defs(_load_config())
+    return jsonify({
+        "ok": True,
+        "rrdtool": bool(RRDTOOL),
+        "ranges": GRAPH_RANGES,
+        "graphs": [{"id": gid, "title": d["title"], "ready": _rrd_path(d["rrd"]).exists()}
+                   for gid, d in defs.items()],
+    })
+
+
+@app.route("/api/graphs/<gid>.png")
+@require_auth
+def graph_png(gid):
+    rng = request.args.get("range", "3h")
+    if rng not in GRAPH_RANGES:
+        return jsonify({"ok": False, "error": "unknown range"}), 400
+    if not RRDTOOL:
+        return jsonify({"ok": False, "error": "rrdtool is not installed (apt install rrdtool)"}), 503
+    d = _graph_defs(_load_config()).get(gid)
+    if not d or not _rrd_path(d["rrd"]).exists():
+        return jsonify({"ok": False, "error": "no data yet"}), 404
+
+    ttl = 30 if rng in ("3h", "30h") else 300
+    cached = _graph_cache.get((gid, rng))
+    if cached and time.time() - cached[0] < ttl:
+        png = cached[1]
+    else:
+        r = subprocess.run(
+            [RRDTOOL, "graph", "-", "--imgformat", "PNG", "--start", f"end-{rng}", "--end", "now",
+             "--title", f"{d['title']} - last {GRAPH_RANGES[rng]}", "--vertical-label", d["vlabel"]]
+            + _GRAPH_STYLE + d["args"],
+            capture_output=True, timeout=20,
+        )
+        if r.returncode != 0:
+            return jsonify({"ok": False, "error": r.stderr.decode(errors="replace").strip()}), 500
+        png = r.stdout
+        _graph_cache[(gid, rng)] = (time.time(), png)
+    return Response(png, mimetype="image/png", headers={"Cache-Control": "no-store"})
+
+
+_lqos_state = {"at": 0, "value": {}}
+
+
+def _libreqos_services():
+    """{lqosd, lqos_scheduler: active|inactive|…}, cached for 15 s."""
+    if time.time() - _lqos_state["at"] > 15:
+        try:
+            r = _systemctl("is-active", "lqosd.service", "lqos_scheduler.service",
+                           capture_output=True, text=True, timeout=5)
+            states = r.stdout.split()
+        except Exception:
+            states = []
+        _lqos_state["value"] = dict(zip(("lqosd", "lqos_scheduler"), states + ["unknown"] * 2))
+        _lqos_state["at"] = time.time()
+    return _lqos_state["value"]
+
+
+@app.route("/api/monitor")
+@require_auth
+def monitor_status():
+    """Everything the status strip and the Pollers page show."""
+    cfg = _load_config()
+    now = time.time()
+    with _mon_lock:
+        host = dict(_mon["host"])
+        app_stats = dict(_mon["app"])
+        cached_routers = dict(_mon["routers"])
+        cpu_now = dict(_mon["job_cpu_now"])
+
+    if HAS_PSUTIL:
+        vm, du = psutil.virtual_memory(), psutil.disk_usage("/")
+        host.update(mem=vm.percent, mem_used=vm.total - vm.available, mem_total=vm.total,
+                    disk=du.percent, disk_used=du.used, disk_total=du.total,
+                    load=list(os.getloadavg()), cores=psutil.cpu_count(logical=True),
+                    uptime_s=_uptime_seconds())
+        if "cpu" in _live:
+            host["cpu"] = _live["cpu"]
+    host["hostname"] = socket.gethostname()
+
+    routers = []
+    for kind, router in _router_targets(cfg):
+        name = router.get("name") or router.get("address", "")
+        info = cached_routers.get(_router_key(kind, name)) or {
+            "name": name, "kind": kind, "address": router.get("address", ""),
+            "ok": None, "error": "", "at": 0}
+        routers.append(info)
+
+    wan_on = _wan_enabled(cfg)
+    jobs = []
+    try:
+        con = _db_con()
+        try:
+            ensure_jobs_table(con)
+            rows = con.execute("SELECT * FROM jobs ORDER BY service, kind, name").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        rows = []
+    for r in rows:
+        if r["service"] == "wan_service" and not wan_on:
+            continue
+        job = dict(r)
+        every = job["every"] or 0
+        if every and now - job["last_run"] > every * 2.5 + 60:
+            job["status"] = "late"     # the service is stopped or stuck
+        job["cpu_now"] = cpu_now.get(job["name"])
+        jobs.append(job)
+
+    return jsonify({
+        "ok": True,
+        "now": now,
+        "rrdtool": bool(RRDTOOL),
+        "app_started": _STARTED_AT,
+        "host": host,
+        "app": app_stats,
+        "routers": routers,
+        "jobs": jobs,
+        "libreqos": _libreqos_services(),
+        "wan_enabled": wan_on,
+    })
 
 # ---------------------------------------------------------------------------
 # Routes
@@ -656,29 +1165,21 @@ def save_yaml(name):
                 if err:
                     return jsonify({"ok": False, "error": err}), 400
 
-        # Files under /etc/netplan are root-owned; use sudo to write them.
-        # Other files (under /opt/libreqos) are writable directly by www-data.
-        needs_sudo = Path(str(path)).parent == Path("/etc/netplan")
-
-        if needs_sudo:
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-            try:
-                mv = subprocess.run(
-                    ["sudo", "/bin/mv", tmp_path, str(path)],
-                    capture_output=True, text=True, timeout=10
-                )
-                if mv.returncode != 0:
-                    return jsonify({"ok": False, "error": mv.stderr.strip() or "mv failed"}), 500
-                # sudoers allows this exact command only for libreqos.yaml
-                if str(path) == "/etc/netplan/libreqos.yaml":
-                    subprocess.run(
-                        ["sudo", "/bin/chmod", "600", str(path)],
-                        capture_output=True, text=True, timeout=10
-                    )
-            except Exception as e:
-                return jsonify({"ok": False, "error": str(e)}), 500
+        if Path(str(path)).parent == NETPLAN_DIR:
+            # Netplan files are root-owned and must not be world-readable.
+            if os.geteuid() == 0:
+                atomic_write_text(path, content, mode=0o600)
+            else:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                try:
+                    for cmd in (["/bin/mv", tmp_path, str(path)], ["/bin/chmod", "600", str(path)]):
+                        r = subprocess.run(_as_root(cmd), capture_output=True, text=True, timeout=10)
+                        if r.returncode != 0:
+                            return jsonify({"ok": False, "error": r.stderr.strip() or f"{cmd[0]} failed"}), 500
+                except Exception as e:
+                    return jsonify({"ok": False, "error": str(e)}), 500
         else:
             atomic_write_text(path, content)
 
@@ -686,7 +1187,7 @@ def save_yaml(name):
         if apply:
             try:
                 result = subprocess.run(
-                    ["sudo", "/usr/sbin/netplan", "apply"],
+                    _as_root([_which("netplan") or "/usr/sbin/netplan", "apply"]),
                     capture_output=True, text=True, timeout=15
                 )
                 if result.returncode != 0:
@@ -1211,13 +1712,14 @@ def update_app():
     of every file about to be overwritten is stashed in a timestamped backup
     folder next to gui.py first, so a bad update can be rolled back by hand.
     """
-    if not shutil.which("git"):
+    git = _which("git")
+    if not git:
         return jsonify({"ok": False, "error": "git is not installed on this host"}), 500
 
     tmp_dir = tempfile.mkdtemp(prefix="libreqos-update-")
     try:
         clone = subprocess.run(
-            ["git", "clone", "--depth", "1", GITHUB_REPO_URL, tmp_dir],
+            [git, "clone", "--depth", "1", GITHUB_REPO_URL, tmp_dir],
             capture_output=True, text=True, timeout=120,
         )
         if clone.returncode != 0:
@@ -1248,7 +1750,7 @@ def update_app():
             updated.append("templates/")
 
         rev = subprocess.run(
-            ["git", "-C", tmp_dir, "rev-parse", "--short", "HEAD"],
+            [git, "-C", tmp_dir, "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, timeout=5,
         )
         new_version = rev.stdout.strip() if rev.returncode == 0 else ""
@@ -1561,63 +2063,33 @@ def troubleshoot_mt_connect():
 @app.route("/api/dashboard/mikrotik/resource")
 @require_auth
 def dashboard_mikrotik_resource():
-    """Return compact CPU/RAM percentages for all routers in config.json."""
-    def _fetch_router_stats(router_list):
-        out = []
-        for idx, router in enumerate(router_list):
-            pool = None
-            try:
-                r = dict(router)
-                r["port"] = int(r.get("port", 8728) or 8728)
-                pool = _connect_router_api(r)
-                api = pool.get_api()
-                resource_rows = api.get_resource("/system/resource").get()
-                identity_rows = api.get_resource("/system/identity").get()
-                resource = resource_rows[0] if resource_rows else {}
-                identity = identity_rows[0] if identity_rows else {}
-                total_mem = int(resource.get("total-memory", 0) or 0)
-                free_mem = int(resource.get("free-memory", 0) or 0)
-                used_mem = max(total_mem - free_mem, 0)
-                ram_percent = round((used_mem / total_mem * 100.0), 1) if total_mem > 0 else 0.0
-                out.append({
-                    "index": idx,
-                    "router": r.get("name") or r.get("address") or f"Router {idx + 1}",
-                    "identity": identity.get("name", ""),
-                    "cpu_percent": float(resource.get("cpu-load", 0) or 0),
-                    "ram_percent": ram_percent,
-                    "uptime": str(resource.get("uptime", "") or ""),
-                    "ok": True,
-                })
-            except Exception as ex:
-                out.append({
-                    "index": idx,
-                    "router": router.get("name") or router.get("address") or f"Router {idx + 1}",
-                    "cpu_percent": None,
-                    "ram_percent": None,
-                    "uptime": None,
-                    "ok": False,
-                    "error": str(ex),
-                })
-            finally:
-                if pool is not None:
-                    try:
-                        pool.disconnect()
-                    except Exception:
-                        pass
-        return out
-
-    try:
-        cfg = _load_config()
-        bras_stats  = _fetch_router_stats(cfg.get("bras") or [])
-        cores_stats = _fetch_router_stats(cfg.get("cores") or []) if _wan_enabled(cfg) else []
-        return jsonify({
-            "ok": True,
-            "count": len(bras_stats) + len(cores_stats),
-            "bras": bras_stats,
-            "cores": cores_stats,
+    """
+    Compact CPU/RAM for every router, from the monitor's once-a-minute poll.
+    Browsers never connect to the routers themselves.
+    """
+    cfg = _load_config()
+    with _mon_lock:
+        cached = dict(_mon["routers"])
+    out = {"bras": [], "core": []}
+    for kind, router in _router_targets(cfg):
+        name = router.get("name") or router.get("address", "")
+        info = cached.get(_router_key(kind, name)) or {}
+        out[kind].append({
+            "index": len(out[kind]),
+            "router": name,
+            "identity": info.get("identity", ""),
+            "cpu_percent": info.get("cpu"),
+            "ram_percent": round(info["mem"], 1) if info.get("mem") is not None else None,
+            "uptime": info.get("uptime"),
+            "ok": bool(info.get("ok")),
+            "error": info.get("error") or ("" if info else "waiting for first poll"),
         })
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({
+        "ok": True,
+        "count": len(out["bras"]) + len(out["core"]),
+        "bras": out["bras"],
+        "cores": out["core"],
+    })
 
 
 @app.route("/api/troubleshoot/mt/permissions", methods=["POST"])
@@ -1842,4 +2314,5 @@ def save_lqos_conf():
 
 
 if __name__ == "__main__":
+    start_monitoring()
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

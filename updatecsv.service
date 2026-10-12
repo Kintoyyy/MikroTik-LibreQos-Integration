@@ -1,15 +1,15 @@
 [Unit]
-Description=SyncMikrotiktoLibreQos
+Description=LQ-Sync scanner (MikroTik → LibreQoS ShapedDevices.csv / network.json)
 After=network.target
 
 [Service]
 User=root
 Group=root
-WorkingDirectory=/opt/libreqos/src
-Environment="VIRTUAL_ENV=/opt/libreqos/venv"
+WorkingDirectory=/opt/lq-sync
+Environment="VIRTUAL_ENV=/opt/lq-sync/venv"
 # systemd does not expand $PATH here, so spell the full search path out
-Environment="PATH=/opt/libreqos/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/opt/libreqos/venv/bin/python3 /opt/libreqos/src/updatecsv.py
+Environment="PATH=/opt/lq-sync/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/lq-sync/venv/bin/python3 /opt/lq-sync/updatecsv.py
 Restart=always
 RestartSec=10
 Environment="PYTHONUNBUFFERED=1"

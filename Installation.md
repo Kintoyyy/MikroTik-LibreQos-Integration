@@ -37,10 +37,12 @@ sudo ./install_updatecsv.sh
 ```
 
 The script will:
-- Install Python dependencies into a virtual environment at `/opt/libreqos/venv`
-- Copy `updatecsv.py` to `/opt/libreqos/src/`
-- Create a default `config.json` at `/opt/libreqos/src/config.json` if none exists
-- Install and start the `updatecsv` systemd service
+- Install the app into its own directory, `/opt/lq-sync`, with Python dependencies in `/opt/lq-sync/venv`
+- Move an older install out of `/opt/libreqos/src` automatically (config, login, database and graphs are kept)
+- Create a default `config.json` at `/opt/lq-sync/config.json` if none exists — an existing one is never overwritten
+- Install and start the `updatecsv` and `gui` systemd services (`wan_service` only when WAN assignment is enabled)
+
+`ShapedDevices.csv` and `network.json` are still written to LibreQoS's directory (`lqos_directory` in `/etc/lqos.conf`, normally `/opt/libreqos/src`).
 
 ---
 
@@ -48,8 +50,8 @@ The script will:
 
 ```bash
 # Verify files were installed
-ls /opt/libreqos/src/updatecsv.py
-ls /opt/libreqos/src/config.json
+ls /opt/lq-sync/updatecsv.py
+ls /opt/lq-sync/config.json
 
 # Check service is running
 sudo systemctl status updatecsv.service
@@ -62,7 +64,7 @@ sudo systemctl status updatecsv.service
 Edit the config file to match your router details:
 
 ```bash
-sudo nano /opt/libreqos/src/config.json
+sudo nano /opt/lq-sync/config.json
 ```
 
 **Minimal single-router example:**
@@ -143,7 +145,7 @@ journalctl -u updatecsv.service -f
 
 ```bash
 journalctl -u updatecsv.service --no-pager --since "1 hour ago"
-/opt/libreqos/venv/bin/pip show routeros_api
+/opt/lq-sync/venv/bin/pip show routeros_api
 ```
 
 ### CSV not updating
@@ -152,16 +154,17 @@ journalctl -u updatecsv.service --no-pager --since "1 hour ago"
 - Confirm there are active PPPoE/Hotspot/DHCP sessions on the router
 - Validate JSON syntax:
   ```bash
-  jq . /opt/libreqos/src/config.json
+  jq . /opt/lq-sync/config.json
   ```
 - Confirm address list entries exist and use a valid rate format (e.g., `50M/50M`)
 
 ### Permission problems
 
 ```bash
-sudo chown -R root:root /opt/libreqos/src
-sudo chmod -R 755 /opt/libreqos/src
-sudo chmod 640 /opt/libreqos/src/config.json
+# config.json holds router passwords: root only. Don't chmod -R 755 the directory.
+sudo chown -R root:root /opt/lq-sync
+sudo chmod 750 /opt/lq-sync
+sudo chmod 600 /opt/lq-sync/config.json /opt/lq-sync/gui_auth.json
 ```
 
 ---

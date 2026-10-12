@@ -18,9 +18,14 @@ _SOURCES = (
 
 
 class RouterScanner:
+    # Last connection error per router name, for job/error reporting
+    connect_errors = {}
+
     def __init__(self, db):
         # db: DeviceDatabase — scanner writes discovered devices through it
         self.db = db
+        # Why the last scan_router() call failed ('' when it succeeded)
+        self.last_error = ''
 
     # ── Router connection ───────────────────────────────────────────────────
 
@@ -46,12 +51,14 @@ class RouterScanner:
                     plaintext_login=True,
                 )
                 api = pool.get_api()
+                RouterScanner.connect_errors.pop(router['name'], None)
                 logger.info(
                     f"Connected to {router['name']} ({router['address']}) "
                     f"[attempt {attempt + 1}]"
                 )
                 break
             except Exception as e:
+                RouterScanner.connect_errors[router['name']] = str(e) or type(e).__name__
                 logger.warning(
                     f"Connection error to {router['name']} "
                     f"[attempt {attempt + 1}/{retries}]: {e}"
@@ -86,14 +93,17 @@ class RouterScanner:
         are kept instead of being treated as gone.
         """
         name = router['name']
+        self.last_error = ''
         with self.open_api(router) as api:
             if api is None:
                 logger.warning(f"Skipping {name} — connection failed; keeping its devices.")
+                self.last_error = f"connection failed: {RouterScanner.connect_errors.get(name, '')}"
                 return False, False
             try:
                 data = self._fetch_all(api, router)
             except Exception as e:
                 logger.error(f"Failed to read from {name}: {e} — keeping its devices.")
+                self.last_error = f"read failed: {e}"
                 return False, False
 
         try:
@@ -117,6 +127,7 @@ class RouterScanner:
 
         except Exception as e:
             logger.error(f"Error processing router {name}: {e}")
+            self.last_error = f"processing failed: {e}"
             self.db.conn.rollback()
             return False, False
 

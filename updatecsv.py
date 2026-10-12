@@ -6,11 +6,12 @@ import shlex
 import subprocess
 import time
 
-from device_database import DeviceDatabase
+from device_database import DeviceDatabase, timed_job, prune_jobs
 from node_assigner import NodeAssigner, STRATEGY_CPU, STRATEGY_FLAT, ALL_STRATEGIES
 from router_scanner import RouterScanner
 from settings import (
     SCAN_INTERVAL, ERROR_RETRY_INTERVAL, LIBREQOS_UPDATE_COMMAND, LIBREQOS_UPDATE_TIMEOUT,
+    libreqos_dir,
 )
 
 try:
@@ -20,11 +21,13 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-CONFIG_JSON        = 'config.json'
-SHAPED_DEVICES_CSV = 'ShapedDevices.csv'
-NETWORK_JSON       = 'network.json'
-DB_FILE            = 'devices.db'
-LQOS_CONF          = '/etc/lqos.conf'
+# App state lives in this app's own directory (the service's working directory).
+CONFIG_JSON = 'config.json'
+DB_FILE     = 'devices.db'
+LQOS_CONF   = '/etc/lqos.conf'
+# ShapedDevices.csv and network.json are written where LibreQoS reads them.
+SHAPED_DEVICES_CSV = os.path.join(libreqos_dir(), 'ShapedDevices.csv')
+NETWORK_JSON       = os.path.join(libreqos_dir(), 'network.json')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -32,11 +35,15 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
+class ConfigError(Exception):
+    """config.json cannot be used. The cycle must be skipped: treating an
+    unreadable config as "no routers" would remove every device."""
+
+
 def read_config_json():
     """
-    Read config.json and return (routers, strategy, queues, promote_to_root),
-    or None if the config cannot be used. The caller must then skip the cycle:
-    treating an unreadable config as "no routers" would remove every device.
+    Read config.json and return (routers, strategy, queues, promote_to_root).
+    Raises ConfigError if the config cannot be used.
 
     Strategy resolution order:
       1. Explicit 'strategy' key in config.json
@@ -97,36 +104,37 @@ def read_config_json():
         return routers, strategy, queues, promote_to_root
 
     except FileNotFoundError:
-        logger.error(f"Config file not found: {CONFIG_JSON}")
+        raise ConfigError(f"{CONFIG_JSON} not found")
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in config: {e}")
+        raise ConfigError(f"invalid JSON in {CONFIG_JSON}: {e}")
     except Exception as e:
-        logger.error(f"Error reading config: {e}")
-    return None
+        raise ConfigError(f"unusable {CONFIG_JSON}: {e}")
 
 
-def run_libreqos_update() -> bool:
+def run_libreqos_update() -> str:
     """
     Run the configured LibreQoS apply command. With an empty command nothing
     runs: lqos_scheduler applies the new files on its next refresh.
+    Returns '' on success, else the error.
     """
     if not LIBREQOS_UPDATE_COMMAND.strip():
         logger.info("Files updated — lqos_scheduler will apply them on its next refresh.")
-        return True
+        return ''
     try:
         result = subprocess.run(
             shlex.split(LIBREQOS_UPDATE_COMMAND),
             capture_output=True, text=True, check=True, timeout=LIBREQOS_UPDATE_TIMEOUT
         )
         logger.info("LibreQoS updated: " + result.stdout.strip())
-        return True
+        return ''
     except subprocess.CalledProcessError as e:
-        logger.error(f"LibreQoS update failed: {e.stderr}")
+        error = (e.stderr or e.stdout or '').strip()[-400:] or f"exit code {e.returncode}"
     except subprocess.TimeoutExpired:
-        logger.error(f"LibreQoS update timed out after {LIBREQOS_UPDATE_TIMEOUT}s")
+        error = f"timed out after {LIBREQOS_UPDATE_TIMEOUT}s"
     except Exception as e:
-        logger.error(f"Unexpected error running LibreQoS: {e}")
-    return False
+        error = str(e)
+    logger.error(f"LibreQoS update failed: {error}")
+    return error
 
 
 def check_lqos_conf(conn, strategy):
@@ -204,36 +212,44 @@ def main():
 
     while True:
         try:
-            config = read_config_json()
-            if config is None:
+            try:
+                with timed_job(db.conn, 'read config.json', 'config', 'updatecsv', SCAN_INTERVAL):
+                    routers, strategy, queues, promote_to_root = read_config_json()
+            except ConfigError as e:
                 logger.error(
-                    f"Skipping cycle — config.json unusable, devices left unchanged. "
+                    f"Skipping cycle — {e}; devices left unchanged. "
                     f"Retrying in {ERROR_RETRY_INTERVAL}s."
                 )
                 time.sleep(ERROR_RETRY_INTERVAL)
                 continue
-            routers, strategy, queues, promote_to_root = config
 
             scan_time  = time.time()
             scanned_ok = []
 
             for router in routers:
                 logger.info(f"Processing router: {router['name']} ({router['address']})")
-                ok, _ = scanner.scan_router(router, scan_time)
+                with timed_job(db.conn, f"scan {router['name']}", 'poller', 'updatecsv',
+                               SCAN_INTERVAL) as job:
+                    ok, _ = scanner.scan_router(router, scan_time)
+                    job['error'] = scanner.last_error
                 if ok:
                     scanned_ok.append(router['name'])
-
-            db.remove_inactive(scan_time, scanned_ok, [r['name'] for r in routers])
+            prune_jobs(db.conn, 'updatecsv', 'poller', [f"scan {r['name']}" for r in routers])
 
             # Always rebuild both files; they are only rewritten when their
             # content changes, which also picks up edits made in the GUI.
-            network_changed = assigner.assign(db.conn, strategy, routers, queues, promote_to_root)
-            csv_changed     = db.export_to_csv()
-            db.check_limits(queues)
+            with timed_job(db.conn, 'build topology', 'build', 'updatecsv', SCAN_INTERVAL):
+                db.remove_inactive(scan_time, scanned_ok, [r['name'] for r in routers])
+                network_changed = assigner.assign(db.conn, strategy, routers, queues, promote_to_root)
+                csv_changed     = db.export_to_csv()
+                db.check_limits(queues)
 
             if network_changed or csv_changed or update_pending:
                 check_lqos_conf(db.conn, strategy)
-                update_pending = not run_libreqos_update()
+                # every=0: runs only when the files change
+                with timed_job(db.conn, 'libreqos apply', 'apply', 'updatecsv', 0) as job:
+                    job['error'] = run_libreqos_update()
+                update_pending = bool(job['error'])
             else:
                 logger.info("No changes detected.")
 
