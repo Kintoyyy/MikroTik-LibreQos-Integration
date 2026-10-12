@@ -27,7 +27,7 @@ from settings import (
     EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
     EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
-    atomic_write_text, write_if_changed, libreqos_dir, libreqos_version,
+    atomic_write_text, write_if_changed, libreqos_dir, libreqos_version, burst_settings,
 )
 from device_database import ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges
 
@@ -495,7 +495,8 @@ MONITOR_STEP = 60                 # seconds between samples (the RRD step)
 APP_SCRIPTS  = {"updatecsv": "updatecsv.py", "wan_service": "wan_service.py", "gui": "gui.py"}
 # Job kind → CPU-by-job graph series
 JOB_SERIES   = {"poller": "cpu_poller", "config": "cpu_build", "build": "cpu_build",
-                "apply": "cpu_apply", "wan": "cpu_wan", "stats": "cpu_stats", "router": "cpu_stats"}
+                "apply": "cpu_apply", "wan": "cpu_wan", "stats": "cpu_stats", "router": "cpu_stats",
+                "burst": "cpu_stats"}
 _STARTED_AT  = time.time()
 
 # 1-minute rows for 5 h, 5-minute for 50 h, 30-minute for 15 days, 6-hour for 375 days
@@ -868,8 +869,225 @@ def _poll_routers(conn):
         _mon["routers"] = latest
 
 
-def _monitor_loop(work, name):
-    """Run work(conn) every MONITOR_STEP seconds on this thread's own DB connection."""
+# ── Burst (PowerBoost-style, for all traffic) ─────────────────────────────
+# LibreQoS gives every circuit one HTB class (rate = min, ceil = max) and
+# leaves cburst at the kernel default (~1.6 KB). Raising a circuit class's
+# cburst to ceil × N seconds lets an idle subscriber send N seconds' worth of
+# its plan at full speed before HTB holds it to the plan. It is applied with
+# `tc class change` after LibreQoS builds its queues, so LibreQoS's own files
+# are untouched, and re-applied every minute because LibreQoS rebuilds its
+# classes on refresh. While the shaping link is busy, bursts are paused, so
+# they only ever use spare capacity and never other subscribers' share.
+BURST_CHECK_STEP   = 10            # seconds between busy checks
+BURST_CLASS_STEP   = 60            # seconds between class passes (also run on every pause/resume)
+BURST_RESUME_COUNT = 3             # samples below the resume threshold before bursts come back
+BURST_DEFAULT_MAX  = 256 * 1024    # a cburst at or below this counts as tc's default (not raised)
+LEAF_SQM_KINDS     = ("cake", "fq_codel")
+
+_burst = {"state": "off", "util": None, "error": "", "below": 0, "last_pass": 0,
+          "restore_pending": True, "classes": 0, "raised": 0, "counters": None}
+
+
+def _tc_rate_bytes(text):
+    """tc's printed rate ('57500Kbit', '1Gbit') in bytes per second."""
+    m = re.fullmatch(r"([\d.]+)([KMGT]?)(i?)bit", text or "", re.I)
+    if not m:
+        raise ValueError(f"unrecognised tc rate {text!r}")
+    base = 1024 if m.group(3) else 1000
+    power = " KMGT".index(m.group(2).upper() or " ")
+    return float(m.group(1)) * base ** power / 8
+
+
+def _tc_size_bytes(text):
+    """tc's printed size ('1600b/1', '27Kb', '28750000b') in bytes. Kb/Mb are binary units."""
+    m = re.fullmatch(r"([\d.]+)([KMG]?)b(?:/\d+)?", text or "", re.I)
+    if not m:
+        raise ValueError(f"unrecognised tc size {text!r}")
+    return float(m.group(1)) * 1024 ** " KMG".index(m.group(2).upper() or " ")
+
+
+def _shaping_interfaces(conf):
+    """(interfaces LibreQoS shapes on, on_a_stick) from lqos.conf, any version."""
+    single = conf.get("single_interface") or {}
+    if single.get("enabled") and single.get("interface"):
+        return [single["interface"]], True
+    bridge = conf.get("bridge") or {}
+    names = [bridge.get("to_internet"), bridge.get("to_network")]
+    names += [m.get("name") for m in bridge.get("interface_mapping") or [] if isinstance(m, dict)]  # 1.4
+    return list(dict.fromkeys(n for n in names if n)), False
+
+
+def _htb_classes(tc, iface):
+    """
+    LibreQoS's per-subscriber classes on iface: HTB leaf classes whose qdisc
+    is cake or fq_codel, excluding each CPU queue's root (N:1) and default (N:2)
+    class. `tc class show` prints HTB classes as text (no JSON for HTB).
+    """
+    q = subprocess.run([tc, "-j", "qdisc", "show", "dev", iface], capture_output=True, text=True, timeout=30)
+    if q.returncode != 0:
+        raise RuntimeError(f"tc qdisc show dev {iface}: {q.stderr.strip()}")
+    leaf_kind = {d.get("handle"): d.get("kind", "") for d in json.loads(q.stdout or "[]")}
+
+    c = subprocess.run([tc, "-d", "class", "show", "dev", iface], capture_output=True, text=True, timeout=60)
+    if c.returncode != 0:
+        raise RuntimeError(f"tc class show dev {iface}: {c.stderr.strip()}")
+    keys = ("parent", "leaf", "prio", "quantum", "rate", "ceil", "burst", "cburst")
+    classes = []
+    for line in c.stdout.splitlines():
+        words = line.split()
+        if len(words) < 3 or words[:2] != ["class", "htb"]:
+            continue
+        opts = {w: words[i + 1] for i, w in enumerate(words[:-1]) if w in keys}
+        handle = words[2]
+        if handle.split(":")[-1] in ("1", "2") or leaf_kind.get(opts.get("leaf")) not in LEAF_SQM_KINDS:
+            continue
+        if all(k in opts for k in keys):
+            classes.append(dict(opts, handle=handle, iface=iface))
+    return classes
+
+
+def _burst_commands(classes, seconds, max_bytes, active):
+    """
+    tc batch lines that bring each class's cburst to its target: ceil × seconds
+    (capped at max_bytes) while active, tc's default otherwise. Rate, ceil,
+    burst, prio and quantum are passed through unchanged.
+    """
+    lines = []
+    for c in classes:
+        current = _tc_size_bytes(c["cburst"])
+        if active:
+            target = int(min(_tc_rate_bytes(c["ceil"]) * seconds, max_bytes))
+            if abs(current - target) <= target * 0.05:
+                continue
+            cburst = f" cburst {target}b"
+        else:
+            if current <= BURST_DEFAULT_MAX:
+                continue
+            cburst = ""                     # omitted: tc computes its default
+        lines.append(
+            f"class change dev {c['iface']} parent {c['parent']} classid {c['handle']} htb "
+            f"rate {c['rate']} ceil {c['ceil']} burst {c['burst'].split('/')[0]}{cburst} "
+            f"prio {c['prio']} quantum {c['quantum']}")
+    return lines
+
+
+def _link_utilization(conf, ifaces, on_stick, counters, prev):
+    """
+    Busiest direction of the shaping link as a percentage of lqos.conf's
+    capacity, from interface counters (bytes) sampled `dt` seconds apart.
+    Returns (percent, error); percent is None until two samples exist.
+    """
+    queues = conf.get("queues") or {}
+    down_cap = float(queues.get("downlink_bandwidth_mbps") or 0)
+    up_cap = float(queues.get("uplink_bandwidth_mbps") or 0)
+    if down_cap <= 0 or up_cap <= 0:
+        return None, "lqos.conf has no [queues] downlink/uplink_bandwidth_mbps — burst stays paused"
+    missing = [i for i in ifaces if i not in counters]
+    if not ifaces or missing:
+        return None, f"shaping interface not found: {', '.join(missing) or 'none in lqos.conf'}"
+    if not prev or any(i not in prev for i in ifaces):
+        return None, ""                     # need two samples of every interface
+    dt = max(counters["_t"] - prev["_t"], 0.001)
+
+    def mbps(iface, field):
+        return max(counters[iface][field] - prev[iface][field], 0) * 8 / dt / 1e6
+
+    if on_stick:
+        total = mbps(ifaces[0], "rx") + mbps(ifaces[0], "tx")
+        return total / (down_cap + up_cap) * 100, ""
+    bridge = conf.get("bridge") or {}
+    inet, net = bridge.get("to_internet"), bridge.get("to_network")
+    if inet in counters and net in counters:
+        down = max(mbps(inet, "rx"), mbps(net, "tx"))
+        up = max(mbps(net, "rx"), mbps(inet, "tx"))
+        return max(down / down_cap, up / up_cap) * 100, ""
+    busiest = max(max(mbps(i, "rx"), mbps(i, "tx")) for i in ifaces)    # 1.4 interface_mapping
+    return busiest / max(down_cap, up_cap) * 100, ""
+
+
+def _next_burst_state(state, util, error, below, cfg):
+    """
+    Pause above pause_above_pct; resume only after BURST_RESUME_COUNT samples
+    below resume_below_pct. Returns (state, below).
+    """
+    if not cfg["enabled"]:
+        return "off", 0
+    if error:
+        return "paused", 0
+    if state == "off":
+        state = "paused"                    # newly enabled: wait for proof of headroom
+    if util is None:
+        return state, below
+    if util > cfg["pause_above_pct"]:
+        return "paused", 0
+    if util < cfg["resume_below_pct"]:
+        below += 1
+        return ("active" if state == "active" or below >= BURST_RESUME_COUNT else state), below
+    return state, 0
+
+
+def _burst_tick(conn):
+    """One 10-second step: busy check, then a class pass every minute or on a pause/resume flip."""
+    cfg = burst_settings()
+    path = _find_lqos_conf()
+    try:
+        conf = _lqos_parse(path.read_text()) if path.exists() else {}
+    except Exception as e:
+        conf, conf_error = {}, f"lqos.conf: {e}"
+    else:
+        conf_error = "" if path.exists() else "lqos.conf not found"
+    ifaces, on_stick = _shaping_interfaces(conf)
+
+    counters = None
+    if HAS_PSUTIL:
+        nics = psutil.net_io_counters(pernic=True)
+        counters = {i: {"rx": nics[i].bytes_recv, "tx": nics[i].bytes_sent} for i in ifaces if i in nics}
+        counters["_t"] = time.time()
+    util, error = (None, conf_error or "psutil is not installed") if conf_error or not counters else \
+        _link_utilization(conf, ifaces, on_stick, counters, _burst["counters"])
+    _burst["counters"] = counters
+
+    state, below = _next_burst_state(_burst["state"], util, error, _burst["below"], cfg)
+    flipped = state != _burst["state"]
+    _burst.update(state=state, below=below, util=util, error=error, seconds=cfg["seconds"])
+
+    due = time.time() - _burst["last_pass"] >= BURST_CLASS_STEP
+    if not (flipped or _burst["restore_pending"] or (state != "off" and due)):
+        return
+    _burst["last_pass"], _burst["restore_pending"] = time.time(), False
+    with timed_job(conn, "htb burst", "burst", "gui", BURST_CLASS_STEP if state != "off" else 0) as job:
+        job["error"] = _burst_class_pass(ifaces, cfg, active=state == "active") or error
+
+
+def _burst_class_pass(ifaces, cfg, active):
+    """Bring every subscriber class to its burst target. Returns an error string or ''."""
+    tc = _which("tc")
+    if not tc:
+        return "tc not found"
+    classes, errors = [], []
+    for iface in ifaces:
+        try:
+            classes += _htb_classes(tc, iface)
+        except Exception as e:
+            errors.append(str(e))
+    lines = _burst_commands(classes, cfg["seconds"], cfg["max_bytes"], active)
+    if lines:
+        with tempfile.NamedTemporaryFile("w", suffix=".tc", delete=False) as f:
+            f.write("\n".join(lines) + "\n")
+            batch = f.name
+        try:
+            r = subprocess.run([tc, "-f", "-b", batch], capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                errors.append(r.stderr.strip()[-300:] or "tc batch failed")
+        finally:
+            os.unlink(batch)
+    _burst.update(classes=len(classes), raised=len(classes) if active and not errors else 0,
+                  changed=len(lines))
+    return "; ".join(errors)
+
+
+def _monitor_loop(work, name, step=MONITOR_STEP):
+    """Run work(conn) every `step` seconds on this thread's own DB connection."""
     conn = None
     while True:
         started = time.time()
@@ -880,7 +1098,7 @@ def _monitor_loop(work, name):
             work(conn)
         except Exception as e:
             app.logger.warning(f"{name}: {e}")
-        time.sleep(max(1.0, MONITOR_STEP - (time.time() - started)))
+        time.sleep(max(1.0, step - (time.time() - started)))
 
 
 # Previous cumulative CPU / error counters, for per-minute deltas
@@ -897,6 +1115,7 @@ def start_monitoring():
         return
     threading.Thread(target=_monitor_loop, args=(_stats_job, "stats"), daemon=True).start()
     threading.Thread(target=_monitor_loop, args=(_poll_routers, "router polls"), daemon=True).start()
+    threading.Thread(target=_monitor_loop, args=(_burst_tick, "burst", BURST_CHECK_STEP), daemon=True).start()
 
 
 # ── Graphs (rendered by rrdtool, styled to match the GUI) ──────────────────
@@ -947,7 +1166,7 @@ def _graph_defs(cfg):
         ("cpu_build",  "build topology",     "8b5cf6", "AREA", "%", True),
         ("cpu_apply",  "LibreQoS apply",     "22c55e", "AREA", "%", True),
         ("cpu_wan",    "WAN sync",           "14b8a6", "AREA", "%", True),
-        ("cpu_stats",  "stats & router polls", "f59e0b", "AREA", "%", True),
+        ("cpu_stats",  "stats, polls & burst", "f59e0b", "AREA", "%", True),
         ("cpu_other",  "UI / API & other",   "ef4444", "AREA", "%", True),
     ])
     graph("app-mem", "Memory by service", "MB", "app", [
@@ -1136,6 +1355,7 @@ def monitor_status():
         "jobs": jobs,
         "libreqos": dict(services, version=".".join(map(str, version)) if version else None),
         "checks": checks,
+        "burst": {k: _burst.get(k) for k in ("state", "util", "error", "classes", "raised", "seconds")},
         "wan_enabled": wan_on,
     })
 

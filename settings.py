@@ -86,6 +86,16 @@ _DEFAULTS = {
         "login_max_attempts": 5,
         "login_lockout_seconds": 60,
     },
+    "burst": {
+        # PowerBoost-style burst for all traffic: an idle subscriber may send
+        # `seconds` worth of its plan at full speed before LibreQoS holds it to
+        # the plan. Paused while the shaping link is busy.
+        "enabled": False,
+        "seconds": 4,
+        "max_mb": 256,
+        "pause_above_pct": 80,
+        "resume_below_pct": 60,
+    },
 }
 
 
@@ -177,6 +187,23 @@ def libreqos_dir():
     except OSError:
         pass
     return DEFAULT_LIBREQOS_DIR
+
+
+def burst_settings():
+    """
+    The [burst] settings, re-read from settings.json on every call so they
+    apply without a restart. Seconds are clamped to 1-30, and the resume
+    threshold is kept below the pause threshold.
+    """
+    b = _load()["burst"]
+    pause = min(max(float(b.get("pause_above_pct", 80)), 10.0), 100.0)
+    return {
+        "enabled":          bool(b.get("enabled", False)),
+        "seconds":          min(max(float(b.get("seconds", 4)), 1.0), 30.0),
+        "max_bytes":        int(max(float(b.get("max_mb", 256)), 1.0) * 1024 * 1024),
+        "pause_above_pct":  pause,
+        "resume_below_pct": min(max(float(b.get("resume_below_pct", 60)), 0.0), pause - 5),
+    }
 
 
 def libreqos_version():

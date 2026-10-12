@@ -314,8 +314,32 @@ Every tunable value lives in `settings.json` and can be edited in **App Settings
 | `wan_service.rebalance_imbalance_ratio` | 1.5 | See WAN Assignment |
 | `wan_service.manual_rebalance_active_cutoff` | 1200 | The GUI Rebalance button treats dynamic devices not seen for this many seconds as offline |
 | `gui.login_max_attempts` / `login_lockout_seconds` | 5 / 60 | Login rate limit per client address |
+| `burst.enabled` | false | Burst for all traffic (see below) |
+| `burst.seconds` / `max_mb` | 4 / 256 | Burst size = plan rate × seconds, at most this many MB per subscriber |
+| `burst.pause_above_pct` / `resume_below_pct` | 80 / 60 | Bursts pause above this link use and return after 30 s below the second value |
 
 `updatecsv` also checks `/etc/lqos.conf` (Python 3.11+) and logs a warning when `[topology] compile_mode = "flat"` would ignore the parent hierarchy, or when device IPs fall outside `allow_subnets` or inside `ignore_subnets`.
+
+---
+
+## Burst (optional)
+
+LibreQoS holds every subscriber to their plan from the first packet. With burst on, an idle subscriber's next transfer gets
+about `burst.seconds` worth of their plan at full speed, then settles to the plan — like cable "PowerBoost". It applies to all
+traffic equally: page loads, updates and speedtests.
+
+How it works: LibreQoS gives each subscriber one HTB class (`rate` = min, `ceil` = max). The GUI raises that class's `cburst`
+to `ceil × seconds` with `tc class change`, leaving rate, ceil and priority alone, and re-applies it within a minute whenever
+LibreQoS rebuilds its queues. LibreQoS's own files are not modified, so it works with LibreQoS 1.x and 2.x. Its runs show as the
+**htb burst** job on the Pollers page.
+
+- **Spare capacity only.** Every 10 s the GUI measures the LibreQoS link against `[queues] downlink_bandwidth_mbps` /
+  `uplink_bandwidth_mbps` in lqos.conf. Above `pause_above_pct` bursts switch off; they return after 30 s below
+  `resume_below_pct`. Set those two lqos.conf values to your real internet capacity, or the link never looks busy.
+- **Burst speed is not capped** — only the amount is. A subscriber can briefly go as fast as their path allows, which matters on
+  shared segments LibreQoS does not model (wireless sectors, PON). Keep `seconds` small there.
+- Advertise it honestly (e.g. "short transfers up to …"): it is a real property of the service, not a speedtest exception.
+- If the GUI service stops, subscribers simply go back to LibreQoS's normal behaviour.
 
 ---
 

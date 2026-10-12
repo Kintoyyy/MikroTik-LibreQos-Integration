@@ -50,5 +50,12 @@
         "expected_core_policy": "read,sensitive,api,!policy,!local,!telnet,!ssh,!ftp,!reboot,write,!test,!winbox,!password,!web,!sniff,!romon",
         "login_max_attempts": 5,
         "login_lockout_seconds": 60
+    },
+    "burst": {
+        "enabled": false,
+        "seconds": 4,
+        "max_mb": 256,
+        "pause_above_pct": 80,
+        "resume_below_pct": 60
     }
 }

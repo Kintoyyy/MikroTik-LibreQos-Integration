@@ -1914,6 +1914,69 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
   </div>
 
+  <!-- Burst -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd">
+      <span><i class="bi bi-lightning-charge"></i> Burst <span class="hd-sub">a short boost above the plan, for all traffic</span></span>
+      <span class="hd-sub" id="burst-status">—</span>
+    </div>
+    <div class="card-bd">
+      <p style="font-size:.8rem;color:var(--text);margin:0 0 .9rem;line-height:1.55">
+        After a subscriber's line has been idle, the next transfer gets about <b>N seconds' worth of their plan at full speed</b>,
+        then settles to the plan. It applies to every transfer equally — page loads, updates and speedtests alike.
+        Bursts pause automatically while the LibreQoS link is busy, so they only use spare capacity.
+        Applies within ~10 seconds; no restart needed.
+      </p>
+      <div style="margin-bottom:1rem">
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="set-burst-enabled">
+            <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          </div>
+          <span style="font-size:.875rem">Enable burst</span>
+        </label>
+      </div>
+      <div class="form-row form-row-4">
+        <div>
+          <label class="form-label">Burst length</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-burst-seconds" min="1" max="30" step="1">
+            <span class="input-suffix">sec of plan</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Burst size = plan rate × this</div>
+        </div>
+        <div>
+          <label class="form-label">Burst cap</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-burst-max" min="1" step="1">
+            <span class="input-suffix">MB</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Upper limit per subscriber, for fast plans</div>
+        </div>
+        <div>
+          <label class="form-label">Pause above</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-burst-pause" min="10" max="100" step="1">
+            <span class="input-suffix">% busy</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Link use (of lqos.conf capacity) that switches bursts off</div>
+        </div>
+        <div>
+          <label class="form-label">Resume below</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-burst-resume" min="0" max="95" step="1">
+            <span class="input-suffix">% busy</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Bursts return after 30 s below this</div>
+        </div>
+      </div>
+      <div style="font-size:.76rem;color:var(--yellow);margin-top:.9rem;line-height:1.5">
+        <i class="bi bi-exclamation-triangle"></i> The busy check uses <code>[queues] downlink_bandwidth_mbps / uplink_bandwidth_mbps</code>
+        in lqos.conf — set them to your real internet capacity on the LibreQoS tab, or bursts never pause.
+        The burst speed itself is not capped (it is limited by the link), so tell subscribers about it, e.g. "short transfers up to …".
+      </div>
+    </div>
+  </div>
+
   <!-- GUI / Permissions -->
   <div class="card" style="margin-bottom:1rem">
     <div class="card-hd"><span><i class="bi bi-shield-check"></i> GUI &amp; Permissions</span></div>
@@ -4933,6 +4996,12 @@ async function loadAppSettings() {
   g('set-core-group',      s.gui?.expected_core_group          ?? 'API_WRITE');
   g('set-login-attempts',  s.gui?.login_max_attempts           ?? 5);
   g('set-login-lockout',   s.gui?.login_lockout_seconds        ?? 60);
+  g('set-burst-enabled',   s.burst?.enabled                    ?? false);
+  g('set-burst-seconds',   s.burst?.seconds                    ?? 4);
+  g('set-burst-max',       s.burst?.max_mb                     ?? 256);
+  g('set-burst-pause',     s.burst?.pause_above_pct            ?? 80);
+  g('set-burst-resume',    s.burst?.resume_below_pct           ?? 60);
+  renderBurstStatus(monitorData && monitorData.burst);
 }
 
 async function saveAppSettings() {
@@ -4988,6 +5057,18 @@ async function saveAppSettings() {
     login_max_attempts:    int_('set-login-attempts', 5),
     login_lockout_seconds: int_('set-login-lockout', 60),
   });
+
+  Object.assign(sec('burst'), {
+    enabled:          chk('set-burst-enabled'),
+    seconds:          Math.min(Math.max(num('set-burst-seconds', 4), 1), 30),
+    max_mb:           Math.max(num('set-burst-max', 256), 1),
+    pause_above_pct:  num('set-burst-pause', 80),
+    resume_below_pct: num('set-burst-resume', 60),
+  });
+  if (s.burst.resume_below_pct >= s.burst.pause_above_pct) {
+    toast('Burst: "resume below" must be lower than "pause above"', false);
+    return;
+  }
 
   const r = await fetch('/api/settings', {
     method: 'POST',
@@ -5053,6 +5134,7 @@ async function loadMonitor() {
     monitorData = d;
     renderStatusStrip(d);
     renderChecks(d.checks || []);
+    renderBurstStatus(d.burst);
     const bad = d.jobs.filter(j => j.status !== 'ok').length;
     const badge = document.getElementById('tab-badge-pollers');
     badge.textContent = bad || d.jobs.length;
@@ -5060,6 +5142,20 @@ async function loadMonitor() {
     badge.title = bad ? `${bad} job(s) failing or late` : `${d.jobs.length} jobs`;
     if (document.getElementById('page-pollers').classList.contains('active')) renderPollers(d);
   } catch (e) { /* offline: keep the last view */ }
+}
+
+function burstText(b) {
+  if (!b || b.state === 'off' || !b.state) return 'off';
+  if (b.state === 'active') return `active on ${b.raised || 0} circuits · ${b.seconds || '?'} s of plan`;
+  if (b.error) return `paused — ${b.error}`;
+  return b.util == null ? 'paused — measuring link load…' : `paused — link ${Math.round(b.util)}% busy`;
+}
+
+function renderBurstStatus(b) {
+  const el = document.getElementById('burst-status');
+  if (!el) return;
+  el.textContent = burstText(b);
+  el.style.color = b && b.state === 'active' ? 'var(--green)' : b && b.state === 'paused' ? 'var(--yellow)' : '';
 }
 
 function renderChecks(checks) {
@@ -5145,6 +5241,7 @@ function renderPollers(d) {
       kvRow('Jobs', `${jobs.length}<span class="${failing ? 'bad' : 'dim'}">· ${failing ? failing + ' failing' : 'all ok'}</span>`) +
       kvRow('Services', Object.entries(services).map(([n, s]) =>
         `${esc(n)} <span class="dim">${fmtUptime(s.uptime_s)}</span>`).join('<span class="dim">·</span>')) +
+      kvRow('Burst', `<span class="${d.burst && d.burst.state === 'active' ? '' : 'dim'}">${esc(burstText(d.burst))}</span>`) +
       kvRow('Threads', threads);
   }
 
