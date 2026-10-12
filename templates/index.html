@@ -355,6 +355,20 @@ code { font-size: .8rem; color: #94a3b8; }
 .st-error { color: #ff7b72; }
 .st-late  { color: var(--yellow); }
 
+/* ── LibreQoS settings (lqos.conf form) ── */
+.lq-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+@media(max-width:1000px){ .lq-grid { grid-template-columns: 1fr; } }
+.lq-field { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: .75rem; align-items: center; padding: .5rem 0; }
+.lq-field + .lq-field { border-top: 1px solid #21262d; }
+.lq-field .k { font-size: .82rem; color: var(--strong); }
+.lq-field .k small { display: block; color: var(--muted); font-size: .72rem; margin-top: .15rem; line-height: 1.35; }
+.lq-key { font-family: var(--mono); font-size: .68rem; color: var(--muted); font-weight: 400; }
+.lq-field textarea.form-input { font-family: var(--mono); font-size: .78rem; min-height: 92px; resize: vertical; }
+.lq-offloads { display: flex; flex-wrap: wrap; gap: .4rem 1rem; font-family: var(--mono); font-size: .78rem; }
+.lq-offloads label { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; }
+.lq-note { font-size: .76rem; color: var(--yellow); margin-bottom: .6rem; line-height: 1.4; }
+@media(max-width:600px){ .lq-field { grid-template-columns: 1fr; } }
+
 /* ══════════════════════════════════════════════
    MOBILE — tablet (≤ 768px)
 ══════════════════════════════════════════════ */
@@ -882,12 +896,19 @@ code { font-size: .8rem; color: #94a3b8; }
       <div class="card-hd">
         <span><i class="bi bi-terminal-fill" style="color:var(--green)"></i> <span id="log-drawer-title">Logs</span></span>
         <div style="display:flex;gap:.5rem">
+          <select class="search-input" id="log-lines" onchange="setLogLines(this.value)" title="Lines to show">
+            <option value="200">200 lines</option>
+            <option value="500">500 lines</option>
+            <option value="1000">1000 lines</option>
+            <option value="2000">2000 lines</option>
+            <option value="5000">5000 lines</option>
+          </select>
           <button class="btn-ghost" onclick="refreshDrawerLogs()" title="Refresh logs"><i class="bi bi-arrow-clockwise"></i></button>
           <button class="btn-ghost" onclick="closeLogDrawer()"><i class="bi bi-x-lg"></i></button>
         </div>
       </div>
       <div class="card-bd" style="padding:.5rem">
-        <pre id="log-content" style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.75rem;color:#94a3b8;max-height:400px;overflow-y:auto;margin:0;font-family:'Consolas','Courier New',monospace;line-height:1.5"></pre>
+        <pre id="log-content" style="background:#060a12;border:1px solid var(--border);border-radius:8px;padding:.85rem;font-size:.75rem;color:#94a3b8;height:70vh;overflow-y:auto;margin:0;font-family:var(--mono);line-height:1.5;white-space:pre-wrap;word-break:break-word"></pre>
       </div>
     </div>
   </div>
@@ -1583,16 +1604,35 @@ code { font-size: .8rem; color: #94a3b8; }
      LibreQos CONFIG
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-lqos">
-  <div class="card">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">LibreQoS</h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">
+        <code id="lqos-path-label" style="font-size:.76rem">/etc/lqos.conf</code> <span id="lqos-meta"></span>
+        — saving restarts lqosd; the previous file is kept as lqos.conf.bak
+      </p>
+    </div>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+      <button class="btn-ghost" onclick="loadLqosConf()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
+      <button class="btn-ghost" id="lqos-raw-btn" onclick="toggleLqosRaw()"><i class="bi bi-code-slash"></i> Raw file</button>
+      <button class="btn-primary" onclick="saveLqosForm()"><i class="bi bi-floppy-fill"></i> Save &amp; restart lqosd</button>
+    </div>
+  </div>
+
+  <div class="lq-grid" id="lqos-form"><div class="dim" style="font-size:.85rem">Loading…</div></div>
+
+  <div class="card" id="lqos-raw-card" style="display:none;margin-top:1rem">
     <div class="card-hd">
-      <span><i class="bi bi-gear-wide-connected"></i> lqos.conf <span style="font-size:.72rem;color:var(--muted);font-weight:400" id="lqos-path-label"></span></span>
-      <div style="display:flex;gap:.6rem">
-        <button class="btn-ghost" onclick="loadLqosConf()"><i class="bi bi-arrow-clockwise"></i> Reload</button>
-        <button class="btn-primary" onclick="saveLqosConf()"><i class="bi bi-floppy-fill"></i> Save &amp; Restart lqosd</button>
-      </div>
+      <span><i class="bi bi-code-slash"></i> lqos.conf <span class="hd-sub">raw file — for settings the form does not cover</span></span>
+      <button class="btn-primary" onclick="saveLqosConf()"><i class="bi bi-floppy-fill"></i> Save raw file &amp; restart lqosd</button>
     </div>
     <div class="card-bd" style="padding:.5rem"><textarea id="lqos-editor"></textarea></div>
   </div>
+
+  <datalist id="lqos-ifaces"></datalist>
+  <datalist id="lqos-sqm">
+    <option value="cake diffserv4"><option value="cake diffserv3"><option value="cake besteffort"><option value="fq_codel">
+  </datalist>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -3332,9 +3372,19 @@ async function openLogDrawer(name) {
   await refreshDrawerLogs();
 }
 
+let logLines = '500';
+try { logLines = localStorage.getItem('logLines') || '500'; } catch (e) {}
+
+function setLogLines(n) {
+  logLines = n;
+  try { localStorage.setItem('logLines', n); } catch (e) {}
+  refreshDrawerLogs();
+}
+
 async function refreshDrawerLogs() {
   if (!logDrawerService) return;
-  const r = await fetch(`/api/services/${logDrawerService}/logs`);
+  document.getElementById('log-lines').value = logLines;
+  const r = await fetch(`/api/services/${logDrawerService}/logs?lines=${encodeURIComponent(logLines)}`);
   const d = await r.json();
   const el = document.getElementById('log-content');
   el.textContent = d.ok ? (d.logs || '(no logs)') : 'Error: ' + d.error;
@@ -4596,13 +4646,202 @@ const lqosCM = CodeMirror.fromTextArea(document.getElementById('lqos-editor'), {
   mode: 'text/plain', theme: 'dracula', lineNumbers: true, indentUnit: 2,
 });
 
+// Form fields: [section ('' = top level), key, label, type, help, unit, options].
+// Only keys present in lqos.conf are shown, so the form never writes a setting
+// the installed LibreQoS does not know. Covers v1.5 (and v2.0 keys when present).
+const LQOS_FORM = [
+  { title: 'General', icon: 'bi-hdd', fields: [
+    ['', 'node_name',             'Node name',             'text'],
+    ['', 'lqos_directory',        'LibreQoS directory',    'text', 'Where LibreQoS reads ShapedDevices.csv and network.json — LQ-Sync writes them here'],
+    ['', 'packet_capture_time',   'Packet capture time',   'int',  '', 's'],
+    ['', 'queue_check_period_ms', 'Queue check period',    'int',  '', 'ms'],
+  ]},
+  { title: 'Bridge', icon: 'bi-diagram-2', section: 'bridge', fields: [
+    ['bridge', 'use_xdp_bridge', 'XDP bridge',            'bool',  'XDP (Bifrost) bridge instead of a Linux bridge (br0)'],
+    ['bridge', 'to_internet',    'Interface to internet', 'iface', 'Faces the core router / internet'],
+    ['bridge', 'to_network',     'Interface to network',  'iface', 'Faces the subscribers (BRAS side)'],
+  ]},
+  { title: 'Queues', icon: 'bi-speedometer', section: 'queues', fields: [
+    ['queues', 'default_sqm',                'Default SQM',             'sqm'],
+    ['queues', 'downlink_bandwidth_mbps',    'Downlink',                'int', 'Total download capacity of the shaper', 'Mbps'],
+    ['queues', 'uplink_bandwidth_mbps',      'Uplink',                  'int', 'Total upload capacity of the shaper', 'Mbps'],
+    ['queues', 'generated_pn_download_mbps', 'Generated node download', 'int', 'Size of auto-generated parent nodes', 'Mbps'],
+    ['queues', 'generated_pn_upload_mbps',   'Generated node upload',   'int', '', 'Mbps'],
+    ['queues', 'queue_mode',                 'Queue mode',              'select', 'observe removes the subscriber shaping tree', '', ['shape', 'observe']],
+    ['queues', 'monitor_only',               'Monitor only',            'bool', 'Watch traffic without shaping it'],
+    ['queues', 'use_binpacking',             'Bin packing',             'bool', 'Let LibreQoS balance top-level nodes across CPUs'],
+    ['queues', 'override_available_queues',  'Override queue count',    'int'],
+    ['queues', 'dry_run',                    'Dry run',                 'bool', 'Log tc commands instead of running them'],
+    ['queues', 'sudo',                       'Use sudo',                'bool'],
+  ]},
+  { title: 'Topology', icon: 'bi-diagram-3', section: 'topology', fields: [
+    ['topology', 'compile_mode', 'Compile mode', 'select', 'full keeps the Parent Node hierarchy LQ-Sync writes; flat ignores it', '', ['full', 'flat']],
+  ]},
+  { title: 'Tuning', icon: 'bi-cpu', section: 'tuning', fields: [
+    ['tuning', 'stop_irq_balance',      'Stop irqbalance',          'bool'],
+    ['tuning', 'netdev_budget_usecs',   'netdev budget (time)',     'int', '', 'µs'],
+    ['tuning', 'netdev_budget_packets', 'netdev budget (packets)',  'int', '', 'packets'],
+    ['tuning', 'rx_usecs',              'RX interrupt coalescing',  'int', '', 'µs'],
+    ['tuning', 'tx_usecs',              'TX interrupt coalescing',  'int', '', 'µs'],
+    ['tuning', 'disable_rxvlan',        'Disable RX VLAN offload',  'bool'],
+    ['tuning', 'disable_txvlan',        'Disable TX VLAN offload',  'bool'],
+    ['tuning', 'disable_offload',       'Disable offloads',         'offloads'],
+  ]},
+  { title: 'IP ranges', icon: 'bi-funnel', section: 'ip_ranges', fields: [
+    ['ip_ranges', 'allow_subnets',            'Allow subnets',                  'list', 'Shapeable address space — one CIDR per line. Devices outside it are not shaped'],
+    ['ip_ranges', 'ignore_subnets',           'Ignore subnets',                 'list', 'Never shaped — one CIDR per line'],
+    ['ip_ranges', 'unknown_ip_honors_allow',  'Unknown IPs honor allow list',   'bool'],
+    ['ip_ranges', 'unknown_ip_honors_ignore', 'Unknown IPs honor ignore list',  'bool'],
+  ]},
+  { title: 'Integration common', icon: 'bi-arrow-repeat', section: 'integration_common', fields: [
+    ['integration_common', 'queue_refresh_interval_mins',   'Queue refresh interval',        'int',  'How often lqos_scheduler reloads ShapedDevices.csv and network.json', 'min'],
+    ['integration_common', 'always_overwrite_network_json', 'Always overwrite network.json', 'bool', 'Keep off — LQ-Sync writes network.json'],
+    ['integration_common', 'circuit_name_as_address',       'Circuit name as address',       'bool'],
+  ]},
+  { title: 'Long-term stats', icon: 'bi-graph-up', section: 'long_term_stats', fields: [
+    ['long_term_stats', 'gather_stats',                     'Gather stats',            'bool'],
+    ['long_term_stats', 'collation_period_seconds',         'Collation period',        'int', '', 's'],
+    ['long_term_stats', 'uisp_reporting_interval_seconds',  'UISP reporting interval', 'int', '', 's'],
+  ]},
+  { title: 'Usage stats', icon: 'bi-bar-chart', section: 'usage_stats', fields: [
+    ['usage_stats', 'send_anonymous',   'Send anonymous usage stats', 'bool'],
+    ['usage_stats', 'anonymous_server', 'Stats server',               'text'],
+  ]},
+  { title: 'Built-in CRM integrations', icon: 'bi-plug',
+    note: 'Keep these off: LQ-Sync generates ShapedDevices.csv and network.json, and an enabled integration overwrites them.',
+    fields: [
+      ['spylnx_integration',    'enable_spylnx',    'Splynx',    'bool'],
+      ['uisp_integration',      'enable_uisp',      'UISP',      'bool'],
+      ['powercode_integration', 'enable_powercode', 'Powercode', 'bool'],
+      ['sonar_integration',     'enable_sonar',     'Sonar',     'bool'],
+  ]},
+];
+const LQOS_OFFLOADS = ['gso', 'tso', 'lro', 'sg', 'gro'];
+let lqosData = {};
+
+const lqosId    = (sec, key) => `lq-${sec || 'top'}-${key}`;
+const lqosValue = (sec, key) => sec ? (lqosData[sec] || {})[key] : lqosData[key];
+const lqosHas   = (sec, key) => lqosValue(sec, key) !== undefined;
+
+function lqosInput(sec, key, type, unit, val, options) {
+  const id = lqosId(sec, key);
+  switch (type) {
+    case 'bool':
+      return `<label class="toggle-wrap"><div class="toggle"><input type="checkbox" id="${id}" ${val ? 'checked' : ''}>
+        <div class="toggle-track"></div><div class="toggle-thumb"></div></div></label>`;
+    case 'int': {
+      const input = `<input class="form-input" type="number" step="1" min="0" id="${id}" value="${esc(val)}">`;
+      return unit ? `<div class="form-input-group">${input}<span class="input-suffix">${esc(unit)}</span></div>` : input;
+    }
+    case 'list':
+      return `<textarea class="form-input" id="${id}" rows="4" spellcheck="false">${esc((val || []).join('\n'))}</textarea>`;
+    case 'offloads':
+      return `<div class="lq-offloads" id="${id}">${[...new Set([...LQOS_OFFLOADS, ...(val || [])])].map(o =>
+        `<label><input type="checkbox" value="${esc(o)}" ${(val || []).includes(o) ? 'checked' : ''}> ${esc(o)}</label>`).join('')}</div>`;
+    case 'select':
+      return `<select class="form-input" id="${id}">${[...new Set([...(options || []), val])].map(o =>
+        `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    default: {
+      const list = type === 'iface' ? 'list="lqos-ifaces"' : type === 'sqm' ? 'list="lqos-sqm"' : '';
+      return `<input class="form-input" id="${id}" value="${esc(val)}" ${list} spellcheck="false">`;
+    }
+  }
+}
+
+function lqosRead(sec, key, type) {
+  const el = document.getElementById(lqosId(sec, key));
+  switch (type) {
+    case 'bool':     return el.checked;
+    case 'int':      return el.value.trim() === '' ? NaN : Number(el.value);
+    case 'list':     return el.value.split('\n').map(v => v.trim()).filter(Boolean);
+    case 'offloads': return [...el.querySelectorAll('input:checked')].map(c => c.value);
+    default:         return el.value.trim();
+  }
+}
+
+function renderLqosForm() {
+  const cards = LQOS_FORM.map(group => {
+    const fields = group.fields.filter(([sec, key]) => lqosHas(sec, key));
+    if (!fields.length) return '';
+    return `<div class="card">
+      <div class="card-hd"><span><i class="bi ${group.icon}"></i> ${esc(group.title)}</span>${
+        group.section ? `<span class="lq-key">[${esc(group.section)}]</span>` : ''}</div>
+      <div class="card-bd">${group.note ? `<div class="lq-note"><i class="bi bi-exclamation-triangle"></i> ${esc(group.note)}</div>` : ''}
+        ${fields.map(([sec, key, label, type, help, unit, options]) => `<div class="lq-field">
+          <div class="k">${esc(label)} <span class="lq-key">${esc(key)}</span>${help ? `<small>${esc(help)}</small>` : ''}</div>
+          <div>${lqosInput(sec, key, type, unit, lqosValue(sec, key), options)}</div>
+        </div>`).join('')}
+      </div></div>`;
+  }).join('');
+  document.getElementById('lqos-form').innerHTML = cards ||
+    '<div class="dim" style="font-size:.85rem">No known settings found in lqos.conf — use the raw file editor.</div>';
+}
+
 async function loadLqosConf() {
-  const r = await fetch('/api/yaml/lqos');
+  const [r, rr, ir] = await Promise.all([fetch('/api/lqos'), fetch('/api/yaml/lqos'), fetch('/api/interfaces')]);
   const d = await r.json();
   if (!d.ok) { toast(d.error || 'Failed to load lqos.conf', false); return; }
-  lqosCM.setValue(d.content || '');
-  const lbl = document.getElementById('lqos-path-label');
-  if (lbl) lbl.textContent = d.path || '';
+  document.getElementById('lqos-path-label').textContent = d.path || '/etc/lqos.conf';
+  if (!d.exists) {
+    document.getElementById('lqos-form').innerHTML =
+      `<div class="dim" style="font-size:.85rem">${esc(d.path)} not found — is LibreQoS installed?</div>`;
+    return;
+  }
+  lqosData = d.data || {};
+  document.getElementById('lqos-meta').textContent = lqosData.version ? `· LibreQoS ${lqosData.version}` : '';
+  const raw = await rr.json();
+  if (raw.ok) lqosCM.setValue(raw.content || '');
+  try {
+    const ifs = await ir.json();
+    if (ifs.ok) document.getElementById('lqos-ifaces').innerHTML =
+      ifs.interfaces.map(i => `<option value="${esc(i.name)}">`).join('');
+  } catch (e) { /* the interface list is only a convenience */ }
+  renderLqosForm();
+}
+
+async function restartLqos(withScheduler) {
+  toast('lqos.conf saved — restarting lqosd…');
+  const rd = await (await fetch('/api/services/lqosd/restart', { method: 'POST' })).json();
+  toast(rd.ok ? 'lqosd restarted' : ('lqosd restart failed: ' + rd.error), rd.ok);
+  // LibreQoS docs: interface changes need lqos_scheduler restarted too
+  if (withScheduler && rd.ok) {
+    const rs = await (await fetch('/api/services/lqos_scheduler/restart', { method: 'POST' })).json();
+    toast(rs.ok ? 'lqos_scheduler restarted' : ('lqos_scheduler restart failed: ' + rs.error), rs.ok);
+  }
+}
+
+async function saveLqosForm() {
+  const updates = {};
+  let bridgeChanged = false;
+  for (const group of LQOS_FORM) {
+    for (const [sec, key, label, type] of group.fields) {
+      if (!lqosHas(sec, key)) continue;
+      const v = lqosRead(sec, key, type);
+      if (type === 'int' && !Number.isInteger(v)) { toast(`${label}: enter a whole number`, false); return; }
+      if (JSON.stringify(v) !== JSON.stringify(lqosValue(sec, key))) {
+        updates[`${sec}|${key}`] = v;
+        if (sec === 'bridge') bridgeChanged = true;
+      }
+    }
+  }
+  if (!Object.keys(updates).length) { toast('No changes'); return; }
+  const r = await fetch('/api/lqos', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({updates}),
+  });
+  const d = await r.json();
+  if (!d.ok) { toast(d.error || 'Save failed', false); return; }
+  if (d.changed === false) { toast('No changes'); return; }
+  await restartLqos(bridgeChanged);
+  loadLqosConf();
+}
+
+function toggleLqosRaw() {
+  const card = document.getElementById('lqos-raw-card');
+  const show = card.style.display === 'none';
+  card.style.display = show ? '' : 'none';
+  document.getElementById('lqos-raw-btn').classList.toggle('active', show);
+  if (show) { setTimeout(() => lqosCM.refresh(), 0); card.scrollIntoView({behavior: 'smooth', block: 'start'}); }
 }
 
 async function saveLqosConf() {
@@ -4613,10 +4852,8 @@ async function saveLqosConf() {
   });
   const d = await r.json();
   if (!d.ok) { toast(d.error || 'Save failed', false); return; }
-  toast('lqos.conf saved — restarting lqosd…');
-  const rs = await fetch('/api/services/lqosd/restart', { method: 'POST' });
-  const rd = await rs.json();
-  toast(rd.ok ? 'lqosd restarted' : ('lqosd restart failed: ' + rd.error), rd.ok);
+  await restartLqos(false);
+  loadLqosConf();
 }
 
 // ── App Settings ──────────────────────────────────────────────────────────

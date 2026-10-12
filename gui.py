@@ -15,6 +15,7 @@ import socket
 import re
 import hmac
 import contextlib
+import ipaddress
 from pathlib import Path
 from flask import Flask, render_template, request, jsonify, Response, stream_with_context, session
 from wan_manager import WANManager
@@ -26,7 +27,7 @@ from settings import (
     EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
     EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
-    atomic_write_text, libreqos_dir,
+    atomic_write_text, write_if_changed, libreqos_dir,
 )
 from device_database import ensure_jobs_table, prune_jobs, timed_job
 
@@ -1869,10 +1870,14 @@ def service_logs(name):
     if name not in MANAGED_SERVICES:
         return jsonify({"ok": False, "error": "unknown service"}), 400
     try:
+        lines = min(max(int(request.args.get("lines", 500)), 50), 5000)
+    except ValueError:
+        lines = 500
+    try:
         result = subprocess.run(
-            [JOURNALCTL, "-u", _svc_name(name), "-n", "80",
+            [JOURNALCTL, "-u", _svc_name(name), "-n", str(lines),
              "--no-pager", "--output=short-iso"],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=20
         )
         return jsonify({"ok": True, "logs": result.stdout})
     except (FileNotFoundError, OSError) as e:
@@ -2242,15 +2247,7 @@ def _toml_update(text: str, section: str | None, key: str, value) -> str:
 
         return scope_text
 
-    if isinstance(value, bool):
-        v_str = 'true' if value else 'false'
-    elif isinstance(value, str):
-        v_str = f'"{value}"'
-    elif isinstance(value, list):
-        items = ', '.join(f'"{i}"' for i in value)
-        v_str = f'[{items}]'
-    else:
-        v_str = str(value)
+    v_str = _toml_value(value)
 
     if section:
         sec_m = re.search(rf'^\[{re.escape(section)}\]', text, re.MULTILINE)
@@ -2271,6 +2268,62 @@ def _toml_update(text: str, section: str | None, key: str, value) -> str:
         top = _update_key_in_scope(top)
         return top + text[top_end:]
 
+def _toml_value(value) -> str:
+    """A Python value as a TOML literal (strings escaped)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return repr(value)
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(str(v)) for v in value) + "]"
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def _lqos_parse(text: str) -> dict:
+    """Parsed lqos.conf: exact types with tomllib (Python 3.11+), else the simple parser."""
+    try:
+        import tomllib
+    except ImportError:
+        return _parse_toml_simple(text)
+    return tomllib.loads(text)
+
+
+def _coerce_like(value, current):
+    """Convert a form value to the type the key already has in lqos.conf."""
+    if isinstance(current, bool):
+        return value if isinstance(value, bool) else _to_bool(value)
+    if isinstance(current, int):
+        return int(float(value))
+    if isinstance(current, float):
+        return float(value)
+    if isinstance(current, list):
+        items = value if isinstance(value, list) else str(value).splitlines()
+        return [str(v).strip() for v in items if str(v).strip()]
+    return str(value)
+
+
+def _lqos_field_error(section, key, value):
+    """Why a new lqos.conf value is unusable, or None."""
+    if isinstance(value, list) and key.endswith("_subnets"):
+        for net in value:
+            try:
+                ipaddress.ip_network(net, strict=False)
+            except ValueError:
+                return f"{key}: '{net}' is not a valid subnet"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if value < 0:
+            return f"{key} cannot be negative"
+        if section == "queues" and key.endswith("_mbps") and value == 0:
+            return f"{key} must be above 0"
+    return None
+
+
+_TOML_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+
+
 @app.route("/api/lqos", methods=["GET"])
 @require_auth
 def get_lqos_conf():
@@ -2278,30 +2331,56 @@ def get_lqos_conf():
     if not path.exists():
         return jsonify({"ok": True, "exists": False, "path": str(path), "data": {}})
     try:
-        raw  = path.read_text()
-        data = _parse_toml_simple(raw)
-        return jsonify({"ok": True, "exists": True, "path": str(path), "data": data})
+        return jsonify({"ok": True, "exists": True, "path": str(path),
+                        "data": _lqos_parse(path.read_text())})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        return jsonify({"ok": False, "error": f"Could not parse {path}: {e}"}), 500
+
 
 @app.route("/api/lqos", methods=["POST"])
 @require_auth
 def save_lqos_conf():
+    """
+    Update lqos.conf keys: {"updates": {"section|key": value}}, section empty
+    for top-level keys. Only keys already in the file can be changed, so
+    nothing unknown to the installed LibreQoS is ever written, and each keeps
+    its existing type. The previous file is kept as lqos.conf.bak.
+    changed=False means the file is unchanged (no lqosd restart needed).
+    """
     path = _find_lqos_conf()
     try:
         updates = (request.get_json(silent=True) or {}).get("updates", {})
-        # updates = { "section|key": value, ...} where section="" means top-level
         if not path.exists():
             return jsonify({"ok": False, "error": "lqos.conf not found"}), 404
         text = path.read_text()
+        current = _lqos_parse(text)
+
+        coerced = []
         for field_key, value in updates.items():
-            if '|' in field_key:
-                sec, k = field_key.split('|', 1)
-            else:
-                sec, k = None, field_key
-            text = _toml_update(text, sec or None, k, value)
-        atomic_write_text(path, text)
-        return jsonify({"ok": True})
+            section, _, key = field_key.rpartition("|")
+            name = f"{section}.{key}" if section else key
+            if not _TOML_NAME.match(key) or (section and not _TOML_NAME.match(section)):
+                return jsonify({"ok": False, "error": f"Invalid setting name: {field_key}"}), 400
+            scope = current.get(section, {}) if section else current
+            if not isinstance(scope, dict) or key not in scope:
+                return jsonify({"ok": False, "error": f"{name} is not in lqos.conf"}), 400
+            try:
+                value = _coerce_like(value, scope[key])
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": f"{name}: invalid value"}), 400
+            err = _lqos_field_error(section, key, value)
+            if err:
+                return jsonify({"ok": False, "error": err}), 400
+            coerced.append((section, key, value))
+
+        bridge = dict(current.get("bridge", {}))
+        bridge.update({k: v for sec, k, v in coerced if sec == "bridge"})
+        if bridge.get("to_internet") and bridge.get("to_internet") == bridge.get("to_network"):
+            return jsonify({"ok": False, "error": "to_internet and to_network must be different interfaces"}), 400
+
+        for section, key, value in coerced:
+            text = _toml_update(text, section or None, key, value)
+        return jsonify({"ok": True, "changed": write_if_changed(path, text)})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
