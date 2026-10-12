@@ -13,9 +13,10 @@ _DEFAULTS = {
         "connect_retries": 3,
         "connect_retry_delay": 5,
         # Command run after ShapedDevices.csv / network.json change.
-        # Empty string: run nothing and let lqos_scheduler apply the files
-        # on its own refresh (queue_refresh_interval_mins in lqos.conf).
-        "libreqos_update_command": "/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly",
+        # "auto": LibreQoS.py --updateonly, run with the interpreter the
+        # installed LibreQoS version uses. Empty string: run nothing and let
+        # lqos_scheduler apply the files on its own refresh.
+        "libreqos_update_command": "auto",
         "libreqos_update_timeout": 300,
         # Where LibreQoS reads ShapedDevices.csv / network.json.
         # Empty: lqos_directory from /etc/lqos.conf, else /opt/libreqos/src.
@@ -170,12 +171,35 @@ def libreqos_dir():
     try:
         with open('/etc/lqos.conf') as f:
             for line in f:
-                m = re.match(r'\s*lqos_directory\s*=\s*"([^"]+)"', line)
+                m = re.match(r"""\s*lqos_directory\s*=\s*["']([^"']+)["']""", line)
                 if m:
                     return m.group(1)
     except OSError:
         pass
     return DEFAULT_LIBREQOS_DIR
+
+
+def libreqos_version():
+    """
+    Installed LibreQoS version as (major, minor), or None when unknown:
+    the top-level 'version' in /etc/lqos.conf, else the VERSION_STRING file
+    LibreQoS ships in its directory.
+    """
+    sources = (('/etc/lqos.conf', r"""\s*version\s*=\s*["']([^"']+)"""),
+               (os.path.join(libreqos_dir(), 'VERSION_STRING'), r'\s*v?(\S+)'))
+    for path, pattern in sources:
+        try:
+            with open(path) as f:
+                for line in f:
+                    if line.lstrip().startswith('['):
+                        break                      # only top-level keys count
+                    m = re.match(pattern, line)
+                    v = m and re.match(r'(\d+)\.(\d+)', m.group(1))
+                    if v:
+                        return int(v.group(1)), int(v.group(2))
+        except OSError:
+            pass
+    return None
 
 # ── Rate resolver constants ───────────────────────────────────────────────────
 MIN_DL_RATE_PERCENTAGE = float(_s["rates"]["min_dl_rate_percentage"])

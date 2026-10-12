@@ -1,4 +1,3 @@
-import ipaddress
 import json
 import logging
 import os
@@ -6,12 +5,12 @@ import shlex
 import subprocess
 import time
 
-from device_database import DeviceDatabase, timed_job, prune_jobs
+from device_database import DeviceDatabase, timed_job, prune_jobs, unshaped_by_ip_ranges
 from node_assigner import NodeAssigner, STRATEGY_CPU, STRATEGY_FLAT, ALL_STRATEGIES
 from router_scanner import RouterScanner
 from settings import (
     SCAN_INTERVAL, ERROR_RETRY_INTERVAL, LIBREQOS_UPDATE_COMMAND, LIBREQOS_UPDATE_TIMEOUT,
-    libreqos_dir,
+    libreqos_dir, libreqos_version,
 )
 
 try:
@@ -112,6 +111,32 @@ def read_config_json():
         raise ConfigError(f"unusable {CONFIG_JSON}: {e}")
 
 
+def libreqos_update_argv():
+    """
+    The command that applies changed files. "auto" runs LibreQoS.py
+    --updateonly the way the installed version expects: LibreQoS 2.x from its
+    own venv (/opt/libreqos/venv), 1.x through the script's shebang.
+    """
+    command = LIBREQOS_UPDATE_COMMAND.strip()
+    if command != 'auto':
+        return shlex.split(command)
+    script = os.path.join(LIBREQOS_DIR, 'LibreQoS.py')
+    venv_python = os.path.join(os.path.dirname(os.path.normpath(LIBREQOS_DIR)), 'venv', 'bin', 'python')
+    if (libreqos_version() or (0, 0)) >= (2, 0) and os.path.exists(venv_python):
+        return [venv_python, script, '--updateonly']
+    return [script, '--updateonly']
+
+
+def _libreqos_env():
+    """
+    Environment for LibreQoS commands: this app's venv removed, so LibreQoS
+    (whose scripts may resolve python3 through PATH) never runs on our interpreter.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in ('VIRTUAL_ENV', 'PYTHONHOME', 'PYTHONPATH')}
+    env['PATH'] = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+    return env
+
+
 def run_libreqos_update() -> str:
     """
     Run the configured LibreQoS apply command. With an empty command nothing
@@ -123,10 +148,11 @@ def run_libreqos_update() -> str:
         return ''
     try:
         result = subprocess.run(
-            shlex.split(LIBREQOS_UPDATE_COMMAND),
+            libreqos_update_argv(),
             # LibreQoS.py opens network.json / ShapedDevices.csv relative to its
             # working directory, so run it from LibreQoS's directory, not ours.
             cwd=LIBREQOS_DIR,
+            env=_libreqos_env(),
             capture_output=True, text=True, check=True, timeout=LIBREQOS_UPDATE_TIMEOUT
         )
         logger.info("LibreQoS updated: " + result.stdout.strip())
@@ -168,29 +194,9 @@ def check_lqos_conf(conn, strategy):
             "or use strategy 'flat'."
         )
 
-    def _nets(values):
-        nets = []
-        for v in values or []:
-            try:
-                nets.append(ipaddress.ip_network(v, strict=False))
-            except ValueError:
-                pass
-        return nets
-
     ranges = conf.get('ip_ranges', {})
-    allow, ignore = _nets(ranges.get('allow_subnets')), _nets(ranges.get('ignore_subnets'))
-    if not allow and not ignore:
-        return
-
-    unshaped = []
-    for code, ip in conn.execute("SELECT code, ipv4 FROM devices WHERE ipv4 IS NOT NULL"):
-        try:
-            net = ipaddress.ip_network(ip, strict=False)
-        except ValueError:
-            continue
-        inside = lambda nets: any(net.version == n.version and net.subnet_of(n) for n in nets)
-        if (allow and not inside(allow)) or inside(ignore):
-            unshaped.append(f"{code} ({ip})")
+    unshaped = [f"{code} ({ip})" for code, ip in unshaped_by_ip_ranges(
+        conn, ranges.get('allow_subnets'), ranges.get('ignore_subnets'))]
     if unshaped:
         sample = ', '.join(unshaped[:5]) + (' …' if len(unshaped) > 5 else '')
         logger.warning(

@@ -1,6 +1,7 @@
 import contextlib
 import csv
 import io
+import ipaddress
 import logging
 import math
 import os
@@ -10,6 +11,7 @@ import time
 from rate_resolver import RateResolver
 from settings import (
     SOURCE_PRIORITY, TC_U16_WARN_THRESHOLD, MAPPED_CIRCUIT_WARN_THRESHOLD, write_if_changed,
+    libreqos_version,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,39 @@ def prune_jobs(conn, service, kind, keep_names):
         sql += f" AND name NOT IN ({','.join('?' * len(names))})"
     conn.execute(sql, [service, kind] + names)
     conn.commit()
+
+
+def unshaped_by_ip_ranges(conn, allow_subnets, ignore_subnets):
+    """
+    Devices LibreQoS will not shape because of lqos.conf [ip_ranges]: an IPv4
+    outside allow_subnets (when any are set) or inside ignore_subnets.
+    Returns [(code, ip)].
+    """
+    def nets(values):
+        out = []
+        for v in values or []:
+            try:
+                out.append(ipaddress.ip_network(v, strict=False))
+            except ValueError:
+                pass
+        return out
+
+    allow, ignore = nets(allow_subnets), nets(ignore_subnets)
+    if not allow and not ignore:
+        return []
+    unshaped = []
+    for code, ip in conn.execute("SELECT code, ipv4 FROM devices WHERE ipv4 IS NOT NULL"):
+        try:
+            net = ipaddress.ip_network(ip, strict=False)
+        except ValueError:
+            continue
+
+        def inside(ns):
+            return any(net.version == n.version and net.subnet_of(n) for n in ns)
+
+        if (allow and not inside(allow)) or inside(ignore):
+            unshaped.append((code, ip))
+    return unshaped
 
 
 def _cpu_seconds():
@@ -389,7 +424,8 @@ class DeviceDatabase:
                 "Increase queue count, or simplify or rebalance the hierarchy."
             )
 
-        over_cap = 0 < MAPPED_CIRCUIT_WARN_THRESHOLD < total
+        # The unlicensed circuit cap exists from LibreQoS 2.0 on
+        over_cap = (libreqos_version() or (0, 0)) >= (2, 0) and 0 < MAPPED_CIRCUIT_WARN_THRESHOLD < total
         if over_cap and not self._over_circuit_cap:
             logger.warning(
                 f"{total} circuits exceed {MAPPED_CIRCUIT_WARN_THRESHOLD}: LibreQoS without a "

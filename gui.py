@@ -27,9 +27,9 @@ from settings import (
     EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
     EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
-    atomic_write_text, write_if_changed, libreqos_dir,
+    atomic_write_text, write_if_changed, libreqos_dir, libreqos_version,
 )
-from device_database import ensure_jobs_table, prune_jobs, timed_job
+from device_database import ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges
 
 try:
     import psutil
@@ -640,6 +640,57 @@ def _sample_stats(conn, prev):
                                        error_delta if have_prev else None])
     _rrd_update("devices", "devices", devices)
 
+    checks = _libreqos_checks(conn)
+    with _mon_lock:
+        _mon["lqos_checks"] = checks
+
+
+def _check(level, title, detail, fix="", link=""):
+    return {"level": level, "title": title, "detail": detail, "fix": fix, "link": link}
+
+
+def _libreqos_checks(conn):
+    """lqos.conf settings that stop LibreQoS from shaping what this app writes."""
+    path = _find_lqos_conf()
+    if not path.exists():
+        return []
+    try:
+        conf = _lqos_parse(path.read_text())
+    except Exception as e:
+        return [_check("warn", "lqos.conf could not be parsed", str(e))]
+
+    checks = []
+    ranges = conf.get("ip_ranges") or {}
+    try:
+        unshaped = unshaped_by_ip_ranges(conn, ranges.get("allow_subnets"), ranges.get("ignore_subnets"))
+    except sqlite3.Error:
+        unshaped = []
+    if unshaped:
+        sample = ", ".join(f"{code} ({ip})" for code, ip in unshaped[:3])
+        checks.append(_check(
+            "warn", f"{len(unshaped)} subscriber(s) outside LibreQoS's IP ranges",
+            f"Their addresses are outside allow_subnets or inside ignore_subnets in lqos.conf, "
+            f"so LibreQoS does not shape them — e.g. {sample}.",
+            "Add the subscriber pools to [ip_ranges] allow_subnets on the LibreQoS tab."))
+
+    integrations = [label for section, key, label in (
+        ("spylnx_integration", "enable_spylnx", "Splynx"), ("uisp_integration", "enable_uisp", "UISP"),
+        ("powercode_integration", "enable_powercode", "Powercode"), ("sonar_integration", "enable_sonar", "Sonar"),
+    ) if (conf.get(section) or {}).get(key) is True]
+    if integrations:
+        checks.append(_check(
+            "error", f"Built-in {' / '.join(integrations)} integration is enabled",
+            "LibreQoS's own integration rewrites ShapedDevices.csv and network.json, replacing what LQ-Sync writes.",
+            "Turn it off on the LibreQoS tab (Built-in CRM integrations)."))
+
+    strategy = _load_config().get("strategy", "cpu")
+    if (conf.get("topology") or {}).get("compile_mode") == "flat" and strategy != "flat":
+        checks.append(_check(
+            "warn", 'lqos.conf compile_mode is "flat"',
+            f"LibreQoS ignores the parent-node hierarchy LQ-Sync writes for the '{strategy}' strategy.",
+            'Set [topology] compile_mode = "full" on the LibreQoS tab, or use the flat strategy.'))
+    return checks
+
 
 def _health_values(rows):
     """(temperature °C, voltage V) from /system/health: one row of fields (RouterOS 6) or name/value rows (7)."""
@@ -692,6 +743,8 @@ def _poll_router(kind, router):
         total = float(res.get("total-memory", 0) or 0)
         free = float(res.get("free-memory", 0) or 0)
         temp, volt = _health_values(health)
+        if kind == "bras":
+            info["nat_rules"], info["nat_lists"] = _read_nat(api)
         info.update(
             ok=True, cpu=float(res.get("cpu-load", 0) or 0),
             mem=(total - free) / total * 100 if total else None,
@@ -710,6 +763,87 @@ def _poll_router(kind, router):
     return info
 
 
+# srcnat actions that rewrite the subscriber's source address
+NAT_ACTIONS = ("masquerade", "src-nat", "netmap", "same")
+LIBREQOS_NAT_DOCS = "https://libreqos.readthedocs.io/en/latest/docs/v2.0/design.html"
+
+
+def _read_nat(api):
+    """
+    Enabled srcnat rules that rewrite source addresses, plus the members of
+    every address list they match on. (None, {}) when the firewall can't be read.
+    """
+    try:
+        rules = [r for r in api.get_resource("/ip/firewall/nat").get()
+                 if r.get("chain") == "srcnat" and r.get("action") in NAT_ACTIONS
+                 and r.get("disabled", "false") != "true"]
+        lists, resource = {}, api.get_resource("/ip/firewall/address-list")
+        for name in {r.get("src-address-list", "").lstrip("!") for r in rules} - {""}:
+            lists[name] = [e.get("address", "") for e in resource.get(list=name)
+                           if e.get("address") and e.get("disabled", "false") != "true"]
+        return rules, lists
+    except Exception:
+        return None, {}
+
+
+def _ros_addr_matcher(spec):
+    """
+    Predicate for a RouterOS address match: an IP, net/len or a-b range, '!'
+    negates, empty matches anything. Names RouterOS resolves itself never match.
+    """
+    spec = (spec or "").strip()
+    if not spec:
+        return lambda ip: True
+    negate = spec.startswith("!")
+    spec = spec.lstrip("!")
+    try:
+        if "-" in spec:
+            lo, hi = (ipaddress.ip_address(part.strip()) for part in spec.split("-", 1))
+            test = lambda ip: ip.version == lo.version and lo <= ip <= hi
+        else:
+            net = ipaddress.ip_network(spec, strict=False)
+            test = lambda ip: ip in net
+    except ValueError:
+        return lambda ip: False
+    return (lambda ip: not test(ip)) if negate else test
+
+
+def _nat_findings(rules, lists, ips):
+    """The srcnat rules that rewrite subscriber addresses, with how many each matches."""
+    findings = []
+    for rule in rules:
+        src = _ros_addr_matcher(rule.get("src-address"))
+        list_spec = rule.get("src-address-list", "")
+        members = [_ros_addr_matcher(a) for a in lists.get(list_spec.lstrip("!"), []) if a]
+        negate = list_spec.startswith("!")
+        hit = [ip for ip in ips
+               if src(ip) and (not list_spec or negate != any(m(ip) for m in members))]
+        if hit:
+            findings.append({
+                "rule": rule.get(".id", ""),
+                "action": rule.get("action", ""),
+                "out_interface": rule.get("out-interface") or rule.get("out-interface-list", ""),
+                "comment": rule.get("comment", ""),
+                "matched": len(hit),
+                "examples": [str(ip) for ip in hit[:3]],
+            })
+    return findings
+
+
+def _router_ips(conn, router_name):
+    ips = []
+    try:
+        for (ip,) in conn.execute(
+                "SELECT ipv4 FROM devices WHERE router = ? AND ipv4 IS NOT NULL", (router_name,)):
+            try:
+                ips.append(ipaddress.ip_network(ip, strict=False).network_address)
+            except ValueError:
+                pass
+    except sqlite3.Error:
+        pass                      # the scanner has not created the table yet
+    return ips
+
+
 def _poll_routers(conn):
     """Poll every configured router once, record each poll as a job, update the router RRDs."""
     targets = _router_targets(_load_config())
@@ -720,6 +854,9 @@ def _poll_routers(conn):
         with timed_job(conn, f"router {name}", "router", "gui", MONITOR_STEP) as job:
             info = _poll_router(kind, router)
             job["error"] = info["error"]
+        rules, lists = info.pop("nat_rules", None), info.pop("nat_lists", {})
+        if rules is not None:
+            info["nat"] = _nat_findings(rules, lists, _router_ips(conn, name))
         key = _router_key(kind, name)
         latest[key] = info
         try:
@@ -922,6 +1059,7 @@ def monitor_status():
         app_stats = dict(_mon["app"])
         cached_routers = dict(_mon["routers"])
         cpu_now = dict(_mon["job_cpu_now"])
+        checks = list(_mon.get("lqos_checks", []))
 
     if HAS_PSUTIL:
         vm, du = psutil.virtual_memory(), psutil.disk_usage("/")
@@ -962,6 +1100,31 @@ def monitor_status():
         job["cpu_now"] = cpu_now.get(job["name"])
         jobs.append(job)
 
+    # LibreQoS shapes pre-NAT subscriber addresses; NAT on a BRAS (which sits
+    # before LibreQoS) hides every subscriber behind the NAT address.
+    for r in routers:
+        for f in r.get("nat") or []:
+            how = f["action"] + (f", out {f['out_interface']}" if f["out_interface"] else "") \
+                + (f", “{f['comment']}”" if f["comment"] else "")
+            checks.insert(0, _check(
+                "error", f"{r['name']} NATs subscriber traffic before LibreQoS",
+                f"srcnat rule {f['rule']} ({how}) rewrites {f['matched']} subscriber address(es), "
+                f"e.g. {', '.join(f['examples'])}. LibreQoS shapes pre-NAT addresses, so behind this "
+                f"router every subscriber shows up as the NAT address and is not shaped.",
+                "Move NAT to the border router after LibreQoS — LibreQoS must sit inline before NAT. "
+                "(Fine only if LibreQoS sits between the subscribers and this router.)",
+                LIBREQOS_NAT_DOCS))
+
+    services = _libreqos_services()
+    if services.get("lqosd") not in ("active", "unknown", None):
+        checks.insert(0, _check("error", f"lqosd is {services['lqosd']}",
+                                "Nothing is shaped while lqosd is down.", "Restart it on the Services tab."))
+    elif services.get("lqos_scheduler") == "failed":
+        checks.insert(0, _check("warn", "lqos_scheduler has failed",
+                                "Queues are not refreshed until it runs again.",
+                                "Restart lqosd on the Services tab — it brings the scheduler back in order."))
+
+    version = libreqos_version()
     return jsonify({
         "ok": True,
         "now": now,
@@ -971,13 +1134,29 @@ def monitor_status():
         "app": app_stats,
         "routers": routers,
         "jobs": jobs,
-        "libreqos": _libreqos_services(),
+        "libreqos": dict(services, version=".".join(map(str, version)) if version else None),
+        "checks": checks,
         "wan_enabled": wan_on,
     })
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#2f81f7"/>'
+    '<path d="M5 17h5l3-7 5 13 3-6h6" fill="none" stroke="#fff" stroke-width="2.6" '
+    'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+)
+
+
+@app.route("/favicon.svg")
+@app.route("/favicon.ico")
+def favicon():
+    return Response(FAVICON_SVG, mimetype="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
 
 @app.route("/")
 def index():

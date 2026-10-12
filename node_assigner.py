@@ -5,10 +5,14 @@ import os
 
 from settings import (
     PARENT_BANDWIDTH_MULTIPLIER, SKEW_WARN_RATIO, STICKY_CPU_ASSIGNMENT,
-    CPU_REBALANCE_RATIO, NODE_IDS, VIRTUAL_SITE_NODES, write_if_changed,
+    CPU_REBALANCE_RATIO, NODE_IDS, VIRTUAL_SITE_NODES, write_if_changed, libreqos_version,
 )
 
 logger = logging.getLogger(__name__)
+
+# Node "id" fields are documented from LibreQoS 2.0; older versions get the
+# plain node format they were built for.
+_EMIT_NODE_IDS = NODE_IDS and (libreqos_version() or (0, 0)) >= (2, 0)
 
 # Integration strategies (LibreQoS Scale Planning)
 STRATEGY_FLAT    = 'flat'     # No parent hierarchy; empty network.json (max perf, min visibility)
@@ -28,7 +32,7 @@ def _node(kind, name, dl, ul, node_type, virtual=False):
         "type": node_type,
         "children": {},
     }
-    if NODE_IDS:
+    if _EMIT_NODE_IDS:
         # Stable namespaced id; LibreQoS prefers it over the name for saved overrides.
         node["id"] = f"mikrotik:{kind}:{name}"
     if virtual:

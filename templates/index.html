@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LQ-Sync — Dashboard</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.css" rel="stylesheet">
@@ -371,6 +372,20 @@ code { font-size: .8rem; color: #94a3b8; }
 .lq-note { font-size: .76rem; color: var(--yellow); margin-bottom: .6rem; line-height: 1.4; }
 @media(max-width:600px){ .lq-field { grid-template-columns: 1fr; } }
 
+/* ── LibreQoS checks ── */
+.ss-row.ss-checks { color: var(--text); cursor: pointer; }
+.ss-row.ss-checks:hover { background: var(--raised); }
+.check { display: flex; gap: .75rem; padding: .7rem 0; }
+.check + .check { border-top: 1px solid #21262d; }
+.check > i { font-size: 1rem; margin-top: .05rem; flex-shrink: 0; }
+.check.error > i { color: #ff7b72; }
+.check.warn  > i { color: var(--yellow); }
+.check b { color: var(--strong); font-size: .86rem; }
+.check p { margin: .25rem 0 0; font-size: .8rem; color: var(--text); line-height: 1.5; }
+.check p.fix { color: var(--muted); }
+.check a { color: var(--accent); text-decoration: none; }
+.check a:hover { text-decoration: underline; }
+
 /* ══════════════════════════════════════════════
    MOBILE — tablet (≤ 768px)
 ══════════════════════════════════════════════ */
@@ -520,6 +535,7 @@ code { font-size: .8rem; color: #94a3b8; }
 <div class="status-strip">
   <div class="ss-row" id="ss-routers"><i class="bi bi-hdd-stack"></i><span class="dot dot-grey"></span><b>Router</b><span>checking…</span></div>
   <div class="ss-row" id="ss-host"><i class="bi bi-display"></i><span class="dot dot-grey"></span><b>this host</b><span>checking…</span></div>
+  <div class="ss-row ss-checks" id="ss-checks" style="display:none" onclick="switchTab('pollers')" title="Open Pollers for details"></div>
 </div>
 
 <!-- ── Tab nav ── -->
@@ -663,6 +679,14 @@ code { font-size: .8rem; color: #94a3b8; }
      POLLERS — this app, this host, routers, RRD graphs, jobs
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-pollers">
+  <div class="card" id="mon-checks-card" style="display:none;margin-bottom:1rem">
+    <div class="card-hd">
+      <span><i class="bi bi-exclamation-triangle"></i> LibreQoS checks <span class="hd-sub">problems that stop LibreQoS from shaping your subscribers</span></span>
+      <span class="hd-sub" id="mon-checks-sub"></span>
+    </div>
+    <div class="card-bd" style="padding-top:.3rem;padding-bottom:.3rem" id="mon-checks"></div>
+  </div>
+
   <div class="mon-cards">
     <div class="card">
       <div class="card-hd"><span><i class="bi bi-activity"></i> LQ-Sync <span class="hd-sub">this app</span></span></div>
@@ -1695,8 +1719,8 @@ code { font-size: .8rem; color: #94a3b8; }
       <div class="form-row form-row-2" style="margin-top:1rem">
         <div>
           <label class="form-label">LibreQoS Apply Command</label>
-          <input class="form-input" id="set-update-cmd" placeholder="empty = let lqos_scheduler apply changes">
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Runs when ShapedDevices.csv or network.json changes. Leave empty to run nothing: lqos_scheduler applies the files on its next refresh (queue_refresh_interval_mins in lqos.conf)</div>
+          <input class="form-input" id="set-update-cmd" placeholder="auto">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Runs when ShapedDevices.csv or network.json changes. <code>auto</code> runs LibreQoS.py --updateonly the way the installed LibreQoS version expects (2.x from its venv). Leave empty to run nothing: lqos_scheduler applies the files on its next refresh</div>
         </div>
         <div>
           <label class="form-label">Apply Timeout</label>
@@ -4883,7 +4907,7 @@ async function loadAppSettings() {
   g('set-error-retry',     s.scanner?.error_retry_interval     ?? 30);
   g('set-connect-retries', s.scanner?.connect_retries          ?? 3);
   g('set-connect-delay',   s.scanner?.connect_retry_delay      ?? 5);
-  g('set-update-cmd',      s.scanner?.libreqos_update_command  ?? '/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly');
+  g('set-update-cmd',      s.scanner?.libreqos_update_command  ?? 'auto');
   g('set-update-timeout',  s.scanner?.libreqos_update_timeout  ?? 300);
   g('set-libreqos-dir',    s.scanner?.libreqos_dir             ?? '');
   g('set-wan-interval',    s.wan_service?.default_interval     ?? 300);
@@ -5028,6 +5052,7 @@ async function loadMonitor() {
     if (!d.ok) return;
     monitorData = d;
     renderStatusStrip(d);
+    renderChecks(d.checks || []);
     const bad = d.jobs.filter(j => j.status !== 'ok').length;
     const badge = document.getElementById('tab-badge-pollers');
     badge.textContent = bad || d.jobs.length;
@@ -5035,6 +5060,27 @@ async function loadMonitor() {
     badge.title = bad ? `${bad} job(s) failing or late` : `${d.jobs.length} jobs`;
     if (document.getElementById('page-pollers').classList.contains('active')) renderPollers(d);
   } catch (e) { /* offline: keep the last view */ }
+}
+
+function renderChecks(checks) {
+  const strip = document.getElementById('ss-checks');
+  const card  = document.getElementById('mon-checks-card');
+  if (!checks.length) { strip.style.display = 'none'; card.style.display = 'none'; return; }
+  const errors = checks.filter(c => c.level === 'error').length;
+  strip.style.display = '';
+  strip.innerHTML = `<i class="bi bi-exclamation-triangle-fill" style="color:${errors ? '#ff7b72' : 'var(--yellow)'}"></i>
+    <b>${checks.length} LibreQoS ${checks.length === 1 ? 'warning' : 'warnings'}</b>
+    <span class="ss-warn" style="max-width:none;color:var(--text);font-family:inherit;font-size:.8rem">${
+      checks.slice(0, 3).map(c => esc(c.title)).join(' · ')}${checks.length > 3 ? ' …' : ''}</span>`;
+  card.style.display = '';
+  document.getElementById('mon-checks-sub').textContent = errors ? `${errors} need fixing` : '';
+  document.getElementById('mon-checks').innerHTML = checks.map(c => `<div class="check ${esc(c.level)}">
+      <i class="bi ${c.level === 'error' ? 'bi-x-octagon-fill' : 'bi-exclamation-triangle-fill'}"></i>
+      <div><b>${esc(c.title)}</b>
+        <p>${esc(c.detail)}</p>
+        ${c.fix ? `<p class="fix"><i class="bi bi-wrench"></i> ${esc(c.fix)}${
+          c.link ? ` <a href="${esc(c.link)}" target="_blank" rel="noopener">LibreQoS docs</a>` : ''}</p>` : ''}
+      </div></div>`).join('');
 }
 
 function renderStatusStrip(d) {
@@ -5069,6 +5115,7 @@ function renderStatusStrip(d) {
     <span class="dot ${lqOk ? 'dot-green' : 'dot-red'}"></span><b>${esc(h.hostname || 'host')}</b><span>this host</span>
     CPU <span class="v">${fmtPct(h.cpu)}</span> mem <span class="v">${fmtPct(h.mem)}</span>
     disk <span class="v">${fmtPct(h.disk)}</span> pollers <span class="v">${(d.jobs || []).length}</span>
+    ${lq.version ? `LibreQoS <span class="v">${esc(lq.version)}</span>` : ''}
     lqosd <span class="v" style="color:${lqOk ? 'var(--green)' : '#ff7b72'}">${esc(lq.lqosd || '?')}</span>
     scheduler <span class="v">${esc(lq.lqos_scheduler || '?')}</span>`;
 }

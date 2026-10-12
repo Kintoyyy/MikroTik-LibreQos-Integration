@@ -4,7 +4,7 @@
         "error_retry_interval": 30,
         "connect_retries": 3,
         "connect_retry_delay": 5,
-        "libreqos_update_command": "/usr/bin/sudo /opt/libreqos/src/LibreQoS.py --updateonly",
+        "libreqos_update_command": "auto",
         "libreqos_update_timeout": 300,
         "libreqos_dir": ""
     },
