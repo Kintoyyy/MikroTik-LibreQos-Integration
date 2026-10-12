@@ -30,7 +30,8 @@
   --mono:    ui-monospace, SFMono-Regular, "DejaVu Sans Mono", Menlo, Consolas, monospace;
 }
 *, *::before, *::after { box-sizing: border-box; }
-body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: -apple-system, 'Segoe UI', system-ui, sans-serif; margin: 0;
+       min-height: 100vh; display: flex; flex-direction: column; }   /* footer stays at the bottom */
 
 /* ── Header ── */
 .topbar { background: var(--bg); border-bottom: 1px solid var(--border); padding: .55rem 1rem; display: flex; align-items: center; justify-content: space-between; gap: .75rem; position: sticky; top: 0; z-index: 100; }
@@ -48,7 +49,8 @@ body { background: var(--bg); color: var(--text); font-family: -apple-system, 'S
 .svc-pill { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; color: var(--muted); padding: 0 .4rem; }
 
 /* ── Page container ── */
-.wrap { max-width: 1480px; margin: 0 auto; padding: 1rem 1rem 0; }
+.wrap { max-width: 1480px; width: 100%; margin: 0 auto; padding: 1rem 1rem 0; flex: 1 0 auto; }
+body > footer { flex-shrink: 0; }
 
 /* ── Status strip ── */
 .status-strip { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1rem; font-size: .8rem; }
@@ -2072,14 +2074,14 @@ function switchTab(name) {
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
-function toast(msg, ok=true) {
+function toast(msg, ok=true, ms=3500) {
   const stack = document.getElementById('toast-stack');
   const el = document.createElement('div');
   el.className = 'toast-item ' + (ok ? 'toast-ok' : 'toast-err');
   el.innerHTML = `<i class="bi bi-${ok ? 'check-circle-fill' : 'x-circle-fill'}"></i> `;
   el.append(String(msg ?? ''));
   stack.appendChild(el);
-  setTimeout(() => el.remove(), 3500);
+  setTimeout(() => el.remove(), ms);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -3354,8 +3356,8 @@ async function svcAction(name, action) {
     const r = await fetch(`/api/services/${name}/${action}`, { method: 'POST' });
     const d = await r.json();
     if (card) card.style.opacity = '1';
-    if (!d.ok) { toast(d.error, false); return; }
-    toast(`${name} ${action}ed`);
+    if (!d.ok) { toast(name === 'lqosd' || d.log ? restartResultText(d) : d.error, false, 12000); loadServices(); return; }
+    toast(name === 'lqosd' && action !== 'stop' ? restartResultText(d) : `${name} ${action}ed`);
     loadServices();
   } catch(e) {
     if (card) card.style.opacity = '1';
@@ -3618,11 +3620,11 @@ async function restartLqosd() {
   btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Restart lqosd Now';
   if (d.ok) {
     res.style.color = 'var(--green)';
-    res.textContent = '✓ lqosd restarted — try logging in again';
+    res.textContent = '✓ lqosd and lqos_scheduler restarted — try logging in again';
     loadServices();
   } else {
     res.style.color = 'var(--red)';
-    res.textContent = '✗ ' + d.error;
+    res.textContent = '✗ ' + restartResultText(d);
   }
 }
 
@@ -4799,29 +4801,33 @@ async function loadLqosConf() {
   renderLqosForm();
 }
 
-async function restartLqos(withScheduler) {
-  toast('lqos.conf saved — restarting lqosd…');
-  const rd = await (await fetch('/api/services/lqosd/restart', { method: 'POST' })).json();
-  toast(rd.ok ? 'lqosd restarted' : ('lqosd restart failed: ' + rd.error), rd.ok);
-  // LibreQoS docs: interface changes need lqos_scheduler restarted too
-  if (withScheduler && rd.ok) {
-    const rs = await (await fetch('/api/services/lqos_scheduler/restart', { method: 'POST' })).json();
-    toast(rs.ok ? 'lqos_scheduler restarted' : ('lqos_scheduler restart failed: ' + rs.error), rs.ok);
+// lqosd is restarted first and lqos_scheduler only once lqosd is ready — the
+// server does the ordering (see _restart_libreqos in gui.py).
+function restartResultText(d) {
+  if (d.ok) return 'lqosd restarted, then lqos_scheduler';
+  const last = (d.log || '').split('\n').filter(Boolean).slice(-1)[0];
+  return d.error + (last ? ` — ${last}` : '') + ' (see Services → Logs)';
+}
+
+async function restartLqos() {
+  toast('Restarting lqosd, then lqos_scheduler once lqosd is ready…');
+  try {
+    const d = await (await fetch('/api/services/lqosd/restart', { method: 'POST' })).json();
+    toast(restartResultText(d), d.ok, d.ok ? 3500 : 12000);
+  } catch (e) {
+    toast('Restart request failed: ' + e.message, false);
   }
+  loadMonitor();
 }
 
 async function saveLqosForm() {
   const updates = {};
-  let bridgeChanged = false;
   for (const group of LQOS_FORM) {
     for (const [sec, key, label, type] of group.fields) {
       if (!lqosHas(sec, key)) continue;
       const v = lqosRead(sec, key, type);
       if (type === 'int' && !Number.isInteger(v)) { toast(`${label}: enter a whole number`, false); return; }
-      if (JSON.stringify(v) !== JSON.stringify(lqosValue(sec, key))) {
-        updates[`${sec}|${key}`] = v;
-        if (sec === 'bridge') bridgeChanged = true;
-      }
+      if (JSON.stringify(v) !== JSON.stringify(lqosValue(sec, key))) updates[`${sec}|${key}`] = v;
     }
   }
   if (!Object.keys(updates).length) { toast('No changes'); return; }
@@ -4832,7 +4838,7 @@ async function saveLqosForm() {
   const d = await r.json();
   if (!d.ok) { toast(d.error || 'Save failed', false); return; }
   if (d.changed === false) { toast('No changes'); return; }
-  await restartLqos(bridgeChanged);
+  await restartLqos();
   loadLqosConf();
 }
 
@@ -4852,7 +4858,7 @@ async function saveLqosConf() {
   });
   const d = await r.json();
   if (!d.ok) { toast(d.error || 'Save failed', false); return; }
-  await restartLqos(false);
+  await restartLqos();
   loadLqosConf();
 }
 

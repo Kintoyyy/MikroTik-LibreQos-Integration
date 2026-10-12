@@ -1840,6 +1840,81 @@ def get_services():
                            "pid": "0", "started": "", "loaded": "not-found"})
     return jsonify({"ok": True, "services": result})
 
+LQOS_BUS_SOCKET = Path("/run/lqos/bus")
+
+
+def _unit_state(unit):
+    try:
+        r = _systemctl("is-active", unit, capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _journal_tail(unit, lines=15):
+    try:
+        r = subprocess.run([JOURNALCTL, "-u", unit, "-n", str(lines), "--no-pager", "-o", "cat"],
+                           capture_output=True, text=True, timeout=15)
+        return r.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _restart_libreqos(action="restart"):
+    """
+    (Re)start lqosd, wait until it is ready, then restart lqos_scheduler.
+
+    lqos_scheduler talks to lqosd over its bus socket. Restarted at the same
+    time — by us, or by systemd because its unit Requires= lqosd — it starts
+    before lqosd is listening, exits, and stays failed. So: lqosd first, wait
+    until its bus socket is re-created (or it has been up for a few seconds),
+    clear the scheduler's failed state, start it, and check it stays up.
+    Returns {ok, lqosd, lqos_scheduler, error, log}.
+    """
+    started = time.time()
+    r = _systemctl(action, "lqosd.service", capture_output=True, text=True, timeout=90)
+    if r.returncode != 0:
+        return {"ok": False, "lqosd": _unit_state("lqosd.service"),
+                "error": f"lqosd: {r.stderr.strip() or 'failed to ' + action}",
+                "log": _journal_tail("lqosd.service")}
+
+    ready, active_since = False, None
+    while time.time() - started < 30:
+        if _unit_state("lqosd.service") == "active":
+            active_since = active_since or time.time()
+            try:
+                fresh_socket = LQOS_BUS_SOCKET.stat().st_mtime >= started - 1
+            except OSError:
+                fresh_socket = False
+            if fresh_socket or time.time() - active_since >= 8:
+                ready = True
+                break
+        else:
+            active_since = None
+        time.sleep(0.5)
+    if not ready:
+        return {"ok": False, "lqosd": _unit_state("lqosd.service"),
+                "error": "lqosd did not become ready within 30 s",
+                "log": _journal_tail("lqosd.service")}
+
+    time.sleep(1)    # let the bus start accepting connections
+    _systemctl("reset-failed", "lqos_scheduler.service", capture_output=True, text=True, timeout=10)
+    r = _systemctl("restart", "lqos_scheduler.service", capture_output=True, text=True, timeout=90)
+    if r.returncode != 0:
+        return {"ok": False, "lqosd": "active", "lqos_scheduler": _unit_state("lqos_scheduler.service"),
+                "error": f"lqos_scheduler: {r.stderr.strip() or 'failed to start'}",
+                "log": _journal_tail("lqos_scheduler.service")}
+
+    # The scheduler rebuilds every queue on start; make sure it is still up afterwards.
+    time.sleep(5)
+    sched = _unit_state("lqos_scheduler.service")
+    if sched not in ("active", "activating"):
+        return {"ok": False, "lqosd": "active", "lqos_scheduler": sched,
+                "error": f"lqos_scheduler {sched} after starting",
+                "log": _journal_tail("lqos_scheduler.service")}
+    return {"ok": True, "lqosd": "active", "lqos_scheduler": sched}
+
+
 @app.route("/api/services/<name>/<action>", methods=["POST"])
 @require_auth
 def manage_service(name, action):
@@ -1856,6 +1931,16 @@ def manage_service(name, action):
     if action not in commands:
         return jsonify({"ok": False, "error": "invalid action"}), 400
     try:
+        # lqosd, and the scheduler while lqosd is down, go through the ordered restart
+        if action in ("start", "restart") and (
+                name == "lqosd" or (name == "lqos_scheduler" and _unit_state("lqosd.service") != "active")):
+            result = _restart_libreqos(action if name == "lqosd" else "restart")
+            result["service"] = _get_service_info(name)
+            return jsonify(result), (200 if result["ok"] else 502)
+
+        if action in ("start", "restart"):
+            # A unit that hit systemd's start limit refuses to start until reset
+            _systemctl("reset-failed", _svc_name(name), capture_output=True, text=True, timeout=10)
         result = _systemctl(*commands[action], _svc_name(name), capture_output=True, text=True)
         if result.returncode != 0:
             return jsonify({"ok": False, "error": result.stderr.strip()}), 500
@@ -1903,12 +1988,9 @@ def lqusers_reset():
                 p.unlink()
                 removed = str(p)
                 break
-        # restart lqosd after removal
-        try:
-            _systemctl("restart", "lqosd.service", capture_output=True, text=True)
-        except RuntimeError:
-            pass
-        return jsonify({"ok": True, "removed": removed})
+        # restart lqosd (and then the scheduler) so the change takes effect
+        restart = _restart_libreqos()
+        return jsonify({"ok": True, "removed": removed, "restart": restart})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
 
