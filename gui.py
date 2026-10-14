@@ -50,9 +50,9 @@ app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True
 # ---------------------------------------------------------------------------
 # Paths. The app and its state live in its own directory (SCRIPT_DIR,
 # /opt/lq-sync when installed); only ShapedDevices.csv and network.json are
-# written into LibreQoS's directory. System files fall back to the script
+# written into LibreQoS's directory. Most system files fall back to the script
 # directory so local/dev runs without /etc/netplan or /etc/lqos.conf still
-# find something to display.
+# find something to display; the bridge's libreqos.yaml never does.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR   = Path(__file__).parent.resolve()
 LIBREQOS_DIR = Path(libreqos_dir())
@@ -142,7 +142,9 @@ def _find_lqos_conf():
 # Files the Files tab may read and write: LibreQoS's own files and the netplan
 # files for its bridge and management port. Never this app's code or config.
 YAML_FILES = {
-    "libreqos":       find_file("libreqos.yaml", base=NETPLAN_DIR),
+    # Always /etc/netplan: the bridge must be written where netplan reads it,
+    # even on first setup before the file exists.
+    "libreqos":       NETPLAN_DIR / "libreqos.yaml",
     "network":        find_file("50-cloud-init.yaml", base=NETPLAN_DIR),
     "lqos":           LQOS_CONF_PATH,
     "network_json":   LIBREQOS_DIR / "network.json",
