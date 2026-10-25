@@ -3,9 +3,11 @@ import json
 import logging
 import os
 
+import cpu_planner
 from settings import (
     PARENT_BANDWIDTH_MULTIPLIER, SKEW_WARN_RATIO, STICKY_CPU_ASSIGNMENT,
-    CPU_REBALANCE_RATIO, NODE_IDS, VIRTUAL_SITE_NODES, write_if_changed, libreqos_version,
+    CPU_REBALANCE_RATIO, NODE_IDS, VIRTUAL_SITE_NODES, LQOS_CONF_PATH,
+    write_if_changed, libreqos_version, topology_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,12 @@ STRATEGY_AP_ONLY = 'ap_only'  # Devices grouped under their router as parent nod
 STRATEGY_AP_SITE = 'ap_site'  # Devices grouped under site → router hierarchy
 STRATEGY_FULL    = 'full'     # Full path shaping; pair with promote_to_root if single-core saturates
 STRATEGY_CPU     = 'cpu'      # Bin-pack across CPU nodes (current default)
+STRATEGY_AUTO_CPU = 'auto_cpu'  # Hierarchy-aware: site/router subtrees packed onto CPU nodes (cpu_planner)
 
-ALL_STRATEGIES = {STRATEGY_FLAT, STRATEGY_AP_ONLY, STRATEGY_AP_SITE, STRATEGY_FULL, STRATEGY_CPU}
+ALL_STRATEGIES = {STRATEGY_FLAT, STRATEGY_AP_ONLY, STRATEGY_AP_SITE, STRATEGY_FULL, STRATEGY_CPU,
+                  STRATEGY_AUTO_CPU}
+
+_WARN_LEVELS = {"error": logging.WARNING, "warn": logging.WARNING, "info": logging.INFO}
 
 
 def _node(kind, name, dl, ul, node_type, virtual=False):
@@ -49,17 +55,28 @@ def _node_names(network_config):
 
 
 class NodeAssigner:
-    def __init__(self, network_json_path='network.json'):
+    def __init__(self, network_json_path='network.json', lqos_conf_path=None):
         self.network_json_path = network_json_path
+        self.lqos_conf_path = lqos_conf_path or LQOS_CONF_PATH
+        # auto_cpu: circuits per CPU node and the CPU count of the last plan
+        # (for check_limits / check_lqos_conf); None for other strategies.
+        self.bin_circuits = None
+        self.cpu_bins = None
 
     # ── Public API ──────────────────────────────────────────────────────────
 
-    def assign(self, conn, strategy, routers, queues, promote_to_root) -> bool:
+    def assign(self, conn, strategy, routers, queues, promote_to_root,
+               topology=None, queues_auto=False) -> bool:
         """
         Set every device's parent_node for the strategy and write network.json.
         Returns True if network.json changed on disk.
+
+        auto_cpu only: topology is config.json "topology" (None = derived from
+        bras[].site), and queues_auto=True sizes the CPU nodes from LibreQoS's
+        detected queue count instead of `queues`.
         """
-        if strategy == STRATEGY_CPU and queues is None:
+        self.bin_circuits = self.cpu_bins = None
+        if strategy in (STRATEGY_CPU, STRATEGY_AUTO_CPU) and queues is None:
             self._drop_unknown_parents(conn, {})
             conn.commit()
             logger.info("Skipping network.json (queues=false)")
@@ -80,6 +97,16 @@ class NodeAssigner:
                 promote_to_root and strategy == STRATEGY_FULL):
             network_config = self._build_site_tree(conn, routers)
 
+        elif strategy == STRATEGY_AUTO_CPU:
+            plan = self.plan_auto_cpu(conn, routers, topology, 'auto' if queues_auto else queues)
+            self._apply_parents(conn, plan.parents)
+            logger.info(plan.summary_line())
+            for w in plan.warnings:
+                logger.log(_WARN_LEVELS.get(w["level"], logging.INFO), f"auto_cpu: {w['text']}")
+            self.bin_circuits = plan.bin_circuits()
+            self.cpu_bins = plan.summary["n"]
+            network_config = plan.network
+
         else:
             # cpu, or full + promote_to_root. NOTE: the latter replaces the
             # site hierarchy with CPU nodes, so its result equals 'cpu'.
@@ -94,6 +121,36 @@ class NodeAssigner:
         self._drop_unknown_parents(conn, network_config)
         conn.commit()
         return self.write_network_json(network_config)
+
+    def plan_auto_cpu(self, conn, routers, topology, queues_cfg, lqos_conf=None, sysfs=None,
+                      n_source=None):
+        """
+        The auto_cpu plan for the devices in conn (None = no devices yet),
+        without writing anything (the GUI previews with it). queues_cfg:
+        'auto'/True = LibreQoS's detected queue count, an int = that many CPU nodes.
+        """
+        ts = topology_settings()
+        conf = lqos_conf if lqos_conf is not None else cpu_planner.load_lqos_conf(self.lqos_conf_path)
+        params = cpu_planner.resolve_params(conf, queues_cfg, ts, emit_ids=_EMIT_NODE_IDS,
+                                            sysfs=sysfs, n_source=n_source)
+        rows = conn.execute(
+            "SELECT code, router, download_max_mbps, upload_max_mbps, parent_node, is_static, "
+            "(ipv4 IS NOT NULL OR ipv6 IS NOT NULL) FROM devices ORDER BY code") if conn is not None else []
+        devices = [
+            cpu_planner.Device(row[0], row[1] or '', int(row[2] or 0), int(row[3] or 0),
+                               row[4] or '', bool(row[5]), bool(row[6]))
+            for row in rows
+        ]
+        if topology is None:
+            topology = cpu_planner.topology_from_legacy(routers, ts["virtual_site_nodes"])
+        prior = cpu_planner.prior_from_network(self.read_network_json())
+        return cpu_planner.plan(devices, [r['name'] for r in routers], topology, params, prior)
+
+    @staticmethod
+    def _apply_parents(conn, parents):
+        current = dict(conn.execute("SELECT code, parent_node FROM devices"))
+        changes = [(p, code) for code, p in parents.items() if current.get(code) != p]
+        conn.executemany("UPDATE devices SET parent_node = ? WHERE code = ?", changes)
 
     @staticmethod
     def check_distribution_skew(totals: dict, label: str = "node"):

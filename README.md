@@ -30,6 +30,7 @@ Includes a full **web-based GUI** for configuration, monitoring, device manageme
    - `ap_only` — group devices under their router as parent
    - `ap_site` — group devices under site → router hierarchy
    - `full` — full path/backhaul shaping with optional `promote_to_root`
+   - `auto_cpu` — keeps the site → AP → router hierarchy and balances it over LibreQoS's CPU cores: one `CPU<n>` node per detected queue, heavy sites promoted and heavy routers sharded automatically, with stable placement between cycles (see [CONFIG.md](CONFIG.md#auto-cpu-auto_cpu))
 
 4. **Multi-router support**
    - Poll any number of MikroTik routers in a single scan cycle
@@ -132,6 +133,7 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 | **Management Port** | Configure the management interface as DHCP or static IP (`50-cloud-init.yaml`) |
 | **Files** | Edit `config.json`, `network.json`, `updatecsv.py`, and other files directly in the browser |
 | **Topology** | Sankey diagram showing bandwidth flow from parent nodes to devices; overview and detail modes |
+| **Builder** | Drag-and-drop editor for the site / AP / router hierarchy (`auto_cpu`), with a live preview of the per-core CPU plan, the generated `network.json` and its warnings |
 | **Devices** | Live device table with search and filter; manually add, edit, or delete devices |
 | **Troubleshooting** | MikroTik API diagnostics, lqusers reset, and one-click LibreQoS installer |
 
@@ -156,6 +158,10 @@ sudo systemctl status updatecsv.service
 sudo systemctl restart updatecsv.service
 journalctl -u updatecsv.service -f
 ```
+
+### Preview without routers
+
+`python3 preview_server.py` runs the GUI against fake routers and subscribers on `http://localhost:5050` (password `admin`), keeping everything in `.preview/`. See [CONFIG.md](CONFIG.md#preview-server-development).
 
 ---
 

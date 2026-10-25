@@ -27,9 +27,14 @@ from settings import (
     EXPECTED_CORE_GROUP as _SETTINGS_CORE_GROUP,
     EXPECTED_CORE_POLICY as _SETTINGS_CORE_POLICY,
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
+    LQOS_CONF_PATH as _SETTINGS_LQOS_CONF,
     atomic_write_text, write_if_changed, libreqos_dir, libreqos_version, burst_settings,
+    topology_settings,
 )
 from device_database import ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges
+import cpu_planner
+from cpu_planner import dedupe_router_names, topology_errors
+from node_assigner import NodeAssigner, ALL_STRATEGIES, STRATEGY_AUTO_CPU
 
 try:
     import psutil
@@ -50,23 +55,25 @@ app.config.update(SESSION_COOKIE_SAMESITE="Strict", SESSION_COOKIE_HTTPONLY=True
 # ---------------------------------------------------------------------------
 # Paths. The app and its state live in its own directory (SCRIPT_DIR,
 # /opt/lq-sync when installed); only ShapedDevices.csv and network.json are
-# written into LibreQoS's directory. Most system files fall back to the script
+# written into LibreQoS's directory. Most system files fall back to the state
 # directory so local/dev runs without /etc/netplan or /etc/lqos.conf still
 # find something to display; the bridge's libreqos.yaml never does.
+# STATE_DIR is SCRIPT_DIR unless LQSYNC_HOME points elsewhere (preview server).
 # ---------------------------------------------------------------------------
 SCRIPT_DIR   = Path(__file__).parent.resolve()
+STATE_DIR    = Path(os.environ.get("LQSYNC_HOME") or SCRIPT_DIR).resolve()
 LIBREQOS_DIR = Path(libreqos_dir())
 NETPLAN_DIR  = Path("/etc/netplan")
 
 def find_file(name, base):
-    """Return base/name if it exists, else the copy in the script directory."""
+    """Return base/name if it exists, else the copy in the state directory."""
     path = base / name
-    return path if path.exists() else SCRIPT_DIR / name
+    return path if path.exists() else STATE_DIR / name
 
-CONFIG_PATH   = SCRIPT_DIR / "config.json"
-SETTINGS_PATH = SCRIPT_DIR / "settings.json"
-DB_PATH       = SCRIPT_DIR / "devices.db"
-AUTH_PATH     = SCRIPT_DIR / "gui_auth.json"
+CONFIG_PATH   = STATE_DIR / "config.json"
+SETTINGS_PATH = STATE_DIR / "settings.json"
+DB_PATH       = STATE_DIR / "devices.db"
+AUTH_PATH     = STATE_DIR / "gui_auth.json"
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -134,7 +141,7 @@ def require_auth(f):
         return f(*args, **kwargs)
     return wrapper
 
-LQOS_CONF_PATH = find_file("lqos.conf", base=Path("/etc"))
+LQOS_CONF_PATH = find_file(Path(_SETTINGS_LQOS_CONF).name, base=Path(_SETTINGS_LQOS_CONF).parent)
 
 def _find_lqos_conf():
     return LQOS_CONF_PATH
@@ -491,7 +498,7 @@ threading.Thread(target=_broadcast_loop, daemon=True).start()
 # job's CPU / duration / errors, and each router's health. The latest values
 # feed the Pollers page; the history goes into RRD files for the graphs.
 # ---------------------------------------------------------------------------
-RRD_DIR      = SCRIPT_DIR / "rrd"
+RRD_DIR      = STATE_DIR / "rrd"
 RRDTOOL      = _which("rrdtool")
 MONITOR_STEP = 60                 # seconds between samples (the RRD step)
 APP_SCRIPTS  = {"updatecsv": "updatecsv.py", "wan_service": "wan_service.py", "gui": "gui.py"}
@@ -908,15 +915,7 @@ def _tc_size_bytes(text):
     return float(m.group(1)) * 1024 ** " KMG".index(m.group(2).upper() or " ")
 
 
-def _shaping_interfaces(conf):
-    """(interfaces LibreQoS shapes on, on_a_stick) from lqos.conf, any version."""
-    single = conf.get("single_interface") or {}
-    if single.get("enabled") and single.get("interface"):
-        return [single["interface"]], True
-    bridge = conf.get("bridge") or {}
-    names = [bridge.get("to_internet"), bridge.get("to_network")]
-    names += [m.get("name") for m in bridge.get("interface_mapping") or [] if isinstance(m, dict)]  # 1.4
-    return list(dict.fromkeys(n for n in names if n)), False
+_shaping_interfaces = cpu_planner.shaping_interfaces
 
 
 def _htb_classes(tc, iface):
@@ -1488,7 +1487,18 @@ def _config_error(content):
             return f"BRAS #{i + 1} needs a name and an address"
     if not isinstance(content.get("cores", []), list):
         return "'cores' must be a list"
-    return None
+    strategy = content.get("strategy")
+    if strategy is not None and strategy not in ALL_STRATEGIES:
+        return f"unknown strategy '{strategy}'"
+    queues = content.get("queues", True)
+    if not isinstance(queues, bool) and not (isinstance(queues, int) and queues >= 1):
+        return "'queues' must be true, false or a CPU count of at least 1"
+    return topology_errors(content.get("topology"), _router_names(content))
+
+
+def _router_names(content):
+    """Router names as the sync service sees them (repeated names get ' 2', ' 3', ...)."""
+    return dedupe_router_names([r.get("name") for r in content.get("bras", []) if isinstance(r, dict)])
 
 
 @app.route("/api/config", methods=["POST"])
@@ -1504,6 +1514,147 @@ def save_config():
         return jsonify({"ok": True})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
+
+
+# ── Topology Builder (auto_cpu) ─────────────────────────────────────────────
+
+def _topology_plan(content, topology, queues_cfg, n_source=None):
+    """
+    Dry-run auto_cpu plan of the current devices for config `content` with
+    `topology` (None = derived from bras[].site). Writes nothing.
+    Returns (plan, effective topology, router names).
+    """
+    names = _router_names(content)
+    routers = [{**r, "name": n} for r, n in zip([r for r in content.get("bras", []) if isinstance(r, dict)], names)]
+    if topology is None:
+        topology = cpu_planner.topology_from_legacy(routers, topology_settings()["virtual_site_nodes"])
+    assigner = NodeAssigner(str(LIBREQOS_DIR / "network.json"), str(LQOS_CONF_PATH))
+    con = _db_con() if DB_PATH.exists() else None
+    try:
+        plan = assigner.plan_auto_cpu(con, routers, topology, queues_cfg, n_source=n_source)
+    finally:
+        if con is not None:
+            con.close()
+    return plan, topology, names
+
+
+def _plan_response(content, topology, queues_cfg, n_source=None, derived=False):
+    plan, topology, names = _topology_plan(content, topology, queues_cfg, n_source)
+    conf = cpu_planner.load_lqos_conf(LQOS_CONF_PATH)
+    try:
+        current = (LIBREQOS_DIR / "network.json").read_text()
+    except OSError:
+        current = None
+    return jsonify({
+        "ok": True,
+        "strategy": content.get("strategy", "cpu"),
+        "queues_enabled": content.get("queues", True) is not False,
+        "queues_config": content.get("queues", True),
+        "derived": derived,
+        "topology": topology,
+        "routers": names,
+        "plan": plan.to_json(),
+        "lqos_warnings": cpu_planner.lqos_conf_warnings(conf, plan.summary["n"]),
+        "network_changed": json.dumps(plan.network, indent=4) != current,
+    })
+
+
+def _queues_cfg(value):
+    """config.json "queues" → planner input: an int stays, anything else is auto-detect."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 1 else "auto"
+
+
+@app.route("/api/topology/plan", methods=["GET", "POST"])
+@require_auth
+def topology_plan():
+    """
+    GET: the plan for the saved config. POST {topology?, queues?}: a dry run
+    for an unsaved topology and/or a what-if CPU count.
+    """
+    try:
+        content = json.loads(CONFIG_PATH.read_text())
+        body = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
+        topology = body["topology"] if "topology" in body else content.get("topology")
+        err = topology_errors(topology, _router_names(content))
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+        queues, n_source = _queues_cfg(content.get("queues", True)), None
+        if isinstance(body.get("queues"), int) and not isinstance(body["queues"], bool) and body["queues"] >= 1:
+            queues, n_source = min(body["queues"], 256), "whatif"
+        return _plan_response(content, topology, queues, n_source, derived=topology is None)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/api/topology", methods=["POST"])
+@require_auth
+def save_topology():
+    """
+    Save the Builder's topology into config.json (and switch the strategy to
+    auto_cpu when asked). Stale router references are dropped, and each
+    router's bras[].site is set to its top-level node so ap_site/full group
+    routers the same way.
+    """
+    try:
+        body = request.get_json(silent=True) or {}
+        topology = body.get("topology")
+        if not isinstance(topology, dict):
+            return jsonify({"ok": False, "error": "topology must be an object"}), 400
+        content = json.loads(CONFIG_PATH.read_text())
+        names = _router_names(content)
+        known = set(names)
+
+        def prune(nodes):
+            for n in nodes if isinstance(nodes, list) else []:
+                if isinstance(n, dict):
+                    n["routers"] = [r for r in n.get("routers", []) if r in known]
+                    prune(n.get("children", []))
+        prune(topology.get("nodes", []))
+        opts = topology.get("router_options", {})
+        topology["router_options"] = {k: v for k, v in opts.items() if k in known} if isinstance(opts, dict) else {}
+        topology["version"] = 1
+        content["topology"] = topology
+        if body.get("strategy") == STRATEGY_AUTO_CPU:
+            content["strategy"] = STRATEGY_AUTO_CPU
+
+        err = _config_error(content)
+        if err:
+            return jsonify({"ok": False, "error": err}), 400
+
+        site_of = {}
+
+        def collect(node, top):
+            for r in node.get("routers", []):
+                site_of[r] = top
+            for c in node.get("children", []):
+                collect(c, top)
+        for n in topology.get("nodes", []):
+            collect(n, n["name"].strip())
+        for r, name in zip([r for r in content.get("bras", []) if isinstance(r, dict)], names):
+            if name in site_of:
+                r["site"] = site_of[name]
+            else:
+                r.pop("site", None)
+
+        atomic_write_text(CONFIG_PATH, json.dumps(content, indent=4))
+        return jsonify({"ok": True, "strategy": content.get("strategy", "cpu")})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/topology/queues")
+@require_auth
+def topology_queues():
+    """LibreQoS's queue count as auto_cpu detects it (NIC tx queues, E-cores, override)."""
+    try:
+        info = cpu_planner.detect_queues(cpu_planner.load_lqos_conf(LQOS_CONF_PATH))
+        try:
+            configured = json.loads(CONFIG_PATH.read_text()).get("queues", True)
+        except Exception:
+            configured = True
+        return jsonify({"ok": True, "configured": configured, **info})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/settings", methods=["GET"])

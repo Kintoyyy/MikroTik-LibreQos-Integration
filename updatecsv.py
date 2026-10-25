@@ -4,13 +4,15 @@ import os
 import shlex
 import subprocess
 import time
+from typing import NamedTuple
 
+from cpu_planner import dedupe_router_names, topology_errors, lqos_conf_warnings
 from device_database import DeviceDatabase, timed_job, prune_jobs, unshaped_by_ip_ranges
-from node_assigner import NodeAssigner, STRATEGY_CPU, STRATEGY_FLAT, ALL_STRATEGIES
+from node_assigner import NodeAssigner, STRATEGY_CPU, STRATEGY_FLAT, STRATEGY_AUTO_CPU, ALL_STRATEGIES
 from router_scanner import RouterScanner
 from settings import (
     SCAN_INTERVAL, ERROR_RETRY_INTERVAL, LIBREQOS_UPDATE_COMMAND, LIBREQOS_UPDATE_TIMEOUT,
-    libreqos_dir, libreqos_version,
+    LQOS_CONF_PATH, libreqos_dir, libreqos_version,
 )
 
 try:
@@ -20,10 +22,12 @@ except ImportError:
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-# App state lives in this app's own directory (the service's working directory).
-CONFIG_JSON = 'config.json'
-DB_FILE     = 'devices.db'
-LQOS_CONF   = '/etc/lqos.conf'
+# App state lives in this app's own directory (the service's working
+# directory), or in LQSYNC_HOME when set (preview server, tests).
+APP_HOME    = os.environ.get('LQSYNC_HOME', '')
+CONFIG_JSON = os.path.join(APP_HOME, 'config.json')
+DB_FILE     = os.path.join(APP_HOME, 'devices.db')
+LQOS_CONF   = LQOS_CONF_PATH
 # ShapedDevices.csv and network.json stay in LibreQoS's directory, where LibreQoS reads them.
 LIBREQOS_DIR       = libreqos_dir()
 SHAPED_DEVICES_CSV = os.path.join(LIBREQOS_DIR, 'ShapedDevices.csv')
@@ -40,9 +44,18 @@ class ConfigError(Exception):
     unreadable config as "no routers" would remove every device."""
 
 
+class SyncConfig(NamedTuple):
+    routers: list
+    strategy: str
+    queues: object           # int CPU count, or None when queues are off
+    promote_to_root: bool
+    topology: object         # config.json "topology" (auto_cpu), None if absent
+    queues_auto: bool        # "queues": true/absent → auto_cpu uses the detected queue count
+
+
 def read_config_json():
     """
-    Read config.json and return (routers, strategy, queues, promote_to_root).
+    Read config.json and return a SyncConfig.
     Raises ConfigError if the config cannot be used.
 
     Strategy resolution order:
@@ -89,19 +102,22 @@ def read_config_json():
             queues = int(queues_raw)
 
         # Auto-increment duplicate router names
-        seen_names = {}
-        for router in routers:
-            base = router['name']
-            if base in seen_names:
-                seen_names[base] += 1
-                router['name'] = f"{base} {seen_names[base]}"
-            else:
-                seen_names[base] = 1
+        for router, name in zip(routers, dedupe_router_names([r['name'] for r in routers])):
+            router['name'] = name
+
+        topology = config.get('topology')
+        if strategy == STRATEGY_AUTO_CPU:
+            error = topology_errors(topology, [r['name'] for r in routers])
+            if error:
+                raise ValueError(error)
+            if promote_to_root:
+                logger.info("auto_cpu promotes heavy nodes itself; 'promote_to_root' is ignored")
 
         logger.info(
             f"Read {len(routers)} routers from {CONFIG_JSON} (strategy={strategy})"
         )
-        return routers, strategy, queues, promote_to_root
+        return SyncConfig(routers, strategy, queues, promote_to_root, topology,
+                          queues_raw is True)
 
     except FileNotFoundError:
         raise ConfigError(f"{CONFIG_JSON} not found")
@@ -167,12 +183,14 @@ def run_libreqos_update() -> str:
     return error
 
 
-def check_lqos_conf(conn, strategy):
+def check_lqos_conf(conn, strategy, cpu_bins=None):
     """
     Warn about lqos.conf settings that silently undo this integration's output:
       - [topology] compile_mode = "flat" ignores the Parent Node hierarchy.
       - Device IPs outside [ip_ranges] allow_subnets, or inside ignore_subnets,
         are not shaped.
+      - auto_cpu (cpu_bins = its CPU node count): settings that re-place or
+        hide its CPU nodes (see check_auto_cpu_conf).
     Skipped when lqos.conf is missing or Python has no tomllib (< 3.11).
     """
     if tomllib is None:
@@ -204,8 +222,37 @@ def check_lqos_conf(conn, strategy):
             f"ignore_subnets and will not be shaped: {sample}"
         )
 
+    if strategy == STRATEGY_AUTO_CPU and cpu_bins:
+        for text in lqos_conf_warnings(conf, cpu_bins):
+            logger.warning(f"{LQOS_CONF}: {text}")
+
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
+
+def build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending=False) -> bool:
+    """
+    Rebuild network.json and ShapedDevices.csv from the database and run the
+    LibreQoS update when either changed (or a previous update failed).
+    Returns True while an update is still pending (it failed).
+    """
+    # Always rebuild both files; they are only rewritten when their
+    # content changes, which also picks up edits made in the GUI.
+    with timed_job(db.conn, 'build topology', 'build', 'updatecsv', SCAN_INTERVAL):
+        db.remove_inactive(scan_time, scanned_ok, [r['name'] for r in cfg.routers])
+        network_changed = assigner.assign(db.conn, cfg.strategy, cfg.routers, cfg.queues,
+                                          cfg.promote_to_root, cfg.topology, cfg.queues_auto)
+        csv_changed     = db.export_to_csv()
+        db.check_limits(cfg.queues, assigner.bin_circuits)
+
+    if network_changed or csv_changed or update_pending:
+        check_lqos_conf(db.conn, cfg.strategy, assigner.cpu_bins)
+        # every=0: runs only when the files change
+        with timed_job(db.conn, 'libreqos apply', 'apply', 'updatecsv', 0) as job:
+            job['error'] = run_libreqos_update()
+        return bool(job['error'])
+    logger.info("No changes detected.")
+    return False
+
 
 def main():
     logger.info("Starting MikroTik-LibreQoS integration")
@@ -224,7 +271,7 @@ def main():
         try:
             try:
                 with timed_job(db.conn, 'read config.json', 'config', 'updatecsv', SCAN_INTERVAL):
-                    routers, strategy, queues, promote_to_root = read_config_json()
+                    cfg = read_config_json()
             except ConfigError as e:
                 logger.error(
                     f"Skipping cycle — {e}; devices left unchanged. "
@@ -236,7 +283,7 @@ def main():
             scan_time  = time.time()
             scanned_ok = []
 
-            for router in routers:
+            for router in cfg.routers:
                 logger.info(f"Processing router: {router['name']} ({router['address']})")
                 with timed_job(db.conn, f"scan {router['name']}", 'poller', 'updatecsv',
                                SCAN_INTERVAL) as job:
@@ -244,24 +291,9 @@ def main():
                     job['error'] = scanner.last_error
                 if ok:
                     scanned_ok.append(router['name'])
-            prune_jobs(db.conn, 'updatecsv', 'poller', [f"scan {r['name']}" for r in routers])
+            prune_jobs(db.conn, 'updatecsv', 'poller', [f"scan {r['name']}" for r in cfg.routers])
 
-            # Always rebuild both files; they are only rewritten when their
-            # content changes, which also picks up edits made in the GUI.
-            with timed_job(db.conn, 'build topology', 'build', 'updatecsv', SCAN_INTERVAL):
-                db.remove_inactive(scan_time, scanned_ok, [r['name'] for r in routers])
-                network_changed = assigner.assign(db.conn, strategy, routers, queues, promote_to_root)
-                csv_changed     = db.export_to_csv()
-                db.check_limits(queues)
-
-            if network_changed or csv_changed or update_pending:
-                check_lqos_conf(db.conn, strategy)
-                # every=0: runs only when the files change
-                with timed_job(db.conn, 'libreqos apply', 'apply', 'updatecsv', 0) as job:
-                    job['error'] = run_libreqos_update()
-                update_pending = bool(job['error'])
-            else:
-                logger.info("No changes detected.")
+            update_pending = build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending)
 
             logger.info(f"Scan complete. Next in {SCAN_INTERVAL}s.")
             time.sleep(SCAN_INTERVAL)

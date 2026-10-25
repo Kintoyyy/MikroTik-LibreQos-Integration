@@ -19,3 +19,4 @@ devices.db
 gui_auth.json
 rrd/
 migrated-from-libreqos-src-*/
+.preview/

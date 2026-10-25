@@ -391,12 +391,13 @@ class DeviceDatabase:
             return True
         return False
 
-    def check_limits(self, queues=None):
+    def check_limits(self, queues=None, per_cpu=None):
         """
         Warn about LibreQoS limits (see LibreQoS Troubleshooting):
           - TC_U16_OVERFLOW: tc class/qdisc minor IDs run out (~65535) per CPU
-            queue. Estimated from the busiest parent node, or from the
-            unparented devices spread over the queues.
+            queue. Counted per CPU node when per_cpu ({cpu node: circuits},
+            auto_cpu) is given, else estimated from the busiest parent node
+            or from the unparented devices spread over the queues.
           - MAPPED_CIRCUIT_LIMIT: without a license only the first
             MAPPED_CIRCUIT_WARN_THRESHOLD circuits are shaped.
         Returns the number of exported devices.
@@ -405,19 +406,26 @@ class DeviceDatabase:
             "SELECT COUNT(*) FROM devices WHERE ipv4 IS NOT NULL OR ipv6 IS NOT NULL"
         ).fetchone()[0]
 
-        row = self.conn.execute(
-            "SELECT parent_node, COUNT(*) FROM devices WHERE parent_node != '' "
-            "GROUP BY parent_node ORDER BY 2 DESC LIMIT 1"
-        ).fetchone()
-        busiest_name, busiest = row if row else ('', 0)
-        unparented = self.conn.execute(
-            "SELECT COUNT(*) FROM devices WHERE parent_node = '' OR parent_node IS NULL"
-        ).fetchone()[0]
-        per_queue_unparented = math.ceil(unparented / max(queues or os.cpu_count() or 1, 1))
+        if per_cpu:
+            busiest_name = max(per_cpu, key=per_cpu.get)
+            busiest = per_queue = per_cpu[busiest_name]
+            per_queue_unparented = 0
+        else:
+            row = self.conn.execute(
+                "SELECT parent_node, COUNT(*) FROM devices WHERE parent_node != '' "
+                "GROUP BY parent_node ORDER BY 2 DESC LIMIT 1"
+            ).fetchone()
+            busiest_name, busiest = row if row else ('', 0)
+            unparented = self.conn.execute(
+                "SELECT COUNT(*) FROM devices WHERE parent_node = '' OR parent_node IS NULL"
+            ).fetchone()[0]
+            per_queue_unparented = math.ceil(unparented / max(queues or os.cpu_count() or 1, 1))
+            per_queue = max(busiest, per_queue_unparented)
 
-        per_queue = max(busiest, per_queue_unparented)
         if per_queue >= TC_U16_WARN_THRESHOLD:
             where = f"parent node '{busiest_name}'" if busiest >= per_queue_unparented else "one CPU queue"
+            if per_cpu:
+                where = f"CPU queue '{busiest_name}'"
             logger.warning(
                 f"TC_U16_OVERFLOW RISK: ~{per_queue} devices on {where} "
                 f"(threshold={TC_U16_WARN_THRESHOLD}). "

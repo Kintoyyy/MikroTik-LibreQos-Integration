@@ -30,6 +30,7 @@ Controls how devices are organized in `network.json` (the LibreQoS topology file
 | `"ap_only"` | Groups devices under their router name as a parent node. Good for multi-router deployments where per-router visibility matters. |
 | `"ap_site"` | Groups devices under a site → router hierarchy. Requires a `"site"` key on each router. Better aggregation for multi-site networks. |
 | `"full"` | Same as `ap_site` with full path shaping intent. Pair with `"promote_to_root": true` if single-core saturation occurs. |
+| `"auto_cpu"` | Keeps the site → AP → router hierarchy from [`topology`](#topology-auto-cpu) **and** balances it over the CPU cores: one `CPU<n>` node per LibreQoS queue, whole subtrees packed onto them, and sites or routers too heavy for one core split automatically. Edit it visually in the **Builder** tab. See [Auto CPU](#auto-cpu-auto_cpu). |
 
 **Choosing a strategy:**
 
@@ -43,6 +44,9 @@ Need hierarchy visibility?
                   Yes → full
                           Single-core saturation?
                             Yes → set promote_to_root: true
+Multi-site network on a multi-core LibreQoS box, and you want both
+site visibility and every core busy?
+  → auto_cpu (it promotes heavy nodes and balances the cores itself)
 ```
 
 **Example:**
@@ -77,7 +81,7 @@ Controls the number of CPU queue nodes when `strategy` is `"cpu"` (or when `prom
 
 | Value | Behavior |
 |-------|----------|
-| `true` | Auto-detect from system CPU count |
+| `true` | `cpu`: the system CPU count. `auto_cpu`: the queue count LibreQoS itself will use (see below) |
 | `false` | Skip `network.json` entirely (no queue nodes created) |
 | `2`, `4`, `8`, ... | Use exactly this many CPU queue nodes |
 
@@ -85,7 +89,64 @@ Controls the number of CPU queue nodes when `strategy` is `"cpu"` (or when `prom
 "queues": 4
 ```
 
-> **Tip:** Set `queues` to match the number of physical CPU cores available to LibreQoS for optimal bin-packing.
+> **Tip:** Set `queues` to match the number of physical CPU cores available to LibreQoS for optimal bin-packing. With `auto_cpu`, leave it `true`: more CPU nodes than LibreQoS has queues puts two of them on one core.
+
+---
+
+### `topology` (Auto CPU)
+
+The site hierarchy used by the `auto_cpu` strategy. The **Builder** tab edits it with drag and drop; you rarely need to write it by hand.
+
+```json
+"topology": {
+    "version": 1,
+    "nodes": [
+        { "id": "n_north", "name": "Region North", "type": "site",
+          "download_mbps": 0, "upload_mbps": 0, "virtual": true, "promote": false, "pin_cpu": null,
+          "routers": [],
+          "children": [
+              { "id": "n_tower1", "name": "Tower N1", "type": "ap",
+                "download_mbps": 4000, "upload_mbps": 2000, "virtual": false, "promote": false, "pin_cpu": null,
+                "routers": ["BRAS-N1"], "children": [] }
+          ] }
+    ],
+    "router_options": { "BRAS-Core": { "pin_cpu": null, "download_mbps": 0, "upload_mbps": 0, "shard": true } }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `id` | Stable id (letters, digits, `_ . : -`, up to 48). Keeps a renamed node on its CPU on LibreQoS 2.x |
+| `name` | `network.json` node name. Unique, not equal to a router name, and not `CPU<n>` / `Generated_PN_<n>` |
+| `type` | `site` or `ap` |
+| `download_mbps` / `upload_mbps` | Node limit. `0` = sum of its subscribers' max rates × `parent_bandwidth_multiplier` |
+| `virtual` | Group only: LibreQoS does not shape it (its limit is ignored) |
+| `promote` | Always split this node's children across CPUs (LibreQoS `promote_to_root`) |
+| `pin_cpu` | Put this node (whole) on `CPU<n>`; `null` = automatic. Only for nodes that are placed whole |
+| `routers` | Router names (as in `bras`) whose subscribers hang off this node. A router is in at most one node |
+| `children` | Child nodes, at most 6 levels deep (CPU node + 6 + router = HTB's 8 levels) |
+| `router_options` | Per router: `pin_cpu`, a `download_mbps`/`upload_mbps` limit, and `shard: false` to never split it |
+
+Routers not listed in any node are top-level items. Without a `topology` key, `auto_cpu` builds one from each router's `site` field. Saving in the Builder also writes each router's `site` (its top-level node), so `ap_site`/`full` group routers the same way.
+
+### Auto CPU (`auto_cpu`)
+
+LibreQoS shapes each top-level `network.json` node, with everything under it, on **one** CPU core. Without an Insight license it assigns top-level nodes to cores round-robin, and `use_binpacking` falls back to round-robin too. A single big site therefore saturates one core while the others idle. Every sync cycle, `auto_cpu` does what the LibreQoS scale-planning guide recommends, automatically:
+
+1. **Counts the queues LibreQoS will use**: the tx queues of the shaping interfaces (or `[queues] override_available_queues`), capped at the CPU cores (E-cores excluded when `exclude_efficiency_cores = true`), halved on a stick. It writes exactly that many top-level nodes, `CPU0` … `CPU<n-1>`, so each one lands on its own core.
+2. **Promotes heavy nodes**: a site or AP carrying more than one core's fair share of all plans (`auto_cpu_split_ratio`), or more than `cpu_capacity_mbps` at the estimated peak, is dissolved; its children become separate items that can sit on different cores.
+3. **Shards heavy routers**: a router still too heavy for one core is split into `Router`, `Router #2`, … with its subscribers divided between them.
+4. **Packs whole subtrees onto the CPU nodes**, heaviest first, and keeps them there: an item moves only when the busiest CPU carries more than `cpu_rebalance_ratio` × the lightest, and at most `auto_cpu_move_budget` items move per cycle. Every move rebuilds those circuits' queues, so the plan stays stable. Splits are undone only once the load drops 20% below the limit.
+
+The estimated peak is the plan sum × (`[queues] downlink_bandwidth_mbps` ÷ all plans). Without a link rate in `lqos.conf` only the balancing applies.
+
+**lqos.conf advice for `auto_cpu`** (`updatecsv` and the Builder warn about each):
+
+- `[queues] use_binpacking = false`. With Insight, LibreQoS would re-pack the already balanced CPU nodes.
+- `[stormguard] targets` should list `CPU0` … `CPU<n-1>` only.
+- `[treeguard.links] top_level_auto_virtualize = false`. Virtualizing an idle CPU node would move its subtrees onto other cores.
+
+`promote_to_root` is ignored with `auto_cpu`; it promotes nodes itself.
 
 ---
 
@@ -306,9 +367,12 @@ Every tunable value lives in `settings.json` and can be edited in **App Settings
 | `topology.parent_bandwidth_multiplier` | 1.1 | `network.json` node size = sum of its devices' max rates × this |
 | `topology.skew_warn_ratio` | 2.0 | Warn when the busiest top-level/CPU node carries this many times the lightest one's load |
 | `topology.sticky_cpu_assignment` | true | `cpu` strategy: devices stay on their CPU node (fewer queue rebuilds). New devices go to the least loaded node |
-| `topology.cpu_rebalance_ratio` | 1.5 | Sticky mode: move devices only when the busiest CPU node exceeds this many times the lightest |
+| `topology.cpu_rebalance_ratio` | 1.5 | Sticky mode: move devices (`cpu`) or whole sites/routers (`auto_cpu`) only when the busiest CPU node exceeds this many times the lightest |
 | `topology.node_ids` | true | Add a stable `id` (`mikrotik:cpu:CPU0`, `mikrotik:router:…`) to every `network.json` node |
 | `topology.virtual_site_nodes` | false | `ap_site`/`full`: mark site nodes `virtual` (grouping only, not shaped) |
+| `topology.cpu_capacity_mbps` | 0 | `auto_cpu`: download Mbps one core can shape. 0 = `lqos.conf` `generated_pn_download_mbps`, else 3000. LibreQoS's guide by single-thread score: 1000 → 1 Gbps, 1500 → 2, 2000 → 3, 3000 → 4, 4000 → 5 |
+| `topology.auto_cpu_split_ratio` | 1.0 | `auto_cpu`: split a site/router carrying more than this × one core's fair share of all plans. 0 = split only above `cpu_capacity_mbps` |
+| `topology.auto_cpu_move_budget` | 0 | `auto_cpu`: most sites/routers moved between CPUs per cycle. 0 = 1% of them (1–32) |
 | `database.tc_u16_warn_threshold` | 60000 | Warn when one CPU queue approaches the tc class ID limit (`TC_U16_OVERFLOW`) |
 | `database.mapped_circuit_warn_threshold` | 1000 | Warn when circuits exceed LibreQoS's unlicensed limit. `ShapedDevices.csv` lists manual devices first, then sources by priority, so the least important circuits are dropped first. 0 disables |
 | `wan_service.rebalance_imbalance_ratio` | 1.5 | See WAN Assignment |
@@ -318,7 +382,7 @@ Every tunable value lives in `settings.json` and can be edited in **App Settings
 | `burst.seconds` / `max_mb` | 4 / 256 | Burst size = plan rate × seconds, at most this many MB per subscriber |
 | `burst.pause_above_pct` / `resume_below_pct` | 80 / 60 | Bursts pause above this link use and return after 30 s below the second value |
 
-`updatecsv` also checks `/etc/lqos.conf` (Python 3.11+) and logs a warning when `[topology] compile_mode = "flat"` would ignore the parent hierarchy, or when device IPs fall outside `allow_subnets` or inside `ignore_subnets`.
+`updatecsv` also checks `/etc/lqos.conf` (Python 3.11+) and logs a warning when `[topology] compile_mode = "flat"` would ignore the parent hierarchy, or when device IPs fall outside `allow_subnets` or inside `ignore_subnets`. With `auto_cpu` it also warns about the settings listed under [Auto CPU](#auto-cpu-auto_cpu).
 
 ---
 
@@ -468,6 +532,53 @@ Site B
 ```
 
 Use this when `full` strategy causes single-core CPU saturation in LibreQoS. The `queues` value should match available CPU cores.
+
+### Multi-site, Auto CPU
+
+```json
+{
+    "strategy": "auto_cpu",
+    "queues": true,
+    "bras": [
+        { "name": "BRAS-Core",  "address": "10.0.0.1", "username": "api", "password": "secret", "port": 8728 },
+        { "name": "BRAS-North", "address": "10.1.0.1", "username": "api", "password": "secret", "port": 8728 },
+        { "name": "BRAS-South", "address": "10.2.0.1", "username": "api", "password": "secret", "port": 8728 }
+    ],
+    "topology": {
+        "version": 1,
+        "nodes": [
+            { "id": "n_north", "name": "North POP", "type": "site", "download_mbps": 3000, "upload_mbps": 1500,
+              "virtual": false, "promote": false, "pin_cpu": null, "routers": ["BRAS-North"], "children": [] },
+            { "id": "n_south", "name": "South POP", "type": "site", "download_mbps": 0, "upload_mbps": 0,
+              "virtual": false, "promote": false, "pin_cpu": null, "routers": ["BRAS-South"], "children": [] }
+        ],
+        "router_options": {}
+    }
+}
+```
+
+On an 8-queue LibreQoS box this writes `CPU0` … `CPU7`. When `BRAS-Core` carries most of the subscribers, `North POP` and `South POP` each stay whole on one core with their limits enforced, and `BRAS-Core` (top level) is split into shards `BRAS-Core`, `BRAS-Core #2`, … on the other cores. For example (which CPU gets which item depends on the loads):
+
+```
+CPU0 ── North POP ── BRAS-North
+CPU1 ── South POP ── BRAS-South
+CPU2 ── BRAS-Core
+CPU3 ── BRAS-Core #2
+ …
+```
+
+---
+
+## Preview server (development)
+
+`preview_server.py` runs the real GUI against fake data, without MikroTik, LibreQoS or root, to try the Builder and Auto CPU:
+
+```shell
+python3 preview_server.py            # http://localhost:5050, password: admin
+python3 preview_server.py --reset    # start again from the seeded demo
+```
+
+It keeps everything in `.preview/` (git-ignored): a demo `config.json` with five BRAS and two regions, about 1500 subscribers, an `lqos.conf`, and a fake sysfs with two 8-queue NICs on 8 CPUs, 2 of them E-cores, so LibreQoS would use 6 queues. Services are simulated. Restarting `updatecsv` (for example Save in the Builder) runs one sync cycle in-process and writes `network.json` and `ShapedDevices.csv` to `.preview/libreqos/`. The app update button is disabled there. Options: `--port`, `--host`, `--devices`, `--seed`, `--cpus`, `--interval` and `--churn` (subscribers leaving and joining per router per cycle).
 
 ---
 

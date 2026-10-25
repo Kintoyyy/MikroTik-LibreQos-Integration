@@ -175,7 +175,7 @@ body > footer { flex-shrink: 0; }
 .toggle input:checked ~ .toggle-thumb { transform: translateX(16px); }
 
 /* ── Strategy selector ── */
-.strategy-grid { display: grid; grid-template-columns: repeat(5,1fr); gap: .6rem; }
+.strategy-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: .6rem; }
 @media(max-width:700px){ .strategy-grid { grid-template-columns: repeat(2,1fr); } }
 .strategy-card { border: 2px solid var(--border); border-radius: 10px; padding: .75rem; cursor: pointer; transition: all .15s; text-align: center; background: #0d1117; }
 .strategy-card:hover { border-color: #3b82f655; background: #161b22; }
@@ -385,6 +385,75 @@ code { font-size: .8rem; color: #94a3b8; }
 .check p.fix { color: var(--muted); }
 .check a { color: var(--accent); text-decoration: none; }
 .check a:hover { text-decoration: underline; }
+.check.info > i { color: var(--accent); }
+
+/* ── Topology Builder (auto_cpu) ── */
+.bld-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1rem; align-items: start; }
+@media(max-width:1000px){ .bld-grid { grid-template-columns: 1fr; } }
+.bld-col { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
+.bld-toolbar { display: flex; gap: .4rem; flex-wrap: wrap; align-items: center; margin-bottom: .6rem; }
+.bld-tree { max-height: 560px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); padding: .4rem; }
+.bld-tree.drop-root { box-shadow: inset 0 0 0 2px var(--blue); }
+.bld-empty { color: var(--muted); font-size: .8rem; padding: 1rem; text-align: center; }
+.bld-node { margin: 1px 0; }
+.bld-row { display: flex; align-items: center; gap: .4rem; padding: .32rem .45rem; border-radius: 6px; border: 1px solid transparent; cursor: pointer; font-size: .82rem; min-width: 0; }
+.bld-row:hover { background: var(--raised); }
+.bld-row.selected { background: #1f6feb22; border-color: #1f6feb66; }
+.bld-row.drop-into   { box-shadow: inset 0 0 0 2px var(--blue); }
+.bld-row.drop-before { box-shadow: inset 0 2px 0 var(--blue); }
+.bld-row.drop-after  { box-shadow: inset 0 -2px 0 var(--blue); }
+.bld-row .bld-tg { background: none; border: none; color: var(--muted); width: 16px; padding: 0; cursor: pointer; flex-shrink: 0; }
+.bld-row > i { color: var(--purple); flex-shrink: 0; }
+.bld-row.ap > i { color: var(--cyan); }
+.bld-title { color: var(--strong); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.bld-meta { color: var(--muted); font-family: var(--mono); font-size: .7rem; white-space: nowrap; margin-left: auto; padding-left: .4rem; }
+.bld-children { margin-left: .85rem; padding-left: .55rem; border-left: 1px dashed var(--border); }
+.bld-chips { display: flex; flex-wrap: wrap; gap: .3rem; padding: .25rem 0 .3rem .25rem; }
+.bld-chip { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--border); background: var(--surface); border-radius: 12px; padding: .12rem .55rem; font-size: .75rem; color: var(--text); cursor: grab; max-width: 100%; }
+.bld-chip i { color: var(--green); }
+.bld-chip:hover { border-color: var(--muted); }
+.bld-chip.selected { border-color: var(--blue); background: #1f6feb22; }
+.bld-chip.missing { border-color: #f8514988; color: #ff7b72; }
+.bld-chip.missing i { color: #ff7b72; }
+.bld-chip .n { font-family: var(--mono); font-size: .68rem; color: var(--muted); }
+.bld-tray { min-height: 44px; border: 1px dashed var(--border); border-radius: 8px; padding: .45rem; display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-bottom: .6rem; }
+.bld-tray.drop-into { border-color: var(--blue); background: #1f6feb11; }
+.bld-tray .lbl { font-size: .72rem; color: var(--muted); margin-right: .3rem; }
+.bld-badges { display: inline-flex; gap: .25rem; flex-shrink: 0; }
+.bld-badge { font-size: .64rem; font-weight: 600; padding: .08rem .42rem; border-radius: 10px; white-space: nowrap; font-family: var(--mono); border: 1px solid transparent; }
+.b-cpu     { background: #1f6feb26; color: #79c0ff; }
+.b-auto    { background: #d2992226; color: #e3b341; }
+.b-pin     { background: #1f6feb26; color: #79c0ff; border-color: #1f6feb66; }
+.b-virtual { background: #30363d; color: var(--muted); }
+.b-shard   { background: #a371f726; color: #d2a8ff; }
+.b-over    { background: #f8514926; color: #ff7b72; }
+.b-dim     { color: var(--muted); }
+.bld-props { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .75rem; }
+.bld-props .form-row { margin-bottom: .6rem; }
+.bld-props .form-input { padding: .38rem .6rem; font-size: .82rem; }
+.bld-stat { font-size: .76rem; color: var(--muted); margin-bottom: .6rem; line-height: 1.5; }
+.bld-stat b { color: var(--strong); }
+.bld-chipsum { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .8rem; }
+.bld-chipsum span { font-size: .72rem; border: 1px solid var(--border); border-radius: 12px; padding: .15rem .6rem; color: var(--muted); white-space: nowrap; }
+.bld-chipsum b { color: var(--strong); font-weight: 600; font-family: var(--mono); }
+.bld-bin { display: grid; grid-template-columns: 52px minmax(0, 1fr) 150px; gap: .6rem; align-items: center; padding: .28rem 0; font-size: .78rem; }
+.bld-bin .nm { font-family: var(--mono); color: var(--strong); font-weight: 600; }
+.bld-bin .num { font-family: var(--mono); font-size: .7rem; color: var(--muted); text-align: right; white-space: nowrap; }
+.bld-bin .num.bad { color: #ff7b72; }
+.bld-bar { position: relative; height: 18px; background: #21262d; border-radius: 4px; display: flex; overflow: hidden; }
+.bld-seg { height: 100%; border-right: 1px solid var(--bg); min-width: 2px; }
+.bld-line { position: absolute; top: -2px; bottom: -2px; width: 2px; }
+.bld-line.cap  { background: var(--red); }
+.bld-line.fair { border-left: 2px dashed var(--muted); width: 0; }
+.bld-legend { display: flex; gap: .9rem; flex-wrap: wrap; font-size: .7rem; color: var(--muted); margin-top: .5rem; }
+.bld-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: .3rem; vertical-align: -1px; }
+.bld-note { font-size: .8rem; border: 1px solid #d2992255; background: #d2992214; color: #e3b341; border-radius: 8px; padding: .55rem .8rem; margin-bottom: 1rem; display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.bld-note.info { border-color: #1f6feb55; background: #1f6feb14; color: #79c0ff; }
+.bld-list { font-size: .78rem; margin: 0; padding-left: 1.1rem; color: var(--text); }
+.bld-list li { margin: .15rem 0; }
+.bld-json { font-family: var(--mono); font-size: .72rem; max-height: 520px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .75rem; margin: 0; color: var(--text); white-space: pre; }
+.bld-dirty { font-size: .7rem; font-weight: 600; color: var(--yellow); border: 1px solid #d2992266; border-radius: 10px; padding: .1rem .5rem; }
+@media(max-width:600px){ .bld-bin { grid-template-columns: 44px minmax(0, 1fr); } .bld-bin .num { grid-column: 2; text-align: left; } }
 
 /* ══════════════════════════════════════════════
    MOBILE — tablet (≤ 768px)
@@ -544,6 +613,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <button class="tab-btn"        data-tab="pollers"      onclick="switchTab('pollers')"><i class="bi bi-cpu"></i>Pollers <span class="tab-badge" id="tab-badge-pollers">0</span></button>
   <button class="tab-btn"        data-tab="devices"      onclick="switchTab('devices')"><i class="bi bi-table"></i>Devices <span class="tab-badge" id="tab-badge-devices">0</span></button>
   <button class="tab-btn"        data-tab="topology"     onclick="switchTab('topology')"><i class="bi bi-diagram-3"></i>Topology</button>
+  <button class="tab-btn"        data-tab="builder"      onclick="switchTab('builder')"><i class="bi bi-bounding-box-circles"></i>Builder</button>
   <button class="tab-btn"        data-tab="config"       onclick="switchTab('config')"><i class="bi bi-hdd-stack"></i>Routers</button>
   <button class="tab-btn"        data-tab="network"      onclick="switchTab('network')"><i class="bi bi-hdd-network"></i>Network</button>
   <button class="tab-btn"        data-tab="lqos"         onclick="switchTab('lqos')"><i class="bi bi-gear-wide-connected"></i>LibreQoS</button>
@@ -790,6 +860,13 @@ code { font-size: .8rem; color: #94a3b8; }
               <div class="s-desc">Greedy bin-pack across CPU cores</div>
             </div>
             <div class="strategy-card"
+              data-val="auto_cpu"
+              onclick="selectStrategy('auto_cpu')">
+              <i class="bi bi-boxes"></i>
+              <div class="s-name">Auto CPU</div>
+              <div class="s-desc">Sites &amp; routers balanced per core</div>
+            </div>
+            <div class="strategy-card"
               data-val="flat"
               onclick="selectStrategy('flat')">
               <i class="bi bi-dash-square"></i>
@@ -818,15 +895,22 @@ code { font-size: .8rem; color: #94a3b8; }
               <div class="s-desc">Full path & backhaul shaping</div>
             </div>
           </div>
+          <div id="auto-cpu-hint" class="bld-note info" style="display:none;margin:.75rem 0 0">
+            <i class="bi bi-boxes"></i>
+            <span style="flex:1;min-width:220px">Keeps the site → AP → router hierarchy and gives every CPU core one
+              <code>CPUn</code> node. Sites or routers too heavy for one core are split across cores automatically.
+              <b>Promote to Root</b> is ignored.</span>
+            <button class="btn-ghost" onclick="switchTab('builder')"><i class="bi bi-bounding-box-circles"></i> Open Builder</button>
+          </div>
         </div>
-        <div style="display:flex;gap:2rem;flex-wrap:wrap">
+        <div style="display:flex;gap:2rem;flex-wrap:wrap;align-items:center">
           <label class="toggle-wrap">
             <div class="toggle"><input type="checkbox"
                 id="toggle-queues">
               <div class="toggle-track"></div>
               <div class="toggle-thumb"></div>
             </div>
-            <span style="font-size:.875rem">Enable Queues</span>
+            <span style="font-size:.875rem">Enable Queues <span id="queues-detect" style="font-size:.72rem;color:var(--muted)"></span></span>
           </label>
           <label class="toggle-wrap">
             <div class="toggle"><input type="checkbox"
@@ -1460,6 +1544,7 @@ code { font-size: .8rem; color: #94a3b8; }
         <option value="0">All devices</option>
       </select>
       <button class="btn-ghost" onclick="loadTopology()"><i class="bi bi-arrow-clockwise"></i></button>
+      <button class="btn-ghost" onclick="switchTab('builder')" title="Edit the site hierarchy and CPU plan"><i class="bi bi-bounding-box-circles"></i> Builder</button>
     </div>
   </div>
 
@@ -1493,6 +1578,81 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
   </div>
 
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     TOPOLOGY BUILDER (auto_cpu)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-builder">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem">
+    <div>
+      <h2 style="font-size:1.1rem;font-weight:700;margin:0">Topology Builder <span id="bld-dirty" class="bld-dirty" style="display:none">unsaved</span></h2>
+      <p style="font-size:.78rem;color:var(--muted);margin:.2rem 0 0">Sites, APs and routers above your subscribers, and how Auto CPU spreads them over LibreQoS's CPU cores</p>
+    </div>
+    <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+      <label style="font-size:.75rem;color:var(--muted)" for="bld-whatif">CPUs</label>
+      <select class="search-input" id="bld-whatif" title="Preview with another CPU count (what-if; not saved)"></select>
+      <button class="btn-ghost" onclick="builderRevert()" title="Discard unsaved changes"><i class="bi bi-arrow-counterclockwise"></i> Revert</button>
+      <button class="btn-ghost" id="bld-save-plain" onclick="builderSave(false)"><i class="bi bi-floppy"></i> Save</button>
+      <button class="btn-primary" id="bld-save-auto" onclick="builderSave(true)"><i class="bi bi-floppy-fill"></i> Save &amp; use Auto CPU</button>
+    </div>
+  </div>
+
+  <div id="bld-banner"></div>
+
+  <div class="bld-grid">
+    <!-- Left: hierarchy -->
+    <div class="bld-col">
+      <div class="card">
+        <div class="card-hd"><span><i class="bi bi-diagram-3"></i> Hierarchy</span><span class="hd-sub" id="bld-tree-sub"></span></div>
+        <div class="card-bd" id="bld-panel">
+          <div class="bld-toolbar">
+            <button class="btn-ghost" data-act="add-root" data-type="site"><i class="bi bi-geo-alt"></i> Add site</button>
+            <button class="btn-ghost" data-act="add-root" data-type="ap"><i class="bi bi-broadcast-pin"></i> Add AP</button>
+            <span style="font-size:.72rem;color:var(--muted);margin-left:auto">Drag routers and nodes to arrange them</span>
+          </div>
+          <div class="bld-tray" id="bld-tray" data-drop="tray"></div>
+          <div class="bld-tree" id="bld-tree" data-drop="root"></div>
+          <div class="bld-props" id="bld-props"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: plan -->
+    <div class="bld-col">
+      <div class="card">
+        <div class="card-hd"><span><i class="bi bi-cpu"></i> CPU plan</span><span class="hd-sub" id="bld-plan-sub"></span></div>
+        <div class="card-bd">
+          <div class="bld-chipsum" id="bld-summary"></div>
+          <div id="bld-bins"></div>
+          <div class="bld-legend">
+            <span><i style="background:var(--purple)"></i>site</span>
+            <span><i style="background:var(--cyan)"></i>AP</span>
+            <span><i style="background:var(--green)"></i>router</span>
+            <span><i style="background:var(--yellow)"></i>router shard</span>
+            <span><i style="background:#6e7681"></i>manual devices</span>
+            <span><i style="background:var(--red);width:2px"></i>core capacity</span>
+            <span><i style="border-left:2px dashed var(--muted);width:0;border-radius:0"></i>fair share</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><span><i class="bi bi-braces"></i> network.json <span class="hd-sub" id="bld-net-sub"></span></span>
+          <span class="seg"><button class="seg-btn active" data-view="tree" onclick="bldSetView('tree')">Tree</button><button class="seg-btn" data-view="json" onclick="bldSetView('json')">JSON</button></span>
+        </div>
+        <div class="card-bd" style="padding:.5rem">
+          <div id="bld-chart-wrap" style="overflow-x:auto"><div id="bld-chart" style="width:100%;height:420px"></div></div>
+          <pre id="bld-json" class="bld-json" style="display:none"></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hd"><span><i class="bi bi-clipboard-check"></i> Plan details</span></div>
+        <div class="card-bd" id="bld-details" style="padding-top:.3rem"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
@@ -1873,7 +2033,33 @@ code { font-size: .8rem; color: #94a3b8; }
             <input class="form-input" type="number" id="set-cpu-rebalance" min="1.05" max="10" step="0.05">
             <span class="input-suffix">×</span>
           </div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">cpu strategy with sticky assignment: move devices only when the busiest CPU node exceeds this many times the lightest</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">cpu / Auto CPU with sticky assignment: move devices (cpu) or whole sites/routers (Auto CPU) only when the busiest CPU node exceeds this many times the lightest</div>
+        </div>
+      </div>
+      <div class="form-row form-row-3" style="margin-top:1rem">
+        <div>
+          <label class="form-label">Auto CPU: Core Capacity</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-cpu-capacity" min="0" step="100">
+            <span class="input-suffix">Mbps</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Download one core can shape. 0 = lqos.conf <code>generated_pn_download_mbps</code>. LibreQoS guide by single-thread score: 1000 → 1 Gbps, 1500 → 2, 2000 → 3, 3000 → 4, 4000 → 5 Gbps</div>
+        </div>
+        <div>
+          <label class="form-label">Auto CPU: Split Ratio</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-split-ratio" min="0" max="10" step="0.1">
+            <span class="input-suffix">× fair share</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Split a site across CPUs, or a router into shards, when it carries more than this × one core's share of all plans. 0 = only when above Core Capacity</div>
+        </div>
+        <div>
+          <label class="form-label">Auto CPU: Move Budget</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-move-budget" min="0" max="1000">
+            <span class="input-suffix">per sync</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Most sites/routers moved between CPUs in one sync (each move rebuilds their queues). 0 = auto (1% of them, 1–32)</div>
         </div>
       </div>
       <div style="display:flex;gap:2rem;flex-wrap:wrap;margin-top:1rem">
@@ -2155,6 +2341,7 @@ function switchTab(name) {
   if (name === 'services')     loadServices();
   if (name === 'troubleshoot') loadTroubleshooting();
   if (name === 'topology')     { loadTopology(); loadWanStats(); }
+  if (name === 'builder')      openBuilder();
   if (name === 'lqos')         loadLqosConf();
   if (name === 'appsettings')  loadAppSettings();
   if (name === 'pollers')      { if (monitorData) renderPollers(monitorData); loadMonitor(); loadGraphs(); }
@@ -2586,6 +2773,9 @@ document.getElementById('device-modal-overlay').addEventListener('click', e => {
 // ══════════════════════════════════════════════════════════════════════════
 let configData = null;
 let rawMode = false;
+// Router objects → their name when config.json was loaded, so a rename on
+// the Routers page can be carried into config.json "topology".
+let _routerNamesAtLoad = new WeakMap();
 
 const configCM = CodeMirror.fromTextArea(document.getElementById('config-editor'), {
   mode:'application/json', theme:'dracula', lineNumbers:true,
@@ -2597,6 +2787,7 @@ async function loadConfig() {
   const d = await r.json();
   if (!d.ok) { toast(d.error, false); return; }
   configData = d.content;
+  _routerNamesAtLoad = new WeakMap((configData.bras || []).map(r => [r, r.name]));
   document.getElementById('config-path').textContent = d.path;
   document.getElementById('stat-routers').textContent = (d.content.bras||[]).length;
   configCM.setValue(JSON.stringify(d.content, null, 4));
@@ -2684,7 +2875,28 @@ async function rebalanceWan() {
 function selectStrategy(val) {
   document.querySelectorAll('.strategy-card').forEach(c =>
     c.classList.toggle('selected', c.dataset.val === val));
+  document.getElementById('auto-cpu-hint').style.display = val === 'auto_cpu' ? 'flex' : 'none';
   if (configData) configData.strategy = val;
+}
+
+// "LibreQoS queues: 6 (NIC 8 · 8 CPUs − 2 E-cores)" next to Enable Queues
+async function loadQueuesDetect() {
+  const el = document.getElementById('queues-detect');
+  try {
+    const d = await (await fetch('/api/topology/queues')).json();
+    if (!d.ok) { el.textContent = ''; return; }
+    const nic = Object.values(d.nic_queues || {}).filter(v => v);
+    const parts = [];
+    if (nic.length) parts.push(`${d.source === 'override' ? 'override' : 'NIC'} ${Math.min(...nic)}`);
+    parts.push(`${d.cpus_total} CPUs` + (d.e_cores ? ` − ${d.e_cores} E-cores` : ''));
+    if (d.on_a_stick) parts.push('on a stick ÷2');
+    const q = configData && configData.queues;
+    if (Number.isInteger(q) && q > 0) {
+      el.innerHTML = `· fixed <b style="color:${q > d.queues ? 'var(--red)' : 'var(--strong)'}">${q}</b> CPU nodes, LibreQoS detects ${d.queues}`;
+    } else {
+      el.innerHTML = `· LibreQoS queues: <b style="color:var(--strong)">${d.queues}</b> (${esc(parts.join(' · '))})`;
+    }
+  } catch (e) { el.textContent = ''; }
 }
 
 // ── Render whole config form ───────────────────────────────────────────────
@@ -2695,6 +2907,7 @@ function renderConfig() {
   // global toggles
   document.getElementById('toggle-queues').checked  = !!configData.queues;
   document.getElementById('toggle-promote').checked = !!configData.promote_to_root;
+  loadQueuesDetect();
   // wan assignment
   const wanCfg = configData.wan_assignment || {};
   const wanEnabled = wanCfg.enabled === true;   // WAN assignment is optional and off by default
@@ -3124,13 +3337,17 @@ async function saveConfig() {
   // collect toggles
   if (!rawMode) {
     configData.strategy        = document.querySelector('.strategy-card.selected')?.dataset.val || configData.strategy;
-    configData.queues          = document.getElementById('toggle-queues').checked;
+    // Keep a fixed CPU count ("queues": 6) while the toggle stays on
+    const queuesOn = document.getElementById('toggle-queues').checked;
+    configData.queues          = queuesOn ? (Number.isInteger(configData.queues) && configData.queues > 0 ? configData.queues : true) : false;
     configData.promote_to_root = document.getElementById('toggle-promote').checked;
     configData.wan_assignment  = {
+      ...(configData.wan_assignment || {}),   // keeps interval
       enabled:         document.getElementById('toggle-wan-enabled').checked,
       include_hotspot: document.getElementById('toggle-wan-hotspot').checked,
       include_dhcp:    document.getElementById('toggle-wan-dhcp').checked,
     };
+    _renameTopologyRouters();
   } else {
     syncFromRaw();
   }
@@ -3145,6 +3362,8 @@ async function saveConfig() {
   const rs = await fetch('/api/services/updatecsv/restart', {method:'POST'});
   const ds = await rs.json();
   toast(ds.ok ? 'updatecsv restarted' : ('Restart failed: ' + (ds.error||'')), ds.ok);
+  _routerNamesAtLoad = new WeakMap((configData.bras || []).map(r => [r, r.name]));
+  if (!bld.dirty) bld.topo = null;   // the Builder reloads the saved config next time
 
   // wan_service runs only while WAN Assignment is on (enabled at boot too).
   const wanOn = !!(configData.wan_assignment && configData.wan_assignment.enabled);
@@ -3158,6 +3377,25 @@ async function saveConfig() {
       : 'WAN service stopped. Managed address-list entries stay on the core routers until you run Purge in Troubleshooting.', true);
   }
   _wanOnAtLoad = wanOn;
+}
+
+// A router renamed on the Routers page keeps its place in the Builder's topology.
+function _renameTopologyRouters() {
+  const topo = configData && configData.topology;
+  if (!topo) return;
+  const renames = {};
+  (configData.bras || []).forEach(r => {
+    const old = _routerNamesAtLoad.get(r);
+    if (old && old !== r.name) renames[old] = r.name;
+  });
+  if (!Object.keys(renames).length) return;
+  const walk = nodes => (nodes || []).forEach(n => {
+    n.routers = (n.routers || []).map(r => renames[r] ?? r);
+    walk(n.children);
+  });
+  walk(topo.nodes);
+  const opts = topo.router_options || {};
+  Object.entries(renames).forEach(([a, b]) => { if (opts[a]) { opts[b] = opts[a]; delete opts[a]; } });
 }
 
 // ── YAML editor ───────────────────────────────────────────────────────────
@@ -4189,8 +4427,10 @@ function _renderOverview(devices, parents) {
       const k = `${core}\x00${p}`;
       cpMap[k] = (cpMap[k] || 0) + bw;
     }
-    // bras → parent
-    if (hasBras && bras) {
+    // bras → parent (skipped when the parent node is the router itself:
+    // ap_only / auto_cpu name router nodes after the router, and a Sankey
+    // link from a node to itself is a cycle ECharts rejects)
+    if (hasBras && bras && bras !== p) {
       const k = `${bras}\x00${p}`;
       brMap[k] = (brMap[k] || 0) + bw;
     }
@@ -4260,7 +4500,7 @@ function _renderTrafficShare(devices) {
 
     wTotalMap[wan] = (wTotalMap[wan] || 0) + 1;
     const wb = `${wan}\x00${bras}`;  wbMap[wb] = (wbMap[wb] || 0) + 1;
-    const bp = `${bras}\x00${p}`;    bpMap[bp] = (bpMap[bp] || 0) + 1;
+    if (bras !== p) { const bp = `${bras}\x00${p}`; bpMap[bp] = (bpMap[bp] || 0) + 1; }   // no self-loop
     const ps = `${p}\x00${src}`;     psMap[ps] = (psMap[ps] || 0) + 1;
   });
 
@@ -4990,6 +5230,9 @@ async function loadAppSettings() {
   g('set-sticky-cpu',      s.topology?.sticky_cpu_assignment   ?? true);
   g('set-node-ids',        s.topology?.node_ids                ?? true);
   g('set-virtual-sites',   s.topology?.virtual_site_nodes      ?? false);
+  g('set-cpu-capacity',    s.topology?.cpu_capacity_mbps       ?? 0);
+  g('set-split-ratio',     s.topology?.auto_cpu_split_ratio    ?? 1.0);
+  g('set-move-budget',     s.topology?.auto_cpu_move_budget    ?? 0);
   g('set-tc-u16',          s.database?.tc_u16_warn_threshold   ?? 60000);
   g('set-circuit-cap',     s.database?.mapped_circuit_warn_threshold ?? 1000);
   g('set-mt-group',        s.gui?.expected_mt_group            ?? 'API_READ');
@@ -5046,6 +5289,9 @@ async function saveAppSettings() {
     sticky_cpu_assignment:       chk('set-sticky-cpu'),
     node_ids:                    chk('set-node-ids'),
     virtual_site_nodes:          chk('set-virtual-sites'),
+    cpu_capacity_mbps:           Math.max(0, int_('set-cpu-capacity', 0)),
+    auto_cpu_split_ratio:        Math.max(0, num('set-split-ratio', 1.0)),
+    auto_cpu_move_budget:        Math.max(0, int_('set-move-budget', 0)),
   });
   Object.assign(sec('database'), {
     tc_u16_warn_threshold:         int_('set-tc-u16', 60000),
@@ -5406,6 +5652,714 @@ async function doChangePassword() {
   } else {
     err.textContent = d.error || 'Failed'; err.style.display = 'block';
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOPOLOGY BUILDER (auto_cpu): edit config.json "topology" — sites and APs
+// with the routers under them — and preview the CPU plan the sync service
+// would write (POST /api/topology/plan is a dry run; nothing is written
+// until Save).
+// ══════════════════════════════════════════════════════════════════════════
+const bld = {
+  topo: null,          // working copy of config.json "topology"
+  saved: '',           // JSON of the saved topology, for the unsaved badge
+  routers: [],         // configured router names
+  strategy: 'cpu', queuesEnabled: true, derived: false,
+  plan: null, lqosWarnings: [], networkChanged: false, error: '',
+  sel: null,           // {kind:'node', id} | {kind:'router', name}
+  closed: new Set(),   // collapsed node ids
+  drag: null,          // what is being dragged: {kind:'node', id} | {kind:'router', name}
+  seq: 0, ctl: null, timer: null, chart: null, view: 'tree', wired: false,
+  get dirty() { return !!this.topo && JSON.stringify(this.topo) !== this.saved; },
+};
+const BLD_COLORS = { bin: '#2f81f7', site: '#a371f7', ap: '#39c5cf', router: '#3fb950', shard: '#d29922', manual: '#6e7681' };
+const BLD_MAX_DEPTH = 6;
+const BLD_RESERVED = /^(CPU\d+|Generated_PN_\d+)$/;
+
+function bldFmt(mbps) {
+  if (mbps == null || !Number.isFinite(mbps)) return '—';
+  return mbps >= 1000 ? (mbps / 1000).toFixed(mbps >= 100000 ? 0 : 1) + ' Gbps' : Math.round(mbps) + ' Mbps';
+}
+
+// ── Tree helpers ──
+function bldNodes() { return (bld.topo && bld.topo.nodes) || []; }
+function bldWalk(fn, nodes = bldNodes(), parent = null, depth = 1) {
+  nodes.forEach((n, i) => { fn(n, parent, nodes, i, depth); bldWalk(fn, n.children || [], n, depth + 1); });
+}
+function bldFind(id) {
+  let hit = null;
+  bldWalk((node, parent, list, index, depth) => { if (node.id === id) hit = { node, parent, list, index, depth }; });
+  return hit;
+}
+// Is node `id` the node `ancestorId` or somewhere below it?
+function bldIsInside(id, ancestorId) {
+  const a = bldFind(ancestorId);
+  let inside = false;
+  if (a) bldWalk(n => { if (n.id === id) inside = true; }, [a.node]);
+  return inside;
+}
+function bldPlacedRouters() {
+  const at = new Map();
+  bldWalk(n => (n.routers || []).forEach(r => at.set(r, n.id)));
+  return at;
+}
+function bldMaxDepth() { let m = 0; bldWalk((n, p, l, i, d) => { m = Math.max(m, d); }); return m; }
+function bldNameTaken(name, exceptId) {
+  if (bld.routers.includes(name) || BLD_RESERVED.test(name)) return true;
+  let taken = false;
+  bldWalk(n => { if (n.id !== exceptId && n.name === name) taken = true; });
+  return taken;
+}
+function bldRouterOpts(name) {
+  return { pin_cpu: null, download_mbps: 0, upload_mbps: 0, shard: true, ...((bld.topo.router_options || {})[name] || {}) };
+}
+function bldSetRouterOpt(name, key, val) {
+  const all = (bld.topo.router_options = bld.topo.router_options || {});
+  const o = { ...bldRouterOpts(name), [key]: val };
+  if (o.pin_cpu === null && !o.download_mbps && !o.upload_mbps && o.shard !== false) delete all[name];   // all defaults
+  else all[name] = o;
+}
+
+// ── Mutations (bldMutate undoes a change that breaks the depth limit) ──
+function bldMutate(fn) {
+  const before = JSON.stringify(bld.topo);
+  if (fn() === false) { bld.topo = JSON.parse(before); return false; }
+  if (bldMaxDepth() > BLD_MAX_DEPTH) {
+    bld.topo = JSON.parse(before);
+    toast(`Sites and APs nest at most ${BLD_MAX_DEPTH} levels deep`, false);
+    return false;
+  }
+  bldChanged();
+  bldRenderProps();
+  return true;
+}
+function bldMoveNode(id, targetId, pos) {
+  if (targetId && bldIsInside(targetId, id)) { toast('A node cannot go inside itself', false); return false; }
+  const f = bldFind(id);
+  if (!f) return false;
+  f.list.splice(f.index, 1);
+  const t = targetId && bldFind(targetId);
+  if (!t) { bld.topo.nodes.push(f.node); return true; }
+  if (pos === 'into') {
+    (t.node.children = t.node.children || []).push(f.node);
+    bld.closed.delete(t.node.id);
+  } else {
+    t.list.splice(t.index + (pos === 'after' ? 1 : 0), 0, f.node);
+  }
+  return true;
+}
+// nodeId null = top level (its own CPU item). A router that is not configured is simply removed.
+function bldMoveRouter(name, nodeId) {
+  bldWalk(n => { n.routers = (n.routers || []).filter(r => r !== name); });
+  const t = nodeId && bldFind(nodeId);
+  if (t && bld.routers.includes(name)) { (t.node.routers = t.node.routers || []).push(name); bld.closed.delete(nodeId); }
+  if (!bld.routers.includes(name) && bld.sel && bld.sel.name === name) bld.sel = null;
+}
+function bldAddNode(parentId, type) {
+  const base = type === 'ap' ? 'New AP' : 'New site';
+  let name = base, i = 1;
+  while (bldNameTaken(name)) name = `${base} ${++i}`;
+  const node = { id: 'n' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, type,
+                 download_mbps: 0, upload_mbps: 0, virtual: false, promote: false, pin_cpu: null, routers: [], children: [] };
+  bldMutate(() => {
+    const t = parentId && bldFind(parentId);
+    if (parentId && !t) return false;
+    if (t) { (t.node.children = t.node.children || []).push(node); bld.closed.delete(parentId); }
+    else bld.topo.nodes.push(node);
+    bld.sel = { kind: 'node', id: node.id };
+  });
+}
+function bldDeleteNode(id) {
+  const f = bldFind(id);
+  if (!f || !confirm(`Delete "${f.node.name}"? Its child nodes and routers move up one level.`)) return;
+  bldMutate(() => {
+    const g = bldFind(id);
+    g.list.splice(g.index, 1, ...(g.node.children || []));
+    if (g.parent) g.parent.routers = [...(g.parent.routers || []), ...(g.node.routers || [])];
+    bld.sel = null;
+  });
+}
+
+// ── Load / preview ──
+async function openBuilder() {
+  bldInitEvents();
+  if (!bld.topo) { await loadBuilder(); return; }
+  bldRender();
+  bldRenderPlan();
+  bldSchedule(0);
+}
+function bldApply(d) {
+  bld.routers = d.routers || [];
+  bld.strategy = d.strategy || 'cpu';
+  bld.queuesEnabled = d.queues_enabled !== false;
+  bld.derived = !!d.derived;
+  bld.plan = d.plan;
+  bld.lqosWarnings = d.lqos_warnings || [];
+  bld.networkChanged = !!d.network_changed;
+  bld.error = '';
+}
+async function loadBuilder() {
+  try {
+    const d = await (await fetch('/api/topology/plan')).json();
+    if (!d.ok) { bld.error = d.error || 'Could not load the topology'; bldRenderPlan(); toast(bld.error, false); return; }
+    bldApply(d);
+    const t = JSON.parse(JSON.stringify(d.topology || {}));
+    t.version = 1;
+    t.nodes = Array.isArray(t.nodes) ? t.nodes : [];
+    t.router_options = t.router_options && typeof t.router_options === 'object' ? t.router_options : {};
+    bld.topo = t;
+    bld.saved = JSON.stringify(t);
+    if (bld.sel && (bld.sel.kind === 'node' ? !bldFind(bld.sel.id) : !bld.routers.includes(bld.sel.name))) bld.sel = null;
+    bldWhatifOptions();
+    bldRender();
+    bldRenderPlan();
+  } catch (e) {
+    toast('Builder: ' + e.message, false);
+  }
+}
+function bldChanged() {
+  bldRenderTree();
+  bldDirtyBadge();
+  bldSchedule(400);
+}
+function bldSchedule(ms) {
+  clearTimeout(bld.timer);
+  bld.timer = setTimeout(bldPreview, ms);
+}
+async function bldPreview() {
+  if (!bld.topo) return;
+  const seq = ++bld.seq;
+  if (bld.ctl) bld.ctl.abort();
+  bld.ctl = new AbortController();
+  const body = { topology: bld.topo };
+  const w = document.getElementById('bld-whatif').value;
+  if (w) body.queues = parseInt(w, 10);
+  try {
+    const r = await fetch('/api/topology/plan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body), signal: bld.ctl.signal,
+    });
+    const d = await r.json();
+    if (seq !== bld.seq) return;            // a newer preview is on its way
+    if (d.ok) bldApply(d); else bld.error = d.error || 'Preview failed';
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    bld.error = e.message;
+  }
+  bldRenderPlan();
+  bldPaintBadges();
+}
+
+// ── Left pane: hierarchy ──
+function bldRender() {
+  bldRenderTree();
+  bldRenderProps();
+  bldDirtyBadge();
+  bldBanner();
+}
+function bldDirtyBadge() {
+  document.getElementById('bld-dirty').style.display = bld.dirty ? '' : 'none';
+}
+function bldChipHtml(name) {
+  const missing = !bld.routers.includes(name);
+  const sel = bld.sel && bld.sel.kind === 'router' && bld.sel.name === name;
+  return `<span class="bld-chip${missing ? ' missing' : ''}${sel ? ' selected' : ''}" draggable="true" data-drag="router"
+      data-router="${esc(name)}" data-act="select-router"
+      title="${missing ? 'Not a configured router: removed when you save' : 'Drag onto a site or AP, or back to the top level'}">
+    <i class="bi bi-router"></i>${esc(name)}<span class="bld-badges" data-badges-router="${esc(name)}"></span></span>`;
+}
+function bldNodeHtml(n) {
+  const open = !bld.closed.has(n.id);
+  const kids = n.children || [], routers = n.routers || [];
+  const sel = bld.sel && bld.sel.kind === 'node' && bld.sel.id === n.id;
+  const body = open && (kids.length || routers.length)
+    ? `<div class="bld-children">${kids.map(bldNodeHtml).join('')}${routers.length ? `<div class="bld-chips">${routers.map(bldChipHtml).join('')}</div>` : ''}</div>`
+    : '';
+  return `<div class="bld-node">
+    <div class="bld-row${n.type === 'ap' ? ' ap' : ''}${sel ? ' selected' : ''}" draggable="true" data-drag="node" data-drop="node"
+        data-id="${esc(n.id)}" data-act="select-node">
+      <button class="bld-tg" data-act="toggle" data-id="${esc(n.id)}" tabindex="-1">${kids.length || routers.length ? `<i class="bi bi-chevron-${open ? 'down' : 'right'}"></i>` : ''}</button>
+      <i class="bi bi-${n.type === 'ap' ? 'broadcast-pin' : 'geo-alt'}"></i>
+      <span class="bld-title">${esc(n.name)}</span>
+      <span class="bld-badges" data-badges-node="${esc(n.id)}"></span>
+      <span class="bld-meta" data-meta-node="${esc(n.id)}"></span>
+    </div>${body}
+  </div>`;
+}
+function bldRenderTree() {
+  if (!bld.topo) return;
+  const placed = bldPlacedRouters();
+  const free = bld.routers.filter(r => !placed.has(r));
+  document.getElementById('bld-tray').innerHTML = `<span class="lbl">Top level</span>` +
+    (free.length ? free.map(bldChipHtml).join('') : `<span class="lbl" style="opacity:.7">drop a router here to take it out of its site</span>`);
+  const nodes = bldNodes();
+  document.getElementById('bld-tree').innerHTML = nodes.length
+    ? nodes.map(bldNodeHtml).join('')
+    : `<div class="bld-empty">No sites yet: every router is its own top-level item.<br>Add a site, then drag routers onto it.</div>`;
+  let count = 0;
+  bldWalk(() => count++);
+  document.getElementById('bld-tree-sub').textContent = `${bld.routers.length} routers · ${count} nodes`;
+  bldPaintBadges();
+}
+function bldBadge(cls, text, title) {
+  return `<span class="bld-badge ${cls}" title="${esc(title || '')}">${esc(text)}</span>`;
+}
+// Badges and counts from the latest plan, painted in place (no re-render, inputs keep focus).
+function bldPaintBadges() {
+  const p = bld.plan;
+  if (!p || !bld.topo) return;
+  document.querySelectorAll('#bld-panel [data-badges-node]').forEach(el => {
+    const id = el.dataset.badgesNode, st = (p.node_index || {})[id], n = (bldFind(id) || {}).node;
+    const b = [];
+    if (n && n.virtual) b.push(bldBadge('b-virtual', 'virtual', 'Groups its children without shaping them'));
+    if (st && st.status === 'promoted')
+      b.push(bldBadge('b-auto', st.reason === 'flag' ? 'split' : 'auto-split',
+        st.reason === 'flag' ? 'Promote is on: its children are spread over the CPUs'
+                             : 'Too heavy for one core: its children are spread over the CPUs'));
+    else if (st && st.status === 'item') b.push(bldBadge(st.pinned ? 'b-pin' : 'b-cpu', (st.pinned ? 'pin ' : '') + st.bin, 'Shaped whole on this CPU'));
+    else if (st && st.status === 'nested') b.push(bldBadge('b-dim', 'in ' + st.bin, 'Inside a subtree shaped on this CPU'));
+    else if (st && st.status === 'folded') b.push(bldBadge('b-over', 'too deep', 'Deeper than 6 levels: its routers were moved up'));
+    el.innerHTML = b.join('');
+  });
+  document.querySelectorAll('#bld-panel [data-meta-node]').forEach(el => {
+    const st = (p.node_index || {})[el.dataset.metaNode];
+    el.textContent = st ? `${st.circuits} · ${bldFmt(st.dl)}` : '';
+    el.title = 'circuits · sum of their plans';
+  });
+  document.querySelectorAll('#bld-panel [data-badges-router]').forEach(el => {
+    const st = (p.router_index || {})[el.dataset.badgesRouter];
+    if (!st) { el.innerHTML = ''; return; }
+    const b = [`<span class="n" title="circuits">${st.circuits}</span>`];
+    if (st.status === 'sharded') b.push(bldBadge('b-shard', `${st.shards} shards`, 'Split over ' + st.bins.join(', ')));
+    else if (st.status === 'item') b.push(bldBadge(st.pinned ? 'b-pin' : 'b-cpu', (st.pinned ? 'pin ' : '') + (st.bins[0] || ''), 'Shaped whole on this CPU'));
+    el.innerHTML = b.join('');
+  });
+  bldPaintPropsStat();
+}
+
+// ── Properties of the selected node / router ──
+function bldToggleHtml(field, checked, label) {
+  return `<label class="toggle-wrap"><div class="toggle"><input type="checkbox" data-f="${field}" ${checked ? 'checked' : ''}>
+    <div class="toggle-track"></div><div class="toggle-thumb"></div></div><span style="font-size:.82rem">${label}</span></label>`;
+}
+function bldCpuOptions(cur) {
+  const n = bld.plan ? bld.plan.n : 0;
+  let html = `<option value="">Auto</option>`;
+  for (let i = 0; i < n; i++) html += `<option value="${i}" ${cur === i ? 'selected' : ''}>CPU${i}</option>`;
+  if (Number.isInteger(cur) && cur >= n) html += `<option value="${cur}" selected>CPU${cur} (not available)</option>`;
+  return html;
+}
+function bldMoveOptions(currentId, excludeId) {
+  let html = `<option value="">— top level —</option>`;
+  bldWalk((m, parent, list, i, depth) => {
+    if (excludeId && bldIsInside(m.id, excludeId)) return;
+    html += `<option value="${esc(m.id)}" ${m.id === currentId ? 'selected' : ''}>${'  '.repeat(depth - 1)}${esc(m.name)}</option>`;
+  });
+  return html;
+}
+function bldLimitInputs(dl, ul, pin) {
+  return `<div class="form-row form-row-3">
+    <div><label class="form-label">Download limit</label><div class="form-input-group"><input class="form-input" type="number" min="0" data-f="download_mbps" value="${dl || 0}"><span class="input-suffix">Mbps</span></div></div>
+    <div><label class="form-label">Upload limit</label><div class="form-input-group"><input class="form-input" type="number" min="0" data-f="upload_mbps" value="${ul || 0}"><span class="input-suffix">Mbps</span></div></div>
+    <div><label class="form-label">Pin to CPU</label><select class="form-input" data-f="pin_cpu">${bldCpuOptions(pin)}</select></div>
+  </div>`;
+}
+function bldRenderProps() {
+  const el = document.getElementById('bld-props');
+  const s = bld.sel;
+  if (!s || !bld.topo) {
+    el.innerHTML = `<div class="bld-stat">Select a site, AP or router to edit it. Sites and APs nest up to ${BLD_MAX_DEPTH} levels, and a router belongs to at most one of them.</div>`;
+    return;
+  }
+  if (s.kind === 'node') {
+    const f = bldFind(s.id);
+    if (!f) { bld.sel = null; bldRenderProps(); return; }
+    const n = f.node;
+    el.innerHTML = `
+      <div class="form-row form-row-2">
+        <div><label class="form-label">Name</label><input class="form-input" data-f="name" maxlength="64" value="${esc(n.name)}"></div>
+        <div><label class="form-label">Type</label><select class="form-input" data-f="type">
+          <option value="site" ${n.type !== 'ap' ? 'selected' : ''}>Site</option><option value="ap" ${n.type === 'ap' ? 'selected' : ''}>AP</option></select></div>
+      </div>
+      ${bldLimitInputs(n.download_mbps, n.upload_mbps, n.pin_cpu)}
+      <div style="display:flex;gap:1.5rem;flex-wrap:wrap;margin-bottom:.7rem">
+        ${bldToggleHtml('virtual', n.virtual, 'Virtual <span style="font-size:.72rem;color:var(--muted)">(group only, not shaped)</span>')}
+        ${bldToggleHtml('promote', n.promote, 'Always split across CPUs')}
+      </div>
+      <div class="form-row form-row-2">
+        <div><label class="form-label">Move to</label><select class="form-input" data-f="move">${bldMoveOptions(f.parent && f.parent.id, n.id)}</select></div>
+        <div style="display:flex;gap:.4rem;align-items:flex-end;flex-wrap:wrap">
+          <button class="btn-ghost" data-act="add-child" data-type="site" data-id="${esc(n.id)}"><i class="bi bi-plus-lg"></i> Site</button>
+          <button class="btn-ghost" data-act="add-child" data-type="ap" data-id="${esc(n.id)}"><i class="bi bi-plus-lg"></i> AP</button>
+          <button class="btn-danger-ghost" data-act="delete" data-id="${esc(n.id)}"><i class="bi bi-trash"></i></button>
+        </div>
+      </div>
+      <div class="bld-stat" id="bld-props-stat"></div>
+      <div style="font-size:.72rem;color:var(--muted);line-height:1.45">A limit of 0 sizes the node from its subscribers × Parent Node Bandwidth. A node is shaped on one CPU core; one too heavy for a core is split, and then its limit cannot be enforced.</div>`;
+  } else {
+    const name = s.name, o = bldRouterOpts(name);
+    const missing = !bld.routers.includes(name);
+    el.innerHTML = `
+      <div class="bld-stat" style="font-size:.85rem"><i class="bi bi-router" style="color:var(--green)"></i> <b>${esc(name)}</b>
+        ${missing ? bldBadge('b-over', 'not configured', 'Not in config.json bras') : ''}</div>
+      ${missing ? `<button class="btn-danger-ghost" data-act="remove-router" data-router="${esc(name)}"><i class="bi bi-trash"></i> Remove from the hierarchy</button>` : `
+      ${bldLimitInputs(o.download_mbps, o.upload_mbps, o.pin_cpu)}
+      <div style="margin-bottom:.7rem">${bldToggleHtml('shard', o.shard !== false, 'Split into shards when too heavy for one core')}</div>
+      <div class="form-row form-row-2">
+        <div><label class="form-label">Move to</label><select class="form-input" data-f="move">${bldMoveOptions(bldPlacedRouters().get(name), null)}</select></div>
+      </div>
+      <div class="bld-stat" id="bld-props-stat"></div>
+      <div style="font-size:.72rem;color:var(--muted);line-height:1.45">A router heavier than one core's share is split into shards "${esc(name)} #2", … on different CPUs, unless sharding is off or it is pinned. Limits apply to each shard.</div>`}`;
+  }
+  bldPaintPropsStat();
+}
+function bldPaintPropsStat() {
+  const el = document.getElementById('bld-props-stat');
+  const p = bld.plan, s = bld.sel;
+  if (!el || !p || !s) return;
+  if (s.kind === 'node') {
+    const st = (p.node_index || {})[s.id];
+    if (!st) { el.innerHTML = ''; return; }
+    const where = {
+      item: `shaped whole on <b>${esc(st.bin)}</b>${st.pinned ? ' (pinned)' : ''}`,
+      nested: `inside a subtree on <b>${esc(st.bin)}</b>`,
+      promoted: `<b>split across CPUs</b> (${st.reason === 'flag' ? 'always split is on' : 'too heavy for one core'})`,
+      folded: '<b>too deep</b>: its routers were moved up',
+    }[st.status] || esc(st.status);
+    el.innerHTML = `${st.circuits} circuits · ${bldFmt(st.dl)} of plans · ${where}`;
+  } else {
+    const st = (p.router_index || {})[s.name];
+    if (!st) { el.innerHTML = ''; return; }
+    const where = st.status === 'sharded' ? `split into <b>${st.shards} shards</b> on ${esc(st.bins.join(', '))}`
+      : st.status === 'nested' ? `inside a subtree on <b>${esc(st.bins[0] || '')}</b>`
+      : `shaped whole on <b>${esc(st.bins[0] || '—')}</b>${st.pinned ? ' (pinned)' : ''}`;
+    el.innerHTML = `${st.circuits} circuits · ${bldFmt(st.dl)} of plans · ${where}`;
+  }
+}
+function bldOnPropChange(e) {
+  const t = e.target, f = t.dataset && t.dataset.f, s = bld.sel;
+  if (!f || !s) return;
+  const int0 = v => Math.max(0, parseInt(v, 10) || 0);
+  const pin = v => v === '' ? null : parseInt(v, 10);
+  if (s.kind === 'node') {
+    const found = bldFind(s.id);
+    if (!found) return;
+    const n = found.node;
+    if (f === 'move') { bldMutate(() => bldMoveNode(n.id, t.value || null, 'into')); return; }
+    if (f === 'name') {
+      const v = t.value.trim();
+      if (!v || v.length > 64 || /[\x00-\x1f]/.test(v)) { toast('A name needs 1-64 printable characters', false); t.value = n.name; return; }
+      if (bldNameTaken(v, n.id)) { toast(`"${v}" is taken (another node, a router, or a reserved CPU name)`, false); t.value = n.name; return; }
+      n.name = v;
+    } else if (f === 'type') n.type = t.value === 'ap' ? 'ap' : 'site';
+    else if (f === 'download_mbps' || f === 'upload_mbps') n[f] = int0(t.value);
+    else if (f === 'pin_cpu') n.pin_cpu = pin(t.value);
+    else if (f === 'virtual' || f === 'promote') n[f] = t.checked;
+  } else {
+    if (f === 'move') { bldMutate(() => bldMoveRouter(s.name, t.value || null)); return; }
+    if (f === 'download_mbps' || f === 'upload_mbps') bldSetRouterOpt(s.name, f, int0(t.value));
+    else if (f === 'pin_cpu') bldSetRouterOpt(s.name, 'pin_cpu', pin(t.value));
+    else if (f === 'shard') bldSetRouterOpt(s.name, 'shard', t.checked);
+  }
+  bldChanged();
+}
+
+// ── Events: one set of delegated listeners on the panel ──
+function bldInitEvents() {
+  if (bld.wired) return;
+  bld.wired = true;
+  const panel = document.getElementById('bld-panel');
+  panel.addEventListener('click', e => {
+    const a = e.target.closest('[data-act]');
+    if (!a || !panel.contains(a) || a.tagName === 'SELECT' || a.tagName === 'INPUT') return;
+    const act = a.dataset.act;
+    if (act === 'toggle') {
+      e.stopPropagation();
+      const id = a.dataset.id;
+      if (bld.closed.has(id)) bld.closed.delete(id); else bld.closed.add(id);
+      bldRenderTree();
+    } else if (act === 'select-node' || act === 'select-router') {
+      bld.sel = act === 'select-node' ? { kind: 'node', id: a.dataset.id } : { kind: 'router', name: a.dataset.router };
+      bldRenderTree();
+      bldRenderProps();
+    } else if (act === 'add-root') bldAddNode(null, a.dataset.type);
+    else if (act === 'add-child') bldAddNode(a.dataset.id, a.dataset.type);
+    else if (act === 'delete') bldDeleteNode(a.dataset.id);
+    else if (act === 'remove-router') bldMutate(() => bldMoveRouter(a.dataset.router, null));
+  });
+  panel.addEventListener('change', bldOnPropChange);
+  panel.addEventListener('dragstart', e => {
+    const d = e.target.closest && e.target.closest('[data-drag]');
+    if (!d) return;
+    bld.drag = d.dataset.drag === 'node' ? { kind: 'node', id: d.dataset.id } : { kind: 'router', name: d.dataset.router };
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', d.dataset.id || d.dataset.router); } catch (_) {}
+    e.stopPropagation();
+  });
+  panel.addEventListener('dragend', () => { bld.drag = null; bldClearDrop(); });
+  panel.addEventListener('dragover', e => {
+    const t = bldDropTarget(e);
+    bldClearDrop();
+    if (!t) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    t.el.classList.add(t.cls);
+  });
+  panel.addEventListener('dragleave', e => { if (!panel.contains(e.relatedTarget)) bldClearDrop(); });
+  panel.addEventListener('drop', e => {
+    const t = bldDropTarget(e), drag = bld.drag;
+    bldClearDrop();
+    bld.drag = null;
+    if (!t || !drag) return;
+    e.preventDefault();
+    if (drag.kind === 'node') bldMutate(() => bldMoveNode(drag.id, t.nodeId, t.pos));
+    else bldMutate(() => bldMoveRouter(drag.name, t.nodeId));
+  });
+  document.getElementById('bld-whatif').addEventListener('change', () => bldSchedule(0));
+  window.addEventListener('resize', () => { if (bld.chart) bld.chart.resize(); });
+  window.addEventListener('beforeunload', e => { if (bld.dirty) { e.preventDefault(); e.returnValue = ''; } });
+}
+// Where the dragged node/router would land: into / before / after a node, the top level, or the tray.
+function bldDropTarget(e) {
+  const drag = bld.drag;
+  const target = e.target && (e.target.nodeType === 1 ? e.target : e.target.parentElement);
+  if (!drag || !target) return null;
+  const blocked = id => drag.kind === 'node' && bldIsInside(id, drag.id);
+  const row = target.closest('.bld-row[data-drop="node"]');
+  if (row) {
+    const id = row.dataset.id;
+    if (blocked(id)) return null;
+    if (drag.kind === 'router') return { el: row, cls: 'drop-into', nodeId: id, pos: 'into' };
+    const r = row.getBoundingClientRect(), y = (e.clientY - r.top) / r.height;
+    const pos = y < .25 ? 'before' : y > .75 ? 'after' : 'into';
+    return { el: row, cls: 'drop-' + pos, nodeId: id, pos };
+  }
+  const area = target.closest('.bld-children');
+  if (area) {
+    const head = area.parentElement.querySelector(':scope > .bld-row');
+    if (!head || blocked(head.dataset.id)) return null;
+    return { el: head, cls: 'drop-into', nodeId: head.dataset.id, pos: 'into' };
+  }
+  if (target.closest('#bld-tray')) {
+    return drag.kind === 'router' ? { el: document.getElementById('bld-tray'), cls: 'drop-into', nodeId: null } : null;
+  }
+  if (target.closest('#bld-tree')) return { el: document.getElementById('bld-tree'), cls: 'drop-root', nodeId: null, pos: 'into' };
+  return null;
+}
+function bldClearDrop() {
+  document.querySelectorAll('#bld-panel .drop-into, #bld-panel .drop-before, #bld-panel .drop-after, #bld-panel .drop-root')
+    .forEach(el => el.classList.remove('drop-into', 'drop-before', 'drop-after', 'drop-root'));
+}
+
+// ── Right pane: plan ──
+function bldWhatifOptions() {
+  // Called with the saved config's plan, so the what-if choice starts over.
+  const sel = document.getElementById('bld-whatif');
+  const p = bld.plan;
+  const n = p ? p.n : 0, detected = p && p.queues ? p.queues.queues : 0;
+  const label = p && p.n_source === 'config' ? `config (${n})` : `auto (${n})`;
+  let html = `<option value="">${label}</option>`;
+  for (let i = 2; i <= Math.max(32, detected + 4); i++) html += `<option value="${i}">${i}${i === detected ? ' · LibreQoS' : ''}</option>`;
+  sel.innerHTML = html;
+  sel.value = '';
+}
+function bldBanner() {
+  const notes = [];
+  if (bld.strategy !== 'auto_cpu')
+    notes.push(['', `The active strategy is <b>${esc(bld.strategy)}</b>: this plan is a preview until you choose <b>Save &amp; use Auto CPU</b>.`]);
+  if (!bld.queuesEnabled) notes.push(['', '<b>Enable Queues</b> is off on the Routers page, so no network.json is written.']);
+  if (bld.derived) notes.push(['info', "This hierarchy comes from the routers' <code>site</code> fields. Save it to edit it here from now on."]);
+  document.getElementById('bld-banner').innerHTML = notes.map(([cls, html]) =>
+    `<div class="bld-note ${cls}"><i class="bi bi-${cls ? 'info-circle' : 'exclamation-triangle'}"></i><span>${html}</span></div>`).join('');
+  const auto = bld.strategy === 'auto_cpu';
+  document.getElementById('bld-save-auto').style.display = auto ? 'none' : '';
+  document.getElementById('bld-save-plain').className = auto ? 'btn-primary' : 'btn-ghost';
+}
+function bldRenderPlan() {
+  bldBanner();
+  const p = bld.plan;
+  const sub = document.getElementById('bld-plan-sub');
+  const binsEl = document.getElementById('bld-bins');
+  if (!p) { binsEl.innerHTML = `<div class="bld-empty">${esc(bld.error || 'Loading…')}</div>`; return; }
+  sub.textContent = bld.error ? 'preview failed, showing the last plan' : '';
+  binsEl.style.opacity = bld.error ? .45 : 1;
+
+  const q = p.queues || {};
+  const nic = Object.values(q.nic_queues || {}).filter(v => v);
+  const source = { sysfs: 'detected like LibreQoS', override: 'lqos.conf override', cpu_count: 'CPU count (NIC queues unreadable)',
+                   config: 'config.json "queues"', whatif: 'what-if' }[p.n_source] || p.n_source;
+  const chips = [
+    ['CPUs', String(p.n), source],
+    ['NIC queues', nic.length ? String(Math.min(...nic)) : '—', (q.interfaces || []).join(', ')],
+    ['cores', `${q.cpus_total ?? '—'}${q.e_cores ? ' − ' + q.e_cores + ' E' : ''}${q.on_a_stick ? ' ÷2' : ''}`, 'CPUs minus E-cores, halved on a stick'],
+    ['per core', bldFmt(p.capacity_mbps), p.capacity_source],
+    ['link', p.link_dl_mbps ? bldFmt(p.link_dl_mbps) : 'unknown', 'lqos.conf [queues] downlink_bandwidth_mbps'],
+    ['plans', bldFmt(p.totals.dl), `${p.totals.circuits} circuits; peaks estimated at ${(p.scale * 100).toFixed(1)}% of plans`],
+    ['skew', p.skew == null ? '—' : p.skew + '×', 'busiest ÷ lightest CPU'],
+  ];
+  document.getElementById('bld-summary').innerHTML = chips.map(([k, v, t]) =>
+    `<span title="${esc(t || '')}">${esc(k)} <b>${esc(v)}</b></span>`).join('');
+
+  const scale = p.scale || 1, capKnown = !!p.link_dl_mbps;
+  const axis = Math.max(1, ...p.bins.map(b => b.dl * scale), capKnown ? p.capacity_mbps * 1.1 : 0) * 1.04;
+  const pct = v => (v / axis * 100).toFixed(2) + '%';
+  const byBin = {};
+  (p.items || []).forEach(it => (byBin[it.bin] = byBin[it.bin] || []).push(it));
+  binsEl.innerHTML = p.bins.map(b => {
+    const items = (byBin[b.name] || []).slice().sort((x, y) => y.dl - x.dl);
+    let used = 0;
+    const segs = items.map(it => {
+      used += it.dl;
+      const kind = it.kind === 'node' ? (p.kinds[it.name] || 'site') : it.kind;
+      const tip = `${it.name}: ${bldFmt(it.dl)} of plans, ${it.circuits} circuits${it.pinned ? ', pinned' : ''}${it.sticky ? ', kept from the last plan' : ''}`;
+      return `<div class="bld-seg" style="width:${pct(it.dl * scale)};background:${BLD_COLORS[kind] || BLD_COLORS.router}" title="${esc(tip)}"></div>`;
+    }).join('');
+    const loose = Math.max(0, b.dl - used);
+    const looseSeg = loose ? `<div class="bld-seg" style="width:${pct(loose * scale)};background:${BLD_COLORS.manual}" title="manual devices: ${esc(bldFmt(loose))}"></div>` : '';
+    const lines = (capKnown ? `<div class="bld-line cap" style="left:${pct(p.capacity_mbps)}" title="core capacity ${esc(bldFmt(p.capacity_mbps))}"></div>` : '') +
+      `<div class="bld-line fair" style="left:${pct(p.fair_share_mbps * scale)}" title="fair share"></div>`;
+    const over = capKnown && b.projected_mbps > p.capacity_mbps;
+    const num = capKnown ? `~${bldFmt(b.projected_mbps)} · ${b.circuits}` : `${bldFmt(b.dl)} · ${b.circuits}`;
+    return `<div class="bld-bin"><span class="nm">${esc(b.name)}</span><div class="bld-bar">${segs}${looseSeg}${lines}</div>
+      <span class="num${over ? ' bad' : ''}" title="${capKnown ? 'estimated peak (plans × link ÷ all plans)' : 'sum of plans'} · circuits">${num}</span></div>`;
+  }).join('');
+
+  bldRenderNetwork();
+  bldRenderDetails();
+}
+function bldSetView(v) {
+  bld.view = v;
+  document.querySelectorAll('#page-builder .seg-btn[data-view]').forEach(b => b.classList.toggle('active', b.dataset.view === v));
+  document.getElementById('bld-chart').style.display = v === 'tree' ? '' : 'none';
+  document.getElementById('bld-json').style.display = v === 'json' ? '' : 'none';
+  bldRenderNetwork();
+}
+function bldRenderNetwork() {
+  const p = bld.plan;
+  if (!p) return;
+  const net = p.network || {};
+  let count = 0, leaves = 0, depth = 0;
+  const walk = (node, d) => {
+    count++;
+    depth = Math.max(depth, d);
+    const kids = Object.values(node.children || {});
+    if (!kids.length) leaves++;
+    kids.forEach(k => walk(k, d + 1));
+  };
+  Object.values(net).forEach(n => walk(n, 1));
+  document.getElementById('bld-net-sub').textContent = `${count} nodes${bld.networkChanged ? ' · differs from the file on disk' : ' · same as the file on disk'}`;
+  document.getElementById('bld-json').textContent = JSON.stringify(net, null, 4);
+  if (bld.view !== 'tree' || !document.getElementById('page-builder').classList.contains('active')) return;
+
+  const kinds = p.kinds || {};
+  const conv = (name, node) => {
+    const kind = kinds[name] || 'router', color = BLD_COLORS[kind] || BLD_COLORS.router;
+    return {
+      name, kind, virtual: !!node.virtual, value: [node.downloadBandwidthMbps, node.uploadBandwidthMbps],
+      children: Object.entries(node.children || {}).map(([k, v]) => conv(k, v)),
+      itemStyle: { color: node.virtual ? '#0d1117' : color, borderColor: color, borderType: node.virtual ? 'dashed' : 'solid' },
+    };
+  };
+  const el = document.getElementById('bld-chart');
+  el.style.height = Math.max(380, leaves * 22 + 40) + 'px';
+  // ~150px per tree level; narrower screens scroll the chart sideways instead of overlapping labels
+  const wrapW = document.getElementById('bld-chart-wrap').clientWidth;
+  el.style.width = Math.max(wrapW, (depth + 1) * 150 + 240) + 'px';
+  if (!bld.chart) bld.chart = echarts.init(el, null, { renderer: 'canvas' });
+  bld.chart.resize();
+  bld.chart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item', confine: true,
+      formatter: prm => prm.data.kind === 'root' ? 'LibreQoS' :
+        `<b>${esc(prm.data.name)}</b><br>${esc(prm.data.kind)}${prm.data.virtual ? ' · virtual' : ''}<br>${prm.data.value[0]} / ${prm.data.value[1]} Mbps`,
+    },
+    series: [{
+      type: 'tree', orient: 'LR', top: 12, bottom: 12, left: 70, right: 170,
+      data: [{ name: 'LibreQoS', kind: 'root', itemStyle: { color: '#8b949e' },
+               children: Object.entries(net).map(([k, v]) => conv(k, v)) }],
+      symbolSize: 9, initialTreeDepth: -1, expandAndCollapse: true, animationDuration: 250, roam: false,
+      label: { position: 'left', verticalAlign: 'middle', align: 'right', color: '#c9d1d9', fontSize: 11 },
+      leaves: { label: { position: 'right', align: 'left' } },
+      lineStyle: { color: '#30363d', width: 1.2, curveness: .5 },
+      emphasis: { focus: 'descendant' },
+    }],
+  }, true);
+}
+function bldRenderDetails() {
+  const p = bld.plan, el = document.getElementById('bld-details');
+  if (!p) { el.innerHTML = ''; return; }
+  const icon = { error: 'x-octagon-fill', warn: 'exclamation-triangle-fill', info: 'info-circle-fill' };
+  const rows = [];
+  if (bld.error) rows.push(['error', 'Preview failed', bld.error]);
+  bld.lqosWarnings.forEach(t => rows.push(['warn', 'lqos.conf', t]));
+  (p.warnings || []).forEach(w => rows.push([w.level, { error: 'Problem', warn: 'Warning', info: 'Note' }[w.level] || 'Note', w.text]));
+  let html = rows.length
+    ? rows.map(([lvl, title, text]) => `<div class="check ${lvl}"><i class="bi bi-${icon[lvl] || icon.info}"></i><div><b>${esc(title)}</b><p>${esc(text)}</p></div></div>`).join('')
+    : `<div class="check"><i class="bi bi-check-circle-fill" style="color:var(--green)"></i><div><b>No problems</b><p>Every CPU node is within one core's capacity.</p></div></div>`;
+  const lists = [];
+  if (p.promoted.length) lists.push(['Split across CPUs', p.promoted.map(x =>
+    `${x.name}: ${x.reason === 'flag' ? 'always split is on' : 'too heavy for one core'} (${bldFmt(x.dl)}, ${x.circuits} circuits)`)]);
+  const shards = Object.entries(p.shards || {});
+  if (shards.length) lists.push(['Router shards', shards.map(([r, ss]) => `${r} → ` + ss.map(s => `${s.name} on ${s.bin} (${s.circuits})`).join(', '))]);
+  if (p.moves.length) lists.push(['Moves since the last plan', p.moves.map(m => `${m.name}: ${m.from} → ${m.to} (${m.reason})`)]);
+  html += lists.map(([title, items]) => `<div style="margin-top:.8rem"><div class="form-label">${esc(title)}</div>
+    <ul class="bld-list">${items.map(i => `<li>${esc(i)}</li>`).join('')}</ul></div>`).join('');
+  html += `<div class="bld-stat" style="margin:.8rem 0 0">${p.device_changes
+    ? `Applying this plan moves <b>${p.device_changes}</b> circuit(s) to another parent node; LibreQoS rebuilds their queues.`
+    : 'No circuit changes its parent node.'} ${bld.networkChanged ? 'network.json will be rewritten.' : 'network.json is already up to date.'}</div>`;
+  el.innerHTML = html;
+}
+
+// ── Save / revert ──
+// bras[].site follows each router's top-level node, the way the server saves it.
+function bldSyncSites(cfg) {
+  const site = {};
+  (cfg.topology.nodes || []).forEach(top => {
+    const walk = n => { (n.routers || []).forEach(r => { site[r] = top.name; }); (n.children || []).forEach(walk); };
+    walk(top);
+  });
+  const seen = {};
+  (cfg.bras || []).forEach(r => {
+    let name = r.name;
+    if (seen[name]) { seen[name]++; name = `${name} ${seen[name]}`; } else seen[name] = 1;
+    if (site[name]) r.site = site[name]; else delete r.site;
+  });
+}
+async function builderSave(useAuto) {
+  if (!bld.topo) return;
+  // Drop routers that are no longer configured (shown in red)
+  bldWalk(n => { n.routers = (n.routers || []).filter(r => bld.routers.includes(r)); });
+  Object.keys(bld.topo.router_options || {}).forEach(r => { if (!bld.routers.includes(r)) delete bld.topo.router_options[r]; });
+  const topology = JSON.parse(JSON.stringify(bld.topo));
+  const r = await fetch('/api/topology', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topology, strategy: useAuto ? 'auto_cpu' : undefined }),
+  });
+  const d = await r.json();
+  if (!d.ok) { toast(d.error || 'Save failed', false); return; }
+  if (configData) {   // keep the Routers page's copy (it saves the whole config.json) in step
+    configData.topology = topology;
+    if (useAuto) selectStrategy('auto_cpu');
+    bldSyncSites(configData);
+  }
+  toast('Topology saved — restarting updatecsv…', true);
+  const ds = await (await fetch('/api/services/updatecsv/restart', { method: 'POST' })).json();
+  toast(ds.ok ? 'updatecsv restarted: it writes the new plan on its next cycle' : ('Restart failed: ' + (ds.error || '')), ds.ok);
+  bld.topo = null;
+  await loadBuilder();
+  // The sync service needs a scan before network.json changes; refresh once more if nothing was edited meanwhile.
+  setTimeout(() => {
+    if (!bld.dirty && document.getElementById('page-builder').classList.contains('active')) loadBuilder();
+  }, 8000);
+}
+function builderRevert() {
+  if (!bld.topo) return;
+  if (bld.dirty && !confirm('Discard the unsaved changes?')) return;
+  bld.topo = JSON.parse(bld.saved);
+  bld.sel = null;
+  bldRender();
+  bldSchedule(0);
 }
 
 function initApp() {

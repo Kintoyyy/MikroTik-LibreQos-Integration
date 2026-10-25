@@ -4,7 +4,14 @@ import re
 import shutil
 import tempfile
 
-_SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'settings.json')
+# Where this app keeps its state (settings.json, config.json, devices.db).
+# LQSYNC_HOME overrides it, e.g. for the preview server and tests; installed
+# services leave it unset and use the script directory (/opt/lq-sync).
+APP_HOME = os.environ.get('LQSYNC_HOME') or os.path.dirname(os.path.abspath(__file__))
+_SETTINGS_PATH = os.path.join(APP_HOME, 'settings.json')
+
+# LibreQoS's config file; LQSYNC_LQOS_CONF overrides it the same way.
+LQOS_CONF_PATH = os.environ.get('LQSYNC_LQOS_CONF') or '/etc/lqos.conf'
 
 _DEFAULTS = {
     "scanner": {
@@ -59,6 +66,14 @@ _DEFAULTS = {
         "node_ids": True,
         # ap_site/full: mark site nodes virtual (logical grouping only, not shaped).
         "virtual_site_nodes": False,
+        # auto_cpu: download Mbps one CPU core (one top-level node) can shape.
+        # 0 = lqos.conf [queues] generated_pn_download_mbps, else 3000.
+        "cpu_capacity_mbps": 0,
+        # auto_cpu: split a site/router across CPUs when it carries more than
+        # this many times one core's fair share. 0 = split only above capacity.
+        "auto_cpu_split_ratio": 1.0,
+        # auto_cpu: most subtrees moved between CPUs per cycle. 0 = auto (1% of items, 1-32).
+        "auto_cpu_move_budget": 0,
     },
     "database": {
         "tc_u16_warn_threshold": 60000,
@@ -179,7 +194,7 @@ def libreqos_dir():
     if configured:
         return configured
     try:
-        with open('/etc/lqos.conf') as f:
+        with open(LQOS_CONF_PATH) as f:
             for line in f:
                 m = re.match(r"""\s*lqos_directory\s*=\s*["']([^"']+)["']""", line)
                 if m:
@@ -206,13 +221,35 @@ def burst_settings():
     }
 
 
+def topology_settings():
+    """
+    The [topology] settings used by the auto_cpu planner, re-read from
+    settings.json on every call (like burst_settings) so a GUI preview and
+    the next sync cycle see edits without a restart. Includes the
+    database tc_u16_warn_threshold the planner checks per CPU.
+    """
+    s = _load()
+    t = s["topology"]
+    return {
+        "multiplier":           float(t.get("parent_bandwidth_multiplier", 1.1)),
+        "skew_warn_ratio":      float(t.get("skew_warn_ratio", 2.0)),
+        "sticky":               bool(t.get("sticky_cpu_assignment", True)),
+        "rebalance_ratio":      max(float(t.get("cpu_rebalance_ratio", 1.5)), 1.0),
+        "virtual_site_nodes":   bool(t.get("virtual_site_nodes", False)),
+        "cpu_capacity_mbps":    max(int(t.get("cpu_capacity_mbps", 0) or 0), 0),
+        "split_ratio":          max(float(t.get("auto_cpu_split_ratio", 1.0)), 0.0),
+        "move_budget":          max(int(t.get("auto_cpu_move_budget", 0) or 0), 0),
+        "tc_u16_warn":          int(s["database"].get("tc_u16_warn_threshold", 60000)),
+    }
+
+
 def libreqos_version():
     """
     Installed LibreQoS version as (major, minor), or None when unknown:
     the top-level 'version' in /etc/lqos.conf, else the VERSION_STRING file
     LibreQoS ships in its directory.
     """
-    sources = (('/etc/lqos.conf', r"""\s*version\s*=\s*["']([^"']+)"""),
+    sources = ((LQOS_CONF_PATH, r"""\s*version\s*=\s*["']([^"']+)"""),
                (os.path.join(libreqos_dir(), 'VERSION_STRING'), r'\s*v?(\S+)'))
     for path, pattern in sources:
         try:

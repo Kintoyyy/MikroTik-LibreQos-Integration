@@ -30,7 +30,10 @@
         "sticky_cpu_assignment": true,
         "cpu_rebalance_ratio": 1.5,
         "node_ids": true,
-        "virtual_site_nodes": false
+        "virtual_site_nodes": false,
+        "cpu_capacity_mbps": 0,
+        "auto_cpu_split_ratio": 1.0,
+        "auto_cpu_move_budget": 0
     },
     "database": {
         "tc_u16_warn_threshold": 60000,
