@@ -122,24 +122,36 @@ body > footer { flex-shrink: 0; }
 .ov-label:first-child { margin-top: 0; }
 .ov-label span { text-transform: none; letter-spacing: 0; }
 
-.ov-q { display: grid; grid-template-columns: minmax(110px, 30%) minmax(0, 1fr) 118px; gap: .2rem .8rem; align-items: center; padding: .45rem 0; border-bottom: 1px solid var(--hair); }
-.ov-q:last-child { border-bottom: none; }
-.ov-q .nm { min-width: 0; font-size: .72rem; color: var(--muted); line-height: 1.35; }
-.ov-q .nm b { display: block; font-size: .82rem; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov-q .nm span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov-q .bar { height: 6px; background: var(--hair); border-radius: 3px; overflow: hidden; margin: 4px 0; }
-.ov-q .bar > span { display: block; height: 100%; border-radius: 3px; transition: width .5s; min-width: 2px; }
-.ov-q .num { font-family: var(--mono); font-size: .74rem; color: var(--text); display: flex; flex-direction: column; text-align: right; line-height: 1.5; }
-@media(max-width:600px){ .ov-q { grid-template-columns: minmax(0, 1fr) 104px; } .ov-q .bars { grid-column: 1 / -1; grid-row: 2; } }
+.ov-warn { display: flex; gap: .6rem; align-items: flex-start; background: #d299221a; border: 1px solid #d2992255; border-radius: 6px; padding: .6rem .8rem; font-size: .78rem; color: var(--text); margin-bottom: .75rem; line-height: 1.5; }
+.ov-warn > i { color: var(--yellow); margin-top: .15rem; }
+.ov-more { margin-top: .5rem; text-align: center; }
+.ov-more:empty { display: none; }
+.ov-load { display: inline-flex; align-items: center; gap: .45rem; }
+.ov-load .mbar { width: 70px; }
+.ov-load .mbar > span { background: var(--s-cpu); }
 
-.ov-crumbs { font-size: .74rem; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov-crumbs b { color: var(--strong); font-weight: 600; }
-.ov-crumbs a { color: var(--accent); text-decoration: none; }
-.ov-crumbs i { font-size: .6rem; color: var(--muted) !important; }
-.ov-scale { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; font-size: .7rem; color: var(--muted); margin-top: .5rem; }
-.ov-scale-bar { display: inline-flex; align-items: center; gap: .4rem; }
-.ov-scale-bar i { width: 120px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, #104281, #2a78d6, #86b6ef); }
-.ov-scale-bar b { font-weight: 500; }
+/* Sites & nodes: an expandable tree with one bar per node */
+.ov-nodes-head, .ov-node { display: grid; grid-template-columns: minmax(0, 36%) minmax(0, 1fr) 72px 56px; gap: .6rem; align-items: center; }
+.ov-nodes-head { font-size: .68rem; color: var(--muted); padding: .35rem 0; border-bottom: 1px solid var(--border); }
+.ov-nodes-head .r, .ov-node .r { text-align: right; }
+.ov-node { font-size: .78rem; padding: .34rem 0; border-bottom: 1px solid var(--hair); }
+.ov-node .nm { display: flex; align-items: center; gap: .3rem; min-width: 0; }
+.ov-node .nm .tw { background: none; border: 0; color: var(--muted); width: 16px; padding: 0; cursor: pointer; flex-shrink: 0; font-size: .7rem; }
+.ov-node .nm .tw:hover { color: var(--strong); }
+.ov-node .nm .tw.leaf { visibility: hidden; cursor: default; }
+.ov-node .nm b { font-weight: 500; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-node .nm .tag { font-size: .6rem; font-family: var(--mono); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 .25rem; flex-shrink: 0; }
+.ov-node .use { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.ov-node .use .b { height: 6px; background: var(--hair); border-radius: 3px; overflow: hidden; }
+.ov-node .use .b > span { display: block; height: 100%; background: var(--s-down); border-radius: 3px; min-width: 2px; }
+.ov-node .use .b.warn > span { background: var(--yellow); }
+.ov-node .use small { font-size: .7rem; color: var(--muted); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-node .r { font-family: var(--mono); font-size: .72rem; color: var(--text); white-space: nowrap; }
+@media(max-width:600px){
+  .ov-nodes-head, .ov-node { grid-template-columns: minmax(0, 1fr) 56px; }
+  .ov-node .use { grid-column: 1 / -1; grid-row: 2; }
+  .ov-nodes-head span:nth-child(2), .ov-nodes-head span:nth-child(3), .ov-node .up { display: none; }
+}
 
 .ov-table-wrap { overflow-x: auto; }
 .ov-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
@@ -154,9 +166,10 @@ body > footer { flex-shrink: 0; }
 .ov-util .mbar > span { background: var(--s-down); }
 .ov-util .mbar.warn > span { background: var(--yellow); }
 
-.ov-cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 3px; }
-.ov-core { border-radius: 4px; padding: .2rem .25rem; font-family: var(--mono); font-size: .64rem; display: flex; justify-content: space-between; gap: .2rem; transition: background .4s; }
-.ov-core span { opacity: .75; }
+.ov-cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 3px; }
+.ov-core { border-radius: 4px; padding: .12rem .15rem; font-family: var(--mono); text-align: center; line-height: 1.2; transition: background .4s; }
+.ov-core span { display: block; font-size: .56rem; opacity: .75; }
+.ov-core b { display: block; font-size: .66rem; font-weight: 600; }
 .ov-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem 1rem; font-size: .78rem; margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--hair); }
 .ov-kv .k { color: var(--muted); }
 .ov-kv .v { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -756,21 +769,45 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
 
-    <!-- One row per CPU queue: LibreQoS shapes each top-level node on one core -->
+    <!-- CPU queues: LibreQoS shapes each top-level node on one core; 2 to 64+ of them -->
+    <div class="card ov-wide">
+      <div class="card-hd">
+        <span><i class="bi bi-cpu"></i> CPU queues</span>
+        <div class="ov-tools">
+          <span class="ov-sub" id="ov-queues-sub"></span>
+          <span class="ov-legend"><span><i style="background:var(--s-down)"></i>Download</span>
+            <span><i style="background:var(--s-up)"></i>Upload</span><span><i style="background:var(--s-cpu)"></i>Core load</span></span>
+        </div>
+      </div>
+      <div class="card-bd">
+        <div id="ov-queues-warn"></div>
+        <div id="ov-queues-chart" class="ov-chart" style="height:300px"></div>
+        <div class="ov-table-wrap" style="margin-top:.6rem">
+          <table class="ov-table">
+            <thead><tr><th>Queue</th><th>Core</th><th class="r">Download</th><th class="r">Upload</th>
+              <th class="r">Circuits</th><th class="r">Active</th><th class="r">≥ 90% of plan</th><th class="r">Drops/s</th><th>Core load</th></tr></thead>
+            <tbody id="ov-queues-table"><tr><td colspan="9" class="ov-empty">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="ov-more" id="ov-queues-more"></div>
+      </div>
+    </div>
+
+    <!-- Network nodes (sites, APs, routers) with the traffic of their subscribers -->
     <div class="card">
-      <div class="card-hd"><span><i class="bi bi-cpu"></i> CPU queues</span><span class="ov-sub" id="ov-queues-sub"></span></div>
-      <div class="card-bd"><div id="ov-queues"></div></div>
+      <div class="card-hd"><span><i class="bi bi-diagram-3"></i> Sites &amp; nodes</span><span class="ov-sub" id="ov-nodes-sub"></span></div>
+      <div class="card-bd" style="padding:.5rem 1rem 1rem">
+        <div class="ov-nodes-head"><span>Node</span><span>Download now (share of its limit)</span><span class="r">Upload</span><span class="r">Active</span></div>
+        <div id="ov-nodes"><div class="ov-empty">Loading…</div></div>
+        <div class="ov-more" id="ov-nodes-more"></div>
+      </div>
     </div>
 
     <div class="card">
-      <div class="card-hd">
-        <span><i class="bi bi-grid-1x2"></i> Live queue map</span>
-        <span class="ov-crumbs" id="ov-tree-crumbs"></span>
-      </div>
+      <div class="card-hd"><span><i class="bi bi-bar-chart-steps"></i> How much of their plan subscribers use</span><span class="ov-sub" id="ov-planuse-sub"></span></div>
       <div class="card-bd">
-        <div id="ov-treemap" class="ov-chart" style="height:330px"></div>
-        <div class="ov-scale"><span>Tile size: download now · colour: share of the plan in use</span>
-          <span class="ov-scale-bar"><b>0%</b><i></i><b>100%</b></span></div>
+        <div id="ov-planuse" class="ov-chart" style="height:260px"></div>
+        <div class="ov-note">Active subscribers (moving more than 100 kbps) by download now ÷ their plan. Many in the top band: the plans, not the network, are the limit.</div>
       </div>
     </div>
 
@@ -2595,7 +2632,8 @@ const ov = {
   queues: null,                     // latest /api/queues/live
   summary: null,                    // latest /api/overview
   src: '',                          // traffic source: '' auto, 'queues', or an interface
-  treePath: [],                     // treemap drill-down, names from the top
+  nodesOpen: new Set(),             // Sites & nodes rows the user opened
+  nodesAll: false, queuesAll: false, // "Show all" toggles
   charts: {},
   qTimer: null,
 };
@@ -2834,108 +2872,209 @@ function ovRenderTraffic() {
   ], fmtBps, ovAxisBps), true);
 }
 
-// ── CPU queues ────────────────────────────────────────────────────────────
+// ── CPU queues: two small multiples (traffic, core load) sharing one queue axis, and a table ──
+const OV_HOT = 85;                    // core load (%) flagged as hot
+const OV_QUEUE_ROWS = 8;              // queue table rows before "Show all"
+function ovQueueWarnings(q, hot) {
+  const out = [];
+  const net = ov.host && !ov.host.error && ov.host.net || {};
+  const iface = net[q.interfaces[0]];
+  const sent = iface ? iface.tx_mbps * 1e6 : null;
+  if (sent != null && sent > 20e6 && q.totals.down_bps < sent * 0.5) {
+    out.push(`LibreQoS's queues carry ${fmtBps(q.totals.down_bps)} of download, but ${esc(q.interfaces[0])} sends
+      ${fmtBps(sent)}: most traffic is not going through the shaper's queues. Check that lqosd is shaping (not in monitor
+      mode), and look at <code>tc -s qdisc show dev ${esc(q.interfaces[0])}</code>: the <code>htb</code> qdiscs under
+      <code>7fff:</code> should carry the traffic, not the other queues of the NIC.`);
+  }
+  if (hot.length) {
+    out.push(`${hot.length === 1 ? 'Core' : `${hot.length} cores`} at ${OV_HOT}% or more
+      (${hot.slice(0, 6).map(x => esc(x.name)).join(', ')}${hot.length > 6 ? ', …' : ''}): subscribers shaped there may see
+      added latency. Move load off ${hot.length === 1 ? 'it' : 'them'} in the Builder, or lower
+      <code>cpu_capacity_mbps</code> so Auto CPU splits sooner.`);
+  }
+  return out.map(t => `<div class="ov-warn"><i class="bi bi-exclamation-triangle-fill"></i><div>${t}</div></div>`).join('');
+}
 function ovRenderQueues() {
-  const box = document.getElementById('ov-queues');
   const sub = document.getElementById('ov-queues-sub');
+  const warn = document.getElementById('ov-queues-warn');
+  const body = document.getElementById('ov-queues-table');
+  const more = document.getElementById('ov-queues-more');
+  const c = ovChart('ov-queues-chart');
   const q = ov.queues;
-  const cores = ov.host && ov.host.cpu_per || [];
   if (!q || !q.available) {
     sub.textContent = '';
-    box.innerHTML = `<div class="ov-empty"><i class="bi bi-info-circle"></i> ${esc(q ? q.error : 'Loading…')}</div>`;
+    warn.innerHTML = more.innerHTML = '';
+    body.innerHTML = `<tr><td colspan="9" class="ov-empty">${esc(q ? q.error : 'Loading…')}</td></tr>`;
+    if (c) c.clear();
     return;
   }
-  const max = Math.max(1, ...q.queues.map(x => Math.max(x.down_bps, x.up_bps)));
-  const loads = q.queues.map(x => x.down_bps);
-  const lo = Math.min(...loads), hi = Math.max(...loads);
-  sub.textContent = `${q.queues.length} queues${lo > 0 ? ` · busiest ${(hi / lo).toFixed(1)}× the quietest` : ''}`;
-  box.innerHTML = q.queues.map(x => {
-    const load = cores[x.core];
-    const hot = load != null && load >= 85;
-    const coreTxt = load == null ? `core ${x.core}` :
-      `${hot ? '<i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow)"></i> ' : ''}core ${x.core} · ${Math.round(load)}%`;
-    const drops = x.drops_ps >= 0.05 ? ` · <span style="color:var(--yellow)">${x.drops_ps.toFixed(1)} drops/s</span>` : '';
-    return `<div class="ov-q" title="${esc(x.name)}: ${x.circuits} circuits, ${x.active} moving traffic">
-      <div class="nm"><b>${esc(x.name)}</b><span>${coreTxt}</span><span>${x.active} / ${x.circuits} active${drops}</span></div>
-      <div class="bars">
-        <div class="bar"><span style="width:${x.down_bps / max * 100}%;background:var(--s-down)"></span></div>
-        <div class="bar"><span style="width:${x.up_bps / max * 100}%;background:var(--s-up)"></span></div>
-      </div>
-      <div class="num"><span>↓ ${fmtBps(x.down_bps)}</span><span>↑ ${fmtBps(x.up_bps)}</span></div>
-    </div>`;
+  const qs = q.queues;
+  const cores = ov.host && !ov.host.error && ov.host.cpu_per || [];
+  const loadOf = x => cores[x.core] ?? null;
+  const avg = qs.reduce((s, x) => s + x.down_bps, 0) / Math.max(1, qs.length);
+  const busiest = qs.reduce((b, x) => x.down_bps > b.down_bps ? x : b, qs[0]);
+  const hot = qs.filter(x => loadOf(x) >= OV_HOT);
+  const hottest = cores.length ? Math.max(...qs.map(x => loadOf(x) ?? 0)) : null;
+  sub.textContent = `${qs.length} queues · average ${fmtBps(avg)}` +
+    (avg > 0 ? ` · busiest ${busiest.name} at ${(busiest.down_bps / avg).toFixed(1)}× average` : '') +
+    (hottest != null ? ` · hottest core ${Math.round(hottest)}%` : '');
+  warn.innerHTML = ovQueueWarnings(q, hot);
+
+  if (c) {
+    const names = qs.map(x => String(x.core));        // bars left to right = cores; the tooltip names the queue
+    const tip = i => {
+      const x = qs[i], load = loadOf(x);
+      return `<b>${esc(x.name)}</b> · core ${x.core}<br>↓ ${fmtBps(x.down_bps)} · ↑ ${fmtBps(x.up_bps)}<br>
+        ${x.active.toLocaleString()} of ${x.circuits.toLocaleString()} subscribers active` +
+        (x.saturated ? `<br>${x.saturated} at ≥ 90% of plan` : '') +
+        (x.drops_ps >= 0.05 ? `<br>${x.drops_ps.toFixed(1)} drops/s` : '') +
+        (load != null ? `<br>core load ${Math.round(load)}%` : '');
+    };
+    const label = { ...OV_AXIS.axisLabel, hideOverlap: true, interval: 'auto' };
+    c.setOption({
+      animation: false,
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#161b22', borderColor: '#30363d',
+                 textStyle: { color: '#c9d1d9', fontSize: 12 }, formatter: ps => tip(ps[0].dataIndex) },
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      grid: [{ left: 52, right: 14, top: 12, bottom: '36%' }, { left: 52, right: 14, top: '72%', bottom: 34 }],
+      xAxis: [
+        { type: 'category', gridIndex: 0, data: names, ...OV_AXIS, splitLine: { show: false }, axisLabel: { show: false } },
+        { type: 'category', gridIndex: 1, data: names, ...OV_AXIS, splitLine: { show: false }, axisLabel: label,
+          name: 'core', nameLocation: 'middle', nameGap: 22, nameTextStyle: { color: '#8b949e', fontSize: 10 } },
+      ],
+      yAxis: [
+        { type: 'value', gridIndex: 0, min: 0, splitNumber: 3, ...OV_AXIS, axisLabel: { ...OV_AXIS.axisLabel, formatter: ovAxisBps } },
+        { type: 'value', gridIndex: 1, min: 0, max: 100, interval: 50, ...OV_AXIS,
+          axisLabel: { ...OV_AXIS.axisLabel, formatter: v => v + '%' } },
+      ],
+      series: [
+        { name: 'Download', type: 'bar', data: qs.map(x => x.down_bps), barGap: '8%', barMaxWidth: 16,
+          itemStyle: { color: OV_COLORS.down, borderRadius: [2, 2, 0, 0] },
+          markLine: { silent: true, symbol: 'none', data: [{ yAxis: avg }], lineStyle: { color: '#8b949e', type: 'solid', width: 1 },
+                      label: { formatter: 'average', position: 'insideEndTop', color: '#8b949e', fontSize: 10 } } },
+        { name: 'Upload', type: 'bar', data: qs.map(x => x.up_bps), barMaxWidth: 16,
+          itemStyle: { color: OV_COLORS.up, borderRadius: [2, 2, 0, 0] } },
+        { name: 'Core load', type: 'bar', xAxisIndex: 1, yAxisIndex: 1, data: qs.map(loadOf), barMaxWidth: 30,
+          itemStyle: { color: OV_COLORS.cpu, borderRadius: [2, 2, 0, 0] },
+          markLine: { silent: true, symbol: 'none', data: [{ yAxis: OV_HOT }], lineStyle: { color: '#d29922', type: 'solid', width: 1 },
+                      label: { formatter: `${OV_HOT}%`, position: 'insideEndTop', color: '#d29922', fontSize: 10 } } },
+      ],
+    }, true);
+  }
+
+  const sorted = [...qs].sort((a, b) => b.down_bps - a.down_bps);
+  const dim = v => `<span style="color:var(--muted)">${v}</span>`;
+  body.innerHTML = sorted.slice(0, ov.queuesAll ? sorted.length : OV_QUEUE_ROWS).map(x => {
+    const load = loadOf(x);
+    return `<tr>
+      <td class="ov-name">${esc(x.name)}</td><td>${x.core}</td>
+      <td class="r">${fmtBps(x.down_bps)}</td><td class="r">${fmtBps(x.up_bps)}</td>
+      <td class="r">${x.circuits.toLocaleString()}</td><td class="r">${x.active.toLocaleString()}</td>
+      <td class="r">${x.saturated ? `<i class="bi bi-exclamation-circle" style="color:var(--yellow)"></i> ${x.saturated}` : dim(0)}</td>
+      <td class="r">${x.drops_ps >= 0.05 ? x.drops_ps.toFixed(1) : dim(0)}</td>
+      <td>${load == null ? dim('—') : `<span class="ov-load">${mbar(load)}${load >= OV_HOT
+        ? '<i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow)"></i>' : ''}${Math.round(load)}%</span>`}</td>
+    </tr>`;
   }).join('');
+  more.innerHTML = sorted.length > OV_QUEUE_ROWS
+    ? `<button class="btn-ghost" onclick="ov.queuesAll = !ov.queuesAll; ovRenderQueues()">${
+        ov.queuesAll ? `Show the busiest ${OV_QUEUE_ROWS}` : `Show all ${sorted.length} queues`}</button>` : '';
 }
 
-// ── Queue map (treemap) ───────────────────────────────────────────────────
-function ovTreeAt(path) {
-  let nodes = ov.queues.tree;
-  for (const name of path) {
-    const n = (nodes || []).find(x => x.name === name);
-    if (!n || !n.children) return null;
-    nodes = n.children;
+// ── Sites & nodes: the network.json tree with each node's subscribers' traffic ──
+const OV_NODE_ROOTS = 12;             // top-level rows before "Show all"
+function ovNodeRoots(nodes) {
+  // Auto CPU and cpu put CPU<n> bins on top: list what is inside them instead, tagged with their CPU
+  if (nodes.length && nodes.every(n => /^CPU\d+$/.test(n.name))) {
+    const inner = nodes.flatMap(n => n.children);
+    if (inner.length) return inner.sort((a, b) => b.down_bps - a.down_bps);
   }
   return nodes;
 }
-function ovTreeData(nodes, depth = 0) {
-  return nodes.map(n => {
-    if (n.kind === 'circuit') {
-      const f = Math.min(1, n.util || 0);
-      return { name: n.name, value: n.value, kind: n.kind, util: n.util, plan: n.plan,
-               itemStyle: { color: ovRampColor(f) }, label: { color: ovInk(f) } };
-    }
-    if (n.kind === 'others') return { name: n.name, value: n.value, kind: n.kind, itemStyle: { color: '#30363d' } };
-    return { name: n.name, value: n.value, kind: n.kind, itemStyle: { color: '#21262d' },
-             children: ovTreeData(n.children || [], depth + 1) };
-  });
+function ovNodeRow(n, depth, max) {
+  const kids = n.children && n.children.length;
+  const open = ov.nodesOpen.has(n.name);
+  const cap = n.cap_down * 1e6;
+  const share = cap ? n.down_bps / cap : 0;
+  const width = cap ? Math.min(100, share * 100) : n.down_bps / max * 100;
+  const tip = `${n.active} of ${n.circuits} subscribers moving traffic` + (n.saturated ? `, ${n.saturated} at ≥ 90% of plan` : '');
+  return `<div class="ov-node">
+      <div class="nm" style="padding-left:${depth * 14}px">
+        <button class="tw ${kids ? '' : 'leaf'}" data-node="${esc(n.name)}" aria-label="${open ? 'Collapse' : 'Expand'} ${esc(n.name)}">${
+          kids ? `<i class="bi bi-chevron-${open ? 'down' : 'right'}"></i>` : ''}</button>
+        <b title="${esc(n.name)}">${esc(n.name)}</b>${depth === 0 && n.cpu && n.cpu !== n.name ? `<span class="tag">${esc(n.cpu)}</span>` : ''}
+      </div>
+      <div class="use" title="${cap ? `limit ${fmtBps(cap)} down` : 'no limit set: bar relative to the busiest node'}">
+        <div class="b ${share >= 0.9 ? 'warn' : ''}"><span style="width:${width}%"></span></div>
+        <small>${share >= 0.9 ? '⚠ ' : ''}${fmtBps(n.down_bps)}${cap ? ` of ${fmtBps(cap)} · ${Math.round(share * 100)}%` : ''}</small>
+      </div>
+      <div class="r up">${fmtBps(n.up_bps)}</div>
+      <div class="r" title="${tip}">${n.active.toLocaleString()}/${n.circuits.toLocaleString()}</div>
+    </div>` + (open && kids ? n.children.map(ch => ovNodeRow(ch, depth + 1, max)).join('') : '');
 }
-function ovTreeGo(i) { ov.treePath = ov.treePath.slice(0, i); ovRenderTree(); }
-function ovRenderTree() {
-  const crumbs = document.getElementById('ov-tree-crumbs');
-  const c = ovChart('ov-treemap');
-  if (!c) return;
-  if (!c.ovClick) {                 // open a CPU queue or node; the crumbs go back up
-    c.ovClick = true;
-    c.on('click', p => {
-      if (!p.data || !p.data.children || !p.data.children.length) return;
-      ov.treePath = ov.treePath.concat((p.treePathInfo || []).slice(1).map(x => x.name));
-      ovRenderTree();
-    });
-  }
+function ovRenderNodes() {
+  const box = document.getElementById('ov-nodes');
+  const sub = document.getElementById('ov-nodes-sub');
+  const more = document.getElementById('ov-nodes-more');
   const q = ov.queues;
-  if (!q || !q.available) { c.clear(); crumbs.innerHTML = ''; return; }
-  let nodes = ovTreeAt(ov.treePath);
-  if (!nodes) { ov.treePath = []; nodes = q.tree; }
-  crumbs.innerHTML = ['All queues', ...ov.treePath].map((n, i, all) => i === all.length - 1
-    ? `<b>${esc(n)}</b>` : `<a href="#" onclick="ovTreeGo(${i});return false">${esc(n)}</a>`).join(' <i class="bi bi-chevron-right"></i> ');
-  if (!nodes.length) {
-    c.clear();
-    c.setOption({ title: { text: 'No traffic right now', left: 'center', top: 'middle',
-                           textStyle: { color: '#8b949e', fontSize: 13, fontWeight: 400 } } });
+  if (!q || !q.available) {
+    box.innerHTML = `<div class="ov-empty">${esc(q ? q.error : 'Loading…')}</div>`;
+    sub.textContent = more.innerHTML = '';
     return;
   }
+  const roots = ovNodeRoots(q.nodes || []);
+  if (!roots.length) {
+    box.innerHTML = `<div class="ov-empty">${q.mapping
+      ? 'No network nodes: the flat strategy, or every subscriber sits at the top.'
+      : "No node names: LibreQoS's queuingStructure.json was not found."}</div>`;
+    sub.textContent = more.innerHTML = '';
+    return;
+  }
+  let count = 0, full = 0;
+  const walk = ns => ns.forEach(n => { count++; full += n.cap_down && n.down_bps >= n.cap_down * 1e6 * 0.9; walk(n.children || []); });
+  walk(roots);
+  sub.textContent = `${count.toLocaleString()} nodes` + (full ? ` · ⚠ ${full} at ≥ 90% of their limit` : '');
+  const max = Math.max(1, ...roots.map(n => n.down_bps));
+  box.innerHTML = roots.slice(0, ov.nodesAll ? roots.length : OV_NODE_ROOTS).map(n => ovNodeRow(n, 0, max)).join('');
+  more.innerHTML = roots.length > OV_NODE_ROOTS
+    ? `<button class="btn-ghost" onclick="ov.nodesAll = !ov.nodesAll; ovRenderNodes()">${
+        ov.nodesAll ? `Show the busiest ${OV_NODE_ROOTS}` : `Show all ${roots.length}`}</button>` : '';
+}
+document.addEventListener('click', e => {
+  const btn = e.target.closest('#ov-nodes .tw:not(.leaf)');
+  if (!btn) return;
+  const name = btn.dataset.node;
+  ov.nodesOpen.has(name) ? ov.nodesOpen.delete(name) : ov.nodesOpen.add(name);
+  ovRenderNodes();
+});
+
+// ── How much of their plan subscribers use (histogram of download ÷ plan) ──
+// Ordinal blue ramp for the dark surface: the lowest band stays clear of the surface
+const OV_BANDS = ['#184f95', '#256abf', '#3987e5', '#6da7ec', '#9ec5f4', '#cde2fb'];
+function ovRenderPlanUse() {
+  const c = ovChart('ov-planuse');
+  const sub = document.getElementById('ov-planuse-sub');
+  const q = ov.queues;
+  if (!c) return;
+  if (!q || !q.available || !q.util_bands) { c.clear(); sub.textContent = ''; return; }
+  const bands = q.util_bands;
+  const pct = v => `${Math.round(v * 100)}%`;
+  const labels = bands.map(b => b.high == null ? `≥ ${pct(b.low)}` : `${pct(b.low)}–${pct(b.high)}`);
+  const total = bands.reduce((s, b) => s + b.circuits, 0);
+  sub.textContent = total ? `${total.toLocaleString()} active subscribers with a plan` : 'nobody active';
   c.setOption({
-    tooltip: {
-      backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#c9d1d9', fontSize: 12 },
-      formatter: p => {
-        const d = p.data || {};
-        if (d.kind === 'circuit') {
-          return `<b>${esc(p.name)}</b><br>${fmtBps(p.value)} down${d.plan ? ` · ${Math.round(d.util * 100)}% of ${d.plan} Mbps` : ''}`;
-        }
-        return `<b>${esc(p.name)}</b><br>${fmtBps(p.value)} down${d.children ? ` · ${d.children.length} inside — click to open` : ''}`;
-      },
-    },
+    animation: false,
+    grid: { left: 46, right: 12, top: 22, bottom: 40 },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: '#161b22', borderColor: '#30363d',
+               textStyle: { color: '#c9d1d9', fontSize: 12 },
+               formatter: ps => `${labels[ps[0].dataIndex]} of their plan<br><b>${ps[0].value.toLocaleString()}</b> subscribers` +
+                 (total ? ` (${Math.round(ps[0].value / total * 100)}%)` : '') },
+    xAxis: { type: 'category', data: labels, ...OV_AXIS, splitLine: { show: false },
+             name: 'download now ÷ plan', nameLocation: 'middle', nameGap: 26, nameTextStyle: { color: '#8b949e', fontSize: 10 } },
+    yAxis: { type: 'value', min: 0, minInterval: 1, splitNumber: 3, ...OV_AXIS },
     series: [{
-      type: 'treemap', data: ovTreeData(nodes), left: 0, right: 0, top: 0, bottom: 0,
-      roam: false, nodeClick: false, breadcrumb: { show: false }, animationDurationUpdate: 400,
-      visibleMin: 80,
-      itemStyle: { borderColor: '#161b22', borderWidth: 1, gapWidth: 2 },
-      upperLabel: { show: true, height: 18, color: '#c9d1d9', fontSize: 11,
-                    formatter: p => `${p.name}  ${fmtBps(p.value)}` },
-      label: { show: true, fontSize: 11, overflow: 'truncate', lineHeight: 14,
-               formatter: p => p.data.kind === 'circuit' ? `${p.name}\n${fmtBps(p.value)}` : p.name },
-      // levels[0] is the invisible root: no label strip for it
-      levels: [{ upperLabel: { show: false }, itemStyle: { gapWidth: 3 } }, { itemStyle: { gapWidth: 2 } },
-               { itemStyle: { gapWidth: 1 } }],
+      type: 'bar', barMaxWidth: 56, data: bands.map((b, i) => ({ value: b.circuits, itemStyle: { color: OV_BANDS[i], borderRadius: [4, 4, 0, 0] } })),
+      label: { show: true, position: 'top', color: '#c9d1d9', fontSize: 11, formatter: p => p.value ? p.value.toLocaleString() : '' },
     }],
   }, true);
 }
@@ -2982,7 +3121,8 @@ async function ovPollQueues() {
     wait = Math.max(2000, (d.every || 2) * 1000);
     ovRenderQueues();
     ovRenderTraffic();
-    ovRenderTree();
+    ovRenderNodes();
+    ovRenderPlanUse();
     ovRenderTop();
     ovRenderKpis();
   } catch (e) { /* offline: keep the last view */ }
@@ -3073,7 +3213,9 @@ function ovShow() {
     ovResize();
     ovRenderHost();
     ovRenderTraffic();
-    ovRenderTree();
+    ovRenderQueues();
+    ovRenderNodes();
+    ovRenderPlanUse();
     ovRenderRouters();
     ovRenderKpis();
   });

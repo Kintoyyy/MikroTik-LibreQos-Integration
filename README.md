@@ -128,7 +128,7 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 
 | Tab | Description |
 |-----|-------------|
-| **Overview** | Live view of the shaper: download / upload now against the link, one row per LibreQoS CPU queue (traffic, circuits, drops, core load), a queue map of every busy subscriber (size = traffic, colour = share of plan), the busiest subscribers, this host (over SNMP or psutil), routers, subscriber counts and recent syncs / PPP events (see [CONFIG.md](CONFIG.md#overview)) |
+| **Overview** | Live view of the shaper: download / upload now against the link, every LibreQoS CPU queue (2 to 64+) with its traffic and core load, sites / APs / routers against their limits, how much of their plan subscribers use, the busiest subscribers, this host (over SNMP or psutil), routers, subscriber counts and recent syncs / PPP events (see [CONFIG.md](CONFIG.md#overview)) |
 | **Settings** | Form-based `config.json` editor — routers, sources, topology strategy. Saving restarts `updatecsv` automatically |
 | **Services** | Start / restart / stop all integration and LibreQoS services; view live logs |
 | **Network** | Netplan configuration — Option A (Linux bridge) or Option B (Bifrost XDP); interface cards with speed and IP |

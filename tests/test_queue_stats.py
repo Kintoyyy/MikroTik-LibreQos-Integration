@@ -119,16 +119,23 @@ class SamplerTest(unittest.TestCase):
             self.assertEqual(by_name["sub0"]["parent"], "Site A")
             self.assertAlmostEqual(by_name["sub0"]["util"], rates["c0"][0] / 100e6, places=4)
 
-    def test_treemap_follows_the_network(self):
+    def test_nodes_follow_the_network(self):
         _, snap = self.two_samples()
-        names = [n["name"] for n in snap["tree"]]
-        self.assertTrue(set(names) <= {"CPU0", "CPU1", "Generated_PN_1"} and names == sorted(names), names)
-        cpu0 = next((n for n in snap["tree"] if n["name"] == "CPU0"), None)
-        if cpu0:                                    # the CPU node itself is not repeated under its queue
-            self.assertNotIn("CPU0", [ch["name"] for ch in cpu0["children"]])
-            for ch in cpu0["children"]:
-                self.assertEqual(ch["value"], sum(g["value"] for g in ch.get("children", [])) if ch["kind"] == "node"
-                                 else ch["value"])
+        nodes = {n["name"]: n for n in snap["nodes"]}
+        self.assertEqual(set(nodes), {"CPU0", "CPU1", "Generated_PN_1"})
+        self.assertEqual([n["down_bps"] for n in snap["nodes"]], sorted((n["down_bps"] for n in snap["nodes"]), reverse=True))
+        site = nodes["CPU0"]["children"][0]
+        self.assertEqual((site["name"], site["circuits"], site["cap_down"], site["cpu"]), ("Site A", 2, 1000.0, "CPU0"))
+        rates = self.shaper.rates
+        self.assertAlmostEqual(site["down_bps"], rates["c0"][0] + rates["c1"][0], delta=20)
+        self.assertEqual(nodes["CPU0"]["down_bps"], site["down_bps"])      # a node's traffic is its circuits'
+        self.assertEqual(nodes["CPU1"]["children"], [])
+
+    def test_share_of_plan_bands(self):
+        _, snap = self.two_samples()
+        active = sum(1 for c in self.shaper.circuits if sum(self.shaper.rates[c["id"]]) > queue_stats.ACTIVE_BPS)
+        self.assertEqual(sum(b["circuits"] for b in snap["util_bands"]), active)
+        self.assertEqual([(b["low"], b["high"]) for b in snap["util_bands"]], queue_stats.UTIL_BANDS)
 
     def test_history_and_gap(self):
         self.two_samples()
@@ -168,6 +175,25 @@ class WithoutLibreQoSFilesTest(unittest.TestCase):
         self.assertEqual([(q["major"], q["down_bps"], q["up_bps"]) for q in snap["queues"]],
                          [(1, 8000.0, 2000.0), (2, 4000.0, 1000.0)])
         self.assertEqual(sorted(c["name"] for c in snap["top"]), ["1:3", "2:3"])
+
+    def test_stuck_root_class_counters_do_not_hide_the_traffic(self):
+        """A root class X:1 whose counters do not move: the per-CPU HTB qdisc and the leaves still show the traffic."""
+        empty = tempfile.mkdtemp(prefix="lqsync-stuck-")
+        self.addCleanup(shutil.rmtree, empty)
+        classes = iter([tc_tree(1, {1: 500}, [(1, 2, 0), (1, 3, 0)]), tc_tree(1, {1: 500}, [(1, 2, 250), (1, 3, 1000)])])
+        qdiscs = iter([f"qdisc htb 1: parent 7fff:1 r2q 10 default 0x2\n Sent {b} bytes 1 pkt (dropped 0, overlimits 0 requeues 0)\n"
+                       for b in (0, 2000)])
+        clock = [100.0]
+        with mock.patch("time.time", lambda: clock[0]):
+            s = queue_stats.QueueSampler(lambda: empty, lambda: ("eth1", "eth1", False),
+                                         runner=lambda args: next(classes) if args[1] == "class" else next(qdiscs))
+            s.sample()
+            clock[0] += 1
+            snap = s.sample()
+        q = snap["queues"][0]
+        self.assertEqual(q["measured"], {"qdisc": 16000.0, "root": 0.0, "leaves": 10000.0})
+        self.assertEqual(q["down_bps"], 16000.0)
+        self.assertEqual(snap["totals"]["down_bps"], 16000.0)
 
     def test_stats_by_circuit_file(self):
         d = tempfile.mkdtemp(prefix="lqsync-stats-")

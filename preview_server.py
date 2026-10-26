@@ -114,8 +114,8 @@ to_network = "ens16"
 [queues]
 default_sqm = "cake diffserv4"
 monitor_only = false
-uplink_bandwidth_mbps = 10000
-downlink_bandwidth_mbps = 10000
+uplink_bandwidth_mbps = {link}
+downlink_bandwidth_mbps = {link}
 generated_pn_download_mbps = 3000
 generated_pn_upload_mbps = 3000
 dry_run = false
@@ -355,7 +355,7 @@ def _write_new(path, text):
             f.write(text)
 
 
-def seed_sandbox(sandbox, port):
+def seed_sandbox(sandbox, port, nic_queues=8, cpus=8, ecores=2, link_mbps=10000):
     """Create the sandbox files that are missing; never overwrite edits made in the GUI."""
     libreqos = os.path.join(sandbox, "libreqos")
     netplan = os.path.join(sandbox, "netplan")
@@ -369,7 +369,7 @@ def seed_sandbox(sandbox, port):
         if r["name"] != "BRAS-S2":           # one router stays on the API, to show both
             r["snmp"] = {"enabled": True, "community": "public", "port": 161}
     _write_new(os.path.join(sandbox, "config.json"), json.dumps(config, indent=4))
-    _write_new(os.path.join(sandbox, "lqos.conf"), SEED_LQOS_CONF.format(libreqos=libreqos))
+    _write_new(os.path.join(sandbox, "lqos.conf"), SEED_LQOS_CONF.format(libreqos=libreqos, link=link_mbps))
     _write_new(os.path.join(libreqos, "VERSION_STRING"), "1.5\n")
     for name, text in SEED_NETPLAN.items():
         _write_new(os.path.join(netplan, name), text)
@@ -387,15 +387,20 @@ def seed_sandbox(sandbox, port):
     with open(path, "w") as f:
         json.dump(settings, f, indent=4)
 
-    # Fake sysfs: ens16/ens17 with 8 tx/rx queues each, CPUs 6-7 are E-cores.
+    # Fake sysfs: ens16/ens17 with nic_queues tx/rx queues each; the last `ecores` of the CPUs are E-cores.
     for nic in ("ens16", "ens17"):
-        for i in range(8):
+        qdir = os.path.join(sandbox, "sys", "class", "net", nic, "queues")
+        os.makedirs(qdir, exist_ok=True)
+        for entry in os.listdir(qdir):
+            if int(entry.split("-")[1]) >= nic_queues:
+                os.rmdir(os.path.join(qdir, entry))
+        for i in range(nic_queues):
             for kind in ("tx", "rx"):
-                os.makedirs(os.path.join(sandbox, "sys", "class", "net", nic, "queues", f"{kind}-{i}"),
-                            exist_ok=True)
+                os.makedirs(os.path.join(qdir, f"{kind}-{i}"), exist_ok=True)
     atom = os.path.join(sandbox, "sys", "devices", "cpu_atom")
     os.makedirs(atom, exist_ok=True)
-    _write_new(os.path.join(atom, "cpus"), "6-7\n")
+    with open(os.path.join(atom, "cpus"), "w") as f:
+        f.write(f"{cpus - ecores}-{cpus - 1}\n" if 0 < ecores < cpus else "\n")
     return netplan
 
 
@@ -654,7 +659,7 @@ class FakeCounters:
 # ── Fake LibreQoS queues (tc) and this host's snmpd ─────────────────────────
 
 PREVIEW_QUEUES = 6        # what LibreQoS would use here: 8 queues per NIC, 8 CPUs minus 2 E-cores
-LINK_BPS = 10e9           # the seeded lqos.conf's downlink_bandwidth_mbps
+HEAVY_SHARE = 0.015       # share of subscribers that run flat out at their plan
 
 
 class FakeShaper:
@@ -665,8 +670,9 @@ class FakeShaper:
     a cake leaf), with traffic that follows each plan. Also writes the
     queuingStructure.json LibreQoS keeps, which names the classes.
     """
-    def __init__(self, libreqos, down_if="ens16", up_if="ens17", queues=PREVIEW_QUEUES):
+    def __init__(self, libreqos, down_if="ens16", up_if="ens17", queues=PREVIEW_QUEUES, link_bps=10e9):
         self.dir, self.down_if, self.up_if, self.queues = libreqos, down_if, up_if, queues
+        self.link_bps = link_bps          # lqos.conf's downlink_bandwidth_mbps
         self.lock = threading.Lock()
         self.key = None
         self.circuits = []            # [{id, name, parent, dl, ul, major, minor, parent_minor, qdisc, p}]
@@ -744,7 +750,7 @@ class FakeShaper:
     def activity(c, t):
         """Share of its plan circuit c uses at time t: most are light or idle, a few run flat out."""
         p = c["p"]
-        if p < 0.04:
+        if p < HEAVY_SHARE:
             return 0.93 + 0.07 * math.sin(t / 5 + p * 50)
         wave = (0.5 + 0.5 * math.sin(t / (40 + 80 * p) + p * 20)) * (0.5 + 0.5 * math.sin(t / (6 + 9 * p) + p * 7))
         return min(1.0, wave ** 2 * _busy(t) * (0.04 if p > 0.6 else 1.0))
@@ -764,14 +770,15 @@ class FakeShaper:
                 self.key = key
             dt = 0.0 if self.at is None else max(0.0, t - self.at)
             self.at = t
-            # The link is 10 Gbps: light users are scaled down to fit; the few flat-out ones are left alone.
+            # Fit the link (45-80% busy, by time of day): flat-out users get at most 40% of it, the rest share what is left.
             acts = [self.activity(c, t) for c in self.circuits]
-            heavy = sum(c["dl"] * 1e6 * a for c, a in zip(self.circuits, acts) if c["p"] < 0.04)
-            light = sum(c["dl"] * 1e6 * a for c, a in zip(self.circuits, acts) if c["p"] >= 0.04)
-            room = LINK_BPS * (0.45 + 0.35 * _busy(t)) - heavy
-            scale = min(1.0, max(0.0, room) / light) if light else 1.0
+            heavy = sum(c["dl"] * 1e6 * a for c, a in zip(self.circuits, acts) if c["p"] < HEAVY_SHARE)
+            light = sum(c["dl"] * 1e6 * a for c, a in zip(self.circuits, acts) if c["p"] >= HEAVY_SHARE)
+            busy = self.link_bps * (0.45 + 0.35 * _busy(t))
+            heavy_scale = min(1.0, busy * 0.4 / heavy) if heavy else 1.0
+            scale = min(1.0, (busy - heavy * heavy_scale) / light) if light else 1.0
             for c, a in zip(self.circuits, acts):
-                a = a if c["p"] < 0.04 else a * scale
+                a = a * (heavy_scale if c["p"] < HEAVY_SHARE else scale)
                 down, up = c["dl"] * 1e6 * a, c["ul"] * 1e6 * a * 0.35
                 self.rates[c["id"]] = (down, up)
                 self.bytes[("down", c["id"])] += down / 8 * dt
@@ -847,11 +854,10 @@ class FakeHost:
     counters of the shaping interfaces. The cores LibreQoS shapes on follow
     their queue's traffic.
     """
-    CORES = 8
     IFACES = [(1, "lo"), (2, "ens16"), (3, "ens17"), (4, "ens18")]
 
-    def __init__(self, shaper):
-        self.shaper = shaper
+    def __init__(self, shaper, cores=8):
+        self.shaper, self.cores = shaper, cores
         self.ticks = dict.fromkeys(("user", "nice", "system", "idle", "wait", "interrupt", "softirq", "steal"), 0.0)
         self.at = time.time()
         self.boot = self.at - (9 * 86400 + 5 * 3600)
@@ -860,7 +866,7 @@ class FakeHost:
     def loads(self, t):
         queues = self.shaper.queue_bps()
         out = []
-        for core in range(self.CORES):
+        for core in range(self.cores):
             idle = 0.03 + 0.02 * math.sin(t / 13 + core)
             bps = queues[core] if core < len(queues) else 0.0
             out.append(min(0.98, idle + bps / 3e9 * 0.85))       # a core shapes about 3 Gbps
@@ -1004,13 +1010,13 @@ def fake_router_api(name):
     }, on_run=run)
 
 
-def install_fakes(gui, ring, systemd, netplan, counters, shaper):
+def install_fakes(gui, ring, systemd, netplan, counters, shaper, cores=8):
     from flask import jsonify, request
 
     # LibreQoS's queues: tc output from the fake shaper. This host's snmpd: a
     # fake agent, used when host SNMP points at the default 127.0.0.1:161.
     gui._queue_sampler.runner = shaper.tc
-    host_agent = FakeSnmpAgent(FakeHost(shaper).mib)
+    host_agent = FakeSnmpAgent(FakeHost(shaper, cores).mib)
     gui._host_snmp_target = lambda s: (("127.0.0.1", host_agent.port)
                                        if s["address"] in ("127.0.0.1", "localhost") and s["port"] == 161
                                        else (s["address"], s["port"]))
@@ -1089,6 +1095,8 @@ def main():
     ap.add_argument("--devices", type=int, default=1500, help="subscribers to seed")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--cpus", type=int, default=8, help="CPU count the queue detection sees")
+    ap.add_argument("--nic-queues", type=int, default=8, help="tx/rx queues of each fake shaping NIC")
+    ap.add_argument("--ecores", type=int, default=2, help="how many of the CPUs are E-cores (excluded)")
     ap.add_argument("--interval", type=int, default=600, help="seconds between background sync cycles")
     ap.add_argument("--churn", type=int, default=0, help="subscribers leaving/joining per router per cycle")
     args = ap.parse_args()
@@ -1096,7 +1104,8 @@ def main():
     sandbox = os.path.abspath(args.dir)
     if args.reset and os.path.isdir(sandbox):
         shutil.rmtree(sandbox)
-    netplan = seed_sandbox(sandbox, args.port)
+    link_mbps = max(10000, -(-args.devices * 5 // 1000) * 1000)     # about 5 Mbps per subscriber at peak
+    netplan = seed_sandbox(sandbox, args.port, args.nic_queues, args.cpus, args.ecores, link_mbps)
 
     # Before any app import: settings.py, updatecsv.py and gui.py read these at import.
     os.environ["LQSYNC_HOME"] = sandbox
@@ -1170,7 +1179,10 @@ def main():
     systemd = FakeSystemd(gui.MANAGED_SERVICES + ["lqosd", "lqos_scheduler"], lambda: rebuild("restart"),
                           gui_restarted)
     counters = FakeCounters()
-    install_fakes(gui, ring, systemd, netplan, counters, FakeShaper(str(gui.libreqos_dir())))
+    conf = cpu_planner.load_lqos_conf(os.environ["LQSYNC_LQOS_CONF"])
+    link_bps = float((conf.get("queues") or {}).get("downlink_bandwidth_mbps") or 10000) * 1e6
+    shaper = FakeShaper(str(gui.libreqos_dir()), queues=cpu_planner.detect_queues(conf)["queues"], link_bps=link_bps)
+    install_fakes(gui, ring, systemd, netplan, counters, shaper, args.cpus)
     rebuild("startup")
     try:
         seed_rrd_history(gui, updatecsv.read_config_json().routers, str(gui.DB_PATH), counters)

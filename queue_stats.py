@@ -14,24 +14,31 @@ seconds, turns byte and drop counters into rates, and names the classes from
 LibreQoS's own records: queuingStructure.json (network nodes with their
 circuits and class ids) and statsByCircuit.json (the flat circuit list).
 Without them every leaf class is shown by its class id.
+
+A queue's traffic is read three ways — the per-CPU HTB qdisc's counters, its
+root class X:1, and the sum of its leaf classes — and the largest is used,
+so a counter the kernel does not keep up to date cannot hide the traffic.
 """
 import json
 import re
 import subprocess
 import time
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 
 ACTIVE_BPS = 100_000            # a circuit moving more than this (down + up) counts as active
 SATURATED = 0.9                 # … and over this share of its download plan as saturated
 TOP_CIRCUITS = 25
-TREE_CIRCUITS = 600             # busiest circuits drawn in the treemap; the rest are summed per node
-MAX_GAP = 15                    # seconds: an older previous sample is not used for rates
+MAX_GAP = 15                    # seconds: an older previous sample is not used for rates (at least)
 STATE_TTL = 60                  # seconds a found / missing state-file path is trusted
+MQ_MAJOR = 0x7FFF
+# Share-of-plan bands of the Overview's histogram: [low, high) of download / plan
+UTIL_BANDS = [(0, .1), (.1, .25), (.25, .5), (.5, .75), (.75, .9), (.9, None)]
 
-_CLASS = re.compile(r"^class htb (\S+) (?:parent (\S+)|root)(?:.*? leaf (\S+))?")
-_QDISC = re.compile(r"^qdisc (\S+) (\S+) (?:parent (\S+)|root)")
-_SENT = re.compile(r"Sent (\d+) bytes (\d+) pkt \(dropped (\d+)")
+# A class or qdisc line and the "Sent" line tc -s prints right after it
+_CLASS = re.compile(r"^class htb (\S+) (?:parent (\S+)|root)([^\n]*)\n Sent (\d+) bytes (\d+) pkt \(dropped (\d+)", re.M)
+_QDISC = re.compile(r"^qdisc (\S+) (\S+) (?:parent (\S+)|root)[^\n]*\n Sent (\d+) bytes (\d+) pkt \(dropped (\d+)", re.M)
+_LEAF = re.compile(r" leaf (\S+)")
 
 
 def parse_handle(text):
@@ -47,36 +54,23 @@ def parse_handle(text):
 
 def parse_classes(text):
     """`tc -s class show` → {(major, minor): {parent, leaf, bytes, packets, drops}} of the HTB classes."""
-    out, current = {}, None
-    for line in text.splitlines():
-        if line.startswith("class "):
-            m = _CLASS.match(line)
-            cid = parse_handle(m.group(1)) if m else None
-            current = None
-            if cid:
-                current = out[cid] = {"parent": parse_handle(m.group(2)), "leaf": m.group(3) or "",
-                                      "bytes": 0, "packets": 0, "drops": 0}
-        elif current is not None:
-            s = _SENT.search(line)
-            if s:
-                current.update(bytes=int(s.group(1)), packets=int(s.group(2)), drops=int(s.group(3)))
+    out = {}
+    for m in _CLASS.finditer(text):
+        cid = parse_handle(m.group(1))
+        if cid:
+            leaf = _LEAF.search(m.group(3))
+            out[cid] = {"parent": parse_handle(m.group(2)), "leaf": leaf.group(1) if leaf else "",
+                        "bytes": int(m.group(4)), "packets": int(m.group(5)), "drops": int(m.group(6))}
     return out
 
 
 def parse_qdiscs(text):
     """`tc -s qdisc show` → {parent classid: {kind, bytes, drops}} of the qdiscs hanging off a class."""
-    out, current = {}, None
-    for line in text.splitlines():
-        if line.startswith("qdisc "):
-            m = _QDISC.match(line)
-            parent = parse_handle(m.group(3)) if m and m.group(3) else None
-            current = None
-            if parent and parent[1] is not None:
-                current = out[parent] = {"kind": m.group(1), "bytes": 0, "drops": 0}
-        elif current is not None:
-            s = _SENT.search(line)
-            if s:
-                current.update(bytes=int(s.group(1)), drops=int(s.group(3)))
+    out = {}
+    for m in _QDISC.finditer(text):
+        parent = parse_handle(m.group(3)) if m.group(3) else None
+        if parent and parent[1] is not None:
+            out[parent] = {"kind": m.group(1), "bytes": int(m.group(4)), "drops": int(m.group(6))}
     return out
 
 
@@ -109,6 +103,7 @@ class Mapping:
     def __init__(self):
         self.circuits = {}            # download classid (major, minor) → {id, name, parent, plan_*, down, up}
         self.node_parent = {}         # node name → parent node name (None at the top)
+        self.node_cap = {}            # node name → (download Mbps, upload Mbps) it is shaped to
         self.top_of_major = {}        # download major → [top-level node names]
         self.up_major = {}            # download major → upload major
         self.source = []
@@ -153,6 +148,7 @@ class Mapping:
             if not isinstance(node, dict):
                 continue
             self.node_parent[name] = parent
+            self.node_cap[name] = (_num(node.get("downloadBandwidthMbps")), _num(node.get("uploadBandwidthMbps")))
             cid = parse_handle(node.get("classid"))
             if parent is None and cid:
                 self.top_of_major.setdefault(cid[0], []).append(name)
@@ -193,6 +189,10 @@ def run_tc(args):
     return r.stdout
 
 
+def _rate(now, before, dt):
+    return (now - before) * 8 / dt if before is not None and now >= before else 0.0
+
+
 class QueueSampler:
     """
     Rates of LibreQoS's queues from two tc samples. Call sample() every few
@@ -212,6 +212,10 @@ class QueueSampler:
         self.latest = {"available": False, "error": "no sample yet"}
         self._paths, self._paths_at = (None, None), 0.0
         self._mapping, self._mapping_key = Mapping(), None
+
+    def max_gap(self):
+        """Oldest previous sample still used for a rate: a slow tc (a huge tree) samples less often."""
+        return max(MAX_GAP, self.took * 10 + 5)
 
     def _load_mapping(self):
         if time.time() - self._paths_at > STATE_TTL:
@@ -258,28 +262,38 @@ class QueueSampler:
         if not any(minor == 1 for _, minor in data["down"][0]):
             return {"available": False, "interfaces": [down_if, up_if],
                     "error": f"no LibreQoS queues on {down_if} (is lqosd running and shaping?)"}
-        if not prev or t - prev[0] > MAX_GAP or t <= prev[0]:
+        if not prev or t - prev[0] > self.max_gap() or t <= prev[0]:
             return {"available": False, "error": "measuring…", "interfaces": [down_if, up_if]}
         return self._snapshot(t, t - prev[0], data, prev[1], (down_if, up_if), stick)
 
     @staticmethod
     def _rates(now, before, dt):
-        """{classid: (bits/s, drops/s)} between two parsed samples (classes, leaf qdiscs)."""
+        """
+        ({classid: (bits/s, drops/s)}, {major: {"qdisc", "root", "leaves"} bits/s}) between two
+        parsed samples. A class's bytes are the larger of its own and its leaf qdisc's counters.
+        """
         classes, qdiscs = now
         old_c, old_q = before
-        out = {}
+        out, queues = {}, defaultdict(lambda: {"qdisc": 0.0, "root": 0.0, "leaves": 0.0})
         for cid, c in classes.items():
-            o = old_c.get(cid)
-            bps = (c["bytes"] - o["bytes"]) * 8 / dt if o and c["bytes"] >= o["bytes"] else 0.0
-            q, oq = qdiscs.get(cid), old_q.get(cid)
+            o, q, oq = old_c.get(cid), qdiscs.get(cid), old_q.get(cid)
+            bps = max(_rate(c["bytes"], o and o["bytes"], dt), _rate(q["bytes"], oq["bytes"], dt) if q and oq else 0.0)
             drops = (q["drops"] - oq["drops"]) / dt if q and oq and q["drops"] >= oq["drops"] else 0.0
             out[cid] = (bps, drops)
-        return out
+            if cid[1] == 1:
+                queues[cid[0]]["root"] = bps
+            elif c["leaf"]:
+                queues[cid[0]]["leaves"] += bps
+        for parent, q in qdiscs.items():          # the per-CPU HTB qdiscs hang off mq 7fff:X
+            oq = old_q.get(parent)
+            if parent[0] == MQ_MAJOR and q["kind"] == "htb" and oq:
+                queues[parent[1]]["qdisc"] = _rate(q["bytes"], oq["bytes"], dt)
+        return out, queues
 
     def _snapshot(self, t, dt, data, prev, ifaces, stick):
         m = self._load_mapping()
-        down = self._rates(data["down"], prev["down"], dt)
-        up = self._rates(data["up"], prev["up"], dt)
+        down, down_q = self._rates(data["down"], prev["down"], dt)
+        up, up_q = self._rates(data["up"], prev["up"], dt)
         roots = sorted(major for major, minor in data["down"][0] if minor == 1)
         if stick:                              # on a stick the upload majors are the second half
             half = len(roots) // 2
@@ -288,7 +302,7 @@ class QueueSampler:
         else:
             down_roots = roots
             up_of = {major: m.up_major.get(major, major) for major in down_roots}
-        per_queue = {major: {"circuits": 0, "active": 0, "drops_ps": 0.0} for major in down_roots}
+        per_queue = {major: {"circuits": 0, "active": 0, "saturated": 0, "drops_ps": 0.0} for major in down_roots}
 
         circuits = []
         if m.circuits:
@@ -310,73 +324,69 @@ class QueueSampler:
 
         totals = {"down_bps": 0.0, "up_bps": 0.0, "drops_ps": 0.0, "active": 0, "saturated": 0,
                   "circuits": len(circuits)}
+        hist = [0] * len(UTIL_BANDS)
         for c in circuits:
-            active = c["down_bps"] + c["up_bps"] > ACTIVE_BPS
+            c["active"] = c["down_bps"] + c["up_bps"] > ACTIVE_BPS
+            saturated = c["util"] >= SATURATED
             q = per_queue.get(c["queue"])
             if q is not None:
                 q["circuits"] += 1
-                q["active"] += active
+                q["active"] += c["active"]
+                q["saturated"] += saturated
                 q["drops_ps"] += c["drops_ps"]
             totals["drops_ps"] += c["drops_ps"]
-            totals["active"] += active
-            totals["saturated"] += c["util"] >= SATURATED
+            totals["active"] += c["active"]
+            totals["saturated"] += saturated
+            if c["active"] and c["plan_down"]:
+                hist[next(i for i, (lo, hi) in enumerate(UTIL_BANDS) if hi is None or c["util"] < hi)] += 1
 
         queues = []
         for major in down_roots:
-            d_bps = down.get((major, 1), (0.0, 0.0))[0]
-            u_bps = up.get((up_of[major], 1), (0.0, 0.0))[0]
+            measured = down_q.get(major, {"qdisc": 0.0, "root": 0.0, "leaves": 0.0})
+            d_bps = max(measured.values())
+            u_bps = max(up_q.get(up_of[major], {"x": 0.0}).values())
             totals["down_bps"] += d_bps
             totals["up_bps"] += u_bps
             queues.append({"major": major, "core": major - 1, "name": m.queue_name(major),
-                           "down_bps": d_bps, "up_bps": u_bps, **per_queue[major]})
+                           "down_bps": d_bps, "up_bps": u_bps, "measured": measured, **per_queue[major]})
 
-        self.history.append((t, totals["down_bps"], totals["up_bps"], [q["down_bps"] for q in queues]))
+        self.history.append((t, totals["down_bps"], totals["up_bps"]))
         busiest = sorted(circuits, key=lambda c: -(c["down_bps"] + c["up_bps"]))
         return {
             "available": True, "error": "", "at": t, "interval": round(dt, 2), "interfaces": list(ifaces),
             "stick": bool(stick), "mapping": " + ".join(m.source), "totals": totals, "queues": queues,
-            "top": [c for c in busiest[:TOP_CIRCUITS] if c["down_bps"] + c["up_bps"] > 0],
-            "tree": self._tree(m, circuits, queues),
+            "top": [{k: v for k, v in c.items() if k != "active"} for c in busiest[:TOP_CIRCUITS]
+                    if c["down_bps"] + c["up_bps"] > 0],
+            "nodes": self._nodes(m, circuits, {q["major"]: q["name"] for q in queues}),
+            "util_bands": [{"low": lo, "high": hi, "circuits": n} for (lo, hi), n in zip(UTIL_BANDS, hist)],
             "history": {"t": [h[0] for h in self.history], "down": [h[1] for h in self.history],
-                        "up": [h[2] for h in self.history], "queues": [h[3] for h in self.history],
-                        "names": [q["name"] for q in queues]},
+                        "up": [h[2] for h in self.history]},
         }
 
     @staticmethod
-    def _tree(m, circuits, queues):
+    def _nodes(m, circuits, queue_names):
         """
-        CPU queue → network nodes → circuits by download rate, for a treemap.
-        Idle circuits are left out; past the TREE_CIRCUITS busiest, the rest
-        of a node's circuits become one "N more" tile.
+        Every network node that has circuits, as a tree: its traffic (the sum of
+        its circuits'), the capacity LibreQoS shapes it to, and circuit counts.
         """
-        names = {q["major"]: q["name"] for q in queues}
-        moving = sorted((c for c in circuits if c["down_bps"] > 0), key=lambda c: -c["down_bps"])
-        root = {}
-        for rank, c in enumerate(moving):
-            tops = m.top_of_major.get(c["queue"]) or []
-            path = m.path(c["parent"]) if c["parent"] else []
-            if len(tops) == 1 and path and path[0] == tops[0]:
-                path = path[1:]                # the queue's only top-level node is the queue itself
-            node = root.setdefault(names.get(c["queue"], f"queue {c['queue']}"), {})
-            for p in path:
-                node = node.setdefault(p, {})
-            leaf = node.setdefault("\0", {"shown": [], "more": 0, "more_bps": 0.0})
-            if rank < TREE_CIRCUITS:
-                leaf["shown"].append(c)
-            else:
-                leaf["more"] += 1
-                leaf["more_bps"] += c["down_bps"]
-
-        def build(name, node, kind):
-            leaf = node.get("\0") or {"shown": [], "more": 0, "more_bps": 0.0}
-            children = [build(k, v, "node") for k, v in sorted(node.items()) if k != "\0"]
-            children += [{"name": c["name"], "value": round(c["down_bps"]), "util": round(c["util"], 3),
-                          "plan": c["plan_down"], "kind": "circuit"} for c in leaf["shown"]]
-            if leaf["more"]:
-                children.append({"name": f"{leaf['more']} more", "value": round(leaf["more_bps"]),
-                                 "util": 0, "kind": "others"})
-            return {"name": name, "value": sum(ch["value"] for ch in children), "kind": kind,
-                    "children": children}
-
-        order = {q["name"]: i for i, q in enumerate(queues)}
-        return [build(k, root[k], "queue") for k in sorted(root, key=lambda k: order.get(k, len(order)))]
+        stats = {}
+        for c in circuits:
+            for name in m.path(c["parent"]) if c["parent"] else []:
+                s = stats.get(name)
+                if s is None:
+                    cap = m.node_cap.get(name, (0.0, 0.0))
+                    s = stats[name] = {"name": name, "down_bps": 0.0, "up_bps": 0.0, "cap_down": cap[0],
+                                       "cap_up": cap[1], "circuits": 0, "active": 0, "saturated": 0,
+                                       "cpu": queue_names.get(c["queue"], ""), "children": []}
+                s["down_bps"] += c["down_bps"]
+                s["up_bps"] += c["up_bps"]
+                s["circuits"] += 1
+                s["active"] += c["active"]
+                s["saturated"] += c["util"] >= SATURATED
+        roots = []
+        for name, s in stats.items():
+            parent = m.node_parent.get(name)
+            (stats[parent]["children"] if parent in stats else roots).append(s)
+        for s in stats.values():
+            s["children"].sort(key=lambda n: -n["down_bps"])
+        return sorted(roots, key=lambda n: -n["down_bps"])

@@ -467,13 +467,21 @@ The GUI's first tab shows the shaper live:
 - **Live queues, from LibreQoS's own tc tree.** While the Overview is open, the GUI reads `tc -s class show` and
   `tc -s qdisc show` on the shaping interfaces from lqos.conf every 2 s (slower when tc takes long on a very large tree; it stops
   20 s after the page is closed). LibreQoS builds one HTB tree per CPU queue (download on `to_network`, upload on `to_internet`,
-  or both on the single interface on a stick), so the root class of each tree is that core's traffic. The classes are named from
-  LibreQoS's `queuingStructure.json` and `statsByCircuit.json` (looked up in the LibreQoS directory, its `state/` folders and
-  `/var/lib/libreqos`). Without them each subscriber shows as its class id.
-  - **CPU queues:** download / upload per queue, circuits and how many are moving traffic, cake drops per second, and the load of
-    the core it runs on. A core near 100% is the first thing to look at when subscribers complain.
-  - **Queue map:** every subscriber moving traffic, grouped by CPU queue and network node; size is download now, colour is the share of
-    their plan in use. Click a queue or node to open it.
+  or both on the single interface on a stick). A queue's traffic is read three ways and the largest is used: the counters of
+  its HTB qdisc (under `7fff:`), of its root class `X:1`, and the sum of its leaf classes. So a counter one kernel does not keep
+  up to date cannot hide the traffic. The classes are named from LibreQoS's `queuingStructure.json` and `statsByCircuit.json`,
+  looked up in the LibreQoS directory, its `state/` folders and `/var/lib/libreqos`. Without them each subscriber shows as its
+  class id.
+  - **CPU queues:** one bar pair (download / upload) per queue with the average marked, and under it the load of the core each
+    queue runs on, with 85% marked. This works the same for 2 or 64+ queues. The table lists the busiest 8 (or all), with
+    circuits, active subscribers, those at ≥ 90% of plan, cake drops per second and core load. A warning appears when a core is
+    at 85% or more. Another appears when the interface sends far more than the queues carry: traffic is then bypassing the
+    shaper, for example because lqosd runs in monitor mode.
+  - **Sites & nodes:** the network.json tree (sites, APs, routers and their shards). Each node shows its subscribers' traffic
+    against the limit LibreQoS shapes it to, with ⚠ at 90% or more. With Auto CPU the `CPU<n>` bins are skipped and their
+    contents are listed, tagged with their CPU. Click ▸ to open a node.
+  - **How much of their plan subscribers use:** active subscribers by download now ÷ plan, in six bands. Many in the top band
+    means the plans, not the network, are the limit. Many low while the link is full means the network is.
   - **Busiest subscribers:** the top 15 now, with share of plan (⚠ at 90% or more) and drops.
 - **This host.** CPU (average and per core), memory, load, uptime and interface traffic, from this host's snmpd when
   `host_snmp.enabled` (the default) and it answers. psutil fills in anything snmpd does not show, or everything while it does not
@@ -689,7 +697,7 @@ python3 preview_server.py            # http://localhost:5050, password: admin
 python3 preview_server.py --reset    # start again from the seeded demo
 ```
 
-It keeps everything in `.preview/` (git-ignored): a demo `config.json` with five BRAS and two regions, about 1500 subscribers, an `lqos.conf`, and a fake sysfs with two 8-queue NICs on 8 CPUs, 2 of them E-cores, so LibreQoS would use 6 queues. Services are simulated. Restarting `updatecsv` (for example Save in the Builder) runs one sync cycle in-process and writes `network.json` and `ShapedDevices.csv` to `.preview/libreqos/`. The Overview's queues come from a simulated LibreQoS, laid out from those files as LibreQoS.py would, with its `queuingStructure.json` and tc output. Its host data comes from a fake snmpd used in place of `127.0.0.1:161`. The app update button is disabled there. Options: `--port`, `--host`, `--devices`, `--seed`, `--cpus`, `--interval` and `--churn` (subscribers leaving and joining per router per cycle).
+It keeps everything in `.preview/` (git-ignored): a demo `config.json` with five BRAS and two regions, about 1500 subscribers, an `lqos.conf`, and a fake sysfs with two 8-queue NICs on 8 CPUs, 2 of them E-cores, so LibreQoS would use 6 queues. Services are simulated. Restarting `updatecsv` (for example Save in the Builder) runs one sync cycle in-process and writes `network.json` and `ShapedDevices.csv` to `.preview/libreqos/`. The Overview's queues come from a simulated LibreQoS, laid out from those files as LibreQoS.py would, with its `queuingStructure.json` and tc output. Its host data comes from a fake snmpd used in place of `127.0.0.1:161`. The app update button is disabled there. Options: `--port`, `--host`, `--dir` (sandbox directory), `--devices`, `--seed`, `--cpus`, `--nic-queues` and `--ecores` (the fake NICs' queues and E-cores, which set LibreQoS's queue count), `--interval` and `--churn` (subscribers leaving and joining per router per cycle). For example, a 64-queue box: `python3 preview_server.py --dir /tmp/lqs64 --reset --cpus 66 --nic-queues 64 --devices 6000`.
 
 ---
 
