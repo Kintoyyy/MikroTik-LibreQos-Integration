@@ -192,11 +192,12 @@ The GUI polls every BRAS once a minute and keeps the history in RRD files (`rrd/
 | Graph | What | How it is read |
 |-------|------|----------------|
 | Router *name* | CPU, memory, temperature, voltage, API latency | `/system/resource`, `/system/health` |
-| Router *name* PPP sessions | Active PPP sessions | `/ppp/active` with `count-only`, so a large BRAS does not send every session |
+| Router *name* PPP sessions | Active PPP sessions, only while `pppoe` is enabled for the router | `/ppp/active` with `count-only`, so a large BRAS does not send every session |
+| Router *name* hotspot users | Active hotspot users, only while `hotspot` is enabled for the router | `/ip/hotspot/active` with `count-only` |
 | Router *name* *interface* | rx / tx Mbps, with rx / tx errors and drops per minute marked as ticks | The interface's `rx-byte`, `tx-byte`, `rx-error`, `tx-error`, `rx-drop` and `tx-drop` counters, stored as rates |
 
 The Pollers page groups the graphs: **LQ-Sync & this host** first, then one group per router. Each group header shows that
-router's status, CPU, RAM, PPP sessions and whether it is polled over SNMP or the API. Click a header to open or close it; a
+router's status, CPU, RAM, PPP sessions, hotspot users (HS) and whether it is polled over SNMP or the API. Click a header to open or close it; a
 closed group loads no images, and the page remembers which are open. With more than three routers, only the host group starts
 open. **Expand all** and **Collapse all** sit next to the time ranges.
 
@@ -205,7 +206,7 @@ or VM interfaces left out, at most 12) is sampled once a minute: from snmpd whil
 else from psutil. Received traffic is stacked above zero and sent traffic below it, one colour per interface. Each
 interface's legend line shows in / out now and the maximum, in Mbps.
 
-The Pollers router cards and the Overview router tiles show the latest values: the PPP count, and each interface's current rx/tx rate with any errors or drops in the last minute. "rx" and "tx" are from the router's side of that interface: on the uplink, rx is your subscribers' download.
+The Pollers router cards and the Overview router tiles show the latest values: the PPP and hotspot counts, and each interface's current rx/tx rate with any errors or drops in the last minute. "rx" and "tx" are from the router's side of that interface: on the uplink, rx is your subscribers' download.
 
 #### Over SNMP instead of the API
 
@@ -224,6 +225,7 @@ Use that community name in LQ-Sync and press **Test SNMP**. Prefer a community l
 | CPU, memory, uptime | HOST-RESOURCES-MIB (`hrProcessorLoad`, `hrStorage` main memory, `hrSystemUptime`) |
 | Temperature, voltage | MIKROTIK-MIB `mtxrHlTemperature` / `mtxrHlVoltage` (RouterOS 6), or the `mtxrGaugeTable` (RouterOS 7) |
 | Active PPP sessions | Each PPP session is a dynamic `<pppoe-…>` interface, so sessions = `ifNumber` minus the router's own interfaces. Those are counted from an `ifName` walk repeated every hour, or sooner when interfaces change |
+| Active hotspot users | Not available over SNMP: the hotspot users the last subscriber scan found on the router |
 | Interface counters | IF-MIB `ifHCInOctets` / `ifHCOutOctets` (32-bit counters when missing), `ifIn/OutErrors`, `ifIn/OutDiscards` |
 
 With SNMP on, the API is still used for the subscriber scans (sessions, leases and address lists have no SNMP equivalent), for the NAT check (every 15 minutes instead of every minute), for **Pick from router**, and for the PPP webhook installer. The Pollers card shows how each router was polled. If you add or remove interfaces on the router, the PPP count can be off by that many until the next hourly walk.

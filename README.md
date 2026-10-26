@@ -35,7 +35,7 @@ Includes a full **web-based GUI** for configuration, monitoring, device manageme
 4. **Multi-router support**
    - Poll any number of MikroTik routers in a single scan cycle
    - Optional PPP webhook: the routers' PPP profile `on-up` / `on-down` scripts tell LQ-Sync about each login and logout, so subscribers are added or removed within seconds instead of at the next poll (see [CONFIG.md](CONFIG.md#instant-ppp-updates-webhook-optional))
-   - Per-BRAS graphs: CPU / memory / health, active PPP sessions, and traffic with rx/tx errors and drops for the interfaces you pick, polled over SNMP v2c or the API (see [CONFIG.md](CONFIG.md#router-monitoring))
+   - Per-BRAS graphs: CPU / memory / health, active PPP sessions and hotspot users (for the sources each router syncs), and traffic with rx/tx errors and drops for the interfaces you pick, polled over SNMP v2c or the API (see [CONFIG.md](CONFIG.md#router-monitoring))
    - Per-router service settings (PPPoE, Hotspot, IPoE/DHCP, Address List)
    - Duplicate IP conflict resolution by source priority
 

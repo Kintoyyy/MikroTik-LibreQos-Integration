@@ -1,4 +1,5 @@
-"""BRAS monitoring: active PPP sessions and graphed interfaces (counters, rates, RRDs, graphs)."""
+"""BRAS monitoring: active PPP / hotspot sessions and graphed interfaces (counters, rates, RRDs, graphs)."""
+import sqlite3
 import subprocess
 import unittest
 from unittest import mock
@@ -16,6 +17,7 @@ def iface(name, kind="ether", running=True, **counters):
 def ros():
     return FakeRouterOS({
         "/ppp/active": [{"name": f"user{i}"} for i in range(7)],
+        "/ip/hotspot/active": [{"user": f"hs{i}"} for i in range(3)],
         "/interface": [
             iface("sfp-sfpplus1", rx_byte=1000, tx_byte=500, rx_error=3, tx_error=0, rx_drop=1, tx_drop=0),
             iface("ether2", rx_byte=10, tx_byte=20),             # no error/drop counters reported
@@ -25,9 +27,10 @@ def ros():
     })
 
 
-class PppCountTest(unittest.TestCase):
+class ActiveCountTest(unittest.TestCase):
     def test_count_only(self):
-        self.assertEqual(gui._ppp_active_count(ros()), 7)
+        self.assertEqual(gui._active_count(ros(), "/ppp/active"), 7)
+        self.assertEqual(gui._active_count(ros(), "/ip/hotspot/active"), 3)
 
     def test_falls_back_to_listing(self):
         api = ros()
@@ -44,7 +47,28 @@ class PppCountTest(unittest.TestCase):
                     reply.done_message = {}            # router answered without ret
                 return reply
         api.get_resource = lambda path: NoRet(resource) if path == "/ppp/active" else FakeRouterOS.get_resource(api, path)
-        self.assertEqual(gui._ppp_active_count(api), 7)
+        self.assertEqual(gui._active_count(api, "/ppp/active"), 7)
+
+    def test_only_the_synced_sources_are_counted(self):
+        def poll(**services):
+            router = {"name": "B", "address": "192.0.2.1", **{s: {"enabled": on} for s, on in services.items()}}
+            with mock.patch.object(gui, "_connect_router_api", return_value=ros()):
+                return gui._poll_router_api("bras", router)
+        both = poll(pppoe=True, hotspot=True)
+        self.assertEqual((both["ok"], both["ppp"], both["hotspot"]), (True, 7, 3))
+        hotspot_only = poll(pppoe=False, hotspot=True)
+        self.assertNotIn("ppp", hotspot_only)
+        self.assertEqual(hotspot_only["hotspot"], 3)
+        self.assertFalse({"ppp", "hotspot"} & set(poll()))
+
+    def test_snmp_hotspot_users_come_from_the_last_scan(self):
+        conn = sqlite3.connect(":memory:")
+        self.assertIsNone(gui._scanned_hotspot_users(conn, "B"))           # no devices table yet
+        conn.execute("CREATE TABLE devices (router TEXT, source TEXT, is_static INTEGER)")
+        conn.executemany("INSERT INTO devices VALUES (?, ?, ?)",
+                         [("B", "hotspot", 0), ("B", "hotspot", 0), ("B", "hotspot", 1), ("B", "pppoe", 0),
+                          ("C", "hotspot", 0)])
+        self.assertEqual(gui._scanned_hotspot_users(conn, "B"), 2)
 
 
 class InterfaceTest(unittest.TestCase):
@@ -80,7 +104,8 @@ class InterfaceTest(unittest.TestCase):
 
 @unittest.skipUnless(gui.RRDTOOL, "rrdtool is not installed")
 class RrdTest(unittest.TestCase):
-    ROUTER = {"name": "BRAS 1", "address": "192.0.2.1", "monitor_interfaces": ["sfp-sfpplus1", "ether 2"]}
+    ROUTER = {"name": "BRAS 1", "address": "192.0.2.1", "monitor_interfaces": ["sfp-sfpplus1", "ether 2"],
+              "pppoe": {"enabled": True}, "hotspot": {"enabled": True}}
 
     def test_values(self):
         self.assertEqual(gui._rrd_value(None), "U")
@@ -91,6 +116,7 @@ class RrdTest(unittest.TestCase):
         key = gui._router_key("bras", self.ROUTER["name"])
         gui._rrd_update(key, "router", [10.0, 20.0, 40.0, 24.0, 5.0])
         gui._rrd_update(gui._rrd_ppp(key), "ppp", [123])
+        gui._rrd_update(gui._rrd_hotspot(key), "hotspot", [45])
         for name in self.ROUTER["monitor_interfaces"]:
             gui._rrd_update(gui._rrd_iface(key, name), "iface", [10**12, 10**11, 5, 0, 7, 0])
 
@@ -104,7 +130,7 @@ class RrdTest(unittest.TestCase):
 
         defs = gui._graph_defs({"bras": [self.ROUTER]})
         ids = [g for g in defs if g.startswith(key)]
-        self.assertEqual(ids, [key, f"{key}-ppp", f"{key}-if-sfp-sfpplus1", f"{key}-if-ether_2"])
+        self.assertEqual(ids, [key, f"{key}-ppp", f"{key}-hotspot", f"{key}-if-sfp-sfpplus1", f"{key}-if-ether_2"])
         for gid in ids:
             d = defs[gid]
             r = subprocess.run([gui.RRDTOOL, "graph", "-", "--imgformat", "PNG", "--start", "end-3h",
@@ -115,6 +141,14 @@ class RrdTest(unittest.TestCase):
         args = " ".join(defs[f"{key}-if-sfp-sfpplus1"]["args"])
         self.assertIn("CDEF:v0=v0r,8,*,1000000,/", args)
         self.assertIn("TICK:v2#ef444488:1: rx errors /min", args)
+
+    def test_session_graphs_follow_the_synced_sources(self):
+        key = gui._router_key("bras", self.ROUTER["name"])
+        for pppoe, hotspot, expected in [(True, False, [f"{key}-ppp"]), (False, True, [f"{key}-hotspot"]),
+                                         (False, False, [])]:
+            router = dict(self.ROUTER, pppoe={"enabled": pppoe}, hotspot={"enabled": hotspot})
+            ids = [g for g in gui._graph_defs({"bras": [router]}) if g in (f"{key}-ppp", f"{key}-hotspot")]
+            self.assertEqual(ids, expected)
 
     def test_host_interfaces_stacked_graph_and_groups(self):
         for name, (rx, tx) in {"ens16": (10**12, 10**11), "ens17": (10**11, 10**12)}.items():
@@ -142,7 +176,7 @@ class RrdTest(unittest.TestCase):
         groups = [defs[g]["group"][0] for g in defs]
         self.assertEqual(groups[:groups.index(key)], ["host"] * groups.index(key))
         self.assertEqual({g for g in defs if defs[g]["group"][0] == key},
-                         {key, f"{key}-ppp", f"{key}-if-sfp-sfpplus1", f"{key}-if-ether_2"})
+                         {key, f"{key}-ppp", f"{key}-hotspot", f"{key}-if-sfp-sfpplus1", f"{key}-if-ether_2"})
         client = gui.app.test_client()
         with client.session_transaction() as s:
             s["authed"] = True
@@ -150,7 +184,7 @@ class RrdTest(unittest.TestCase):
             listing = client.get("/api/graphs").get_json()
         self.assertEqual([(g["id"], g["kind"]) for g in listing["groups"]], [("host", "host"), (key, "bras")])
         self.assertIn("host-ifaces", [g["id"] for g in listing["groups"][0]["graphs"]])
-        self.assertEqual(len(listing["groups"][1]["graphs"]), 4)
+        self.assertEqual(len(listing["groups"][1]["graphs"]), 5)
 
     def test_host_interface_counters_prefer_snmpd(self):
         client = mock.Mock(if_prev={"ens16": (5, 6, 0.0), "lo": (1, 1, 0.0), "veth12": (2, 2, 0.0)})

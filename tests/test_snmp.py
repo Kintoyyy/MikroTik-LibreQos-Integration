@@ -172,17 +172,21 @@ class GuiDispatchTest(unittest.TestCase):
         def connect(router, username=None, password=None):
             connects.append(router["name"])
             return FakeRouterOS({"/ip/firewall/nat": []})
-        router = {"name": "BRAS-1", "address": "192.0.2.1", "snmp": {"enabled": True, "community": "public"}}
+        router = {"name": "BRAS-1", "address": "192.0.2.1", "snmp": {"enabled": True, "community": "public"},
+                  "pppoe": {"enabled": True}}
         with mock.patch.object(gui, "_snmp_target", return_value=("127.0.0.1", agent.port)), \
                 mock.patch.object(gui, "_router_connect", side_effect=connect), \
                 mock.patch.object(gui, "_poll_router_api", side_effect=AssertionError("API used")):
             gui._nat_checked.clear()
             first = gui._poll_router("bras", router)
             second = gui._poll_router("bras", router)
+            no_pppoe = gui._poll_router("bras", dict(router, pppoe={"enabled": False}))
         self.assertEqual((first["via"], first["ok"], first["ppp"]), ("snmp", True, 5))
         self.assertEqual(first["nat_rules"], [])
         self.assertNotIn("nat_rules", second)                  # NAT checked once per NAT_CHECK_INTERVAL
         self.assertEqual(connects, ["BRAS-1"])
+        self.assertTrue(no_pppoe["ok"])
+        self.assertNotIn("ppp", no_pppoe)                      # PPPoE not synced: no PPP count
 
     def test_api_router_still_uses_api(self):
         import gui

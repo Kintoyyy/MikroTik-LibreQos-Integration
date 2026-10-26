@@ -687,6 +687,11 @@ def fake_ppp(subs, name, t):
     return max(0, int(subs * (0.82 + 0.15 * _busy(t)) + random.Random(f"ppp{name}{int(t // 60)}").randint(-4, 4)))
 
 
+def fake_hotspot(users, name, t):
+    """Active hotspot users: fewer than PPP, and they come and go more with the time of day."""
+    return max(0, int(users * (0.45 + 0.5 * _busy(t)) + random.Random(f"hs{name}{int(t // 60)}").randint(-3, 3)))
+
+
 def fake_rates(subs, name, iface, t):
     """(rx bytes/s, tx bytes/s, rx/tx errors per s, rx/tx drops per s) of a simulated interface."""
     rng = random.Random(f"{name}{iface}{int(t // 60)}")
@@ -970,13 +975,13 @@ class FakeHost:
         return mib
 
 
-def fake_subscribers(db_path, router):
+def fake_subscribers(db_path, router, source="pppoe"):
     try:
         import sqlite3
         con = sqlite3.connect(db_path, timeout=5)
         try:
-            return con.execute("SELECT COUNT(*) FROM devices WHERE router = ? AND source = 'pppoe'",
-                               (router,)).fetchone()[0]
+            return con.execute("SELECT COUNT(*) FROM devices WHERE router = ? AND source = ?",
+                               (router, source)).fetchone()[0]
         finally:
             con.close()
     except Exception:
@@ -1001,7 +1006,10 @@ def make_fake_poll(db_path, counters):
                 "board": "CCR2116-12G-4S+", **fake_health(name, t)}
         if kind == "bras":
             subs = fake_subscribers(db_path, name)
-            info["ppp"] = fake_ppp(subs, name, t)
+            if (router.get("pppoe") or {}).get("enabled"):
+                info["ppp"] = fake_ppp(subs, name, t)
+            if (router.get("hotspot") or {}).get("enabled"):
+                info["hotspot"] = fake_hotspot(fake_subscribers(db_path, name, "hotspot"), name, t)
             ifaces = [n for n in router.get("monitor_interfaces") or [] if n] or FAKE_IFACES
             info["ifaces"] = {i: {**counters.read(name, i, subs, t), "running": True} for i in ifaces}
         return info
@@ -1017,9 +1025,10 @@ def seed_rrd_history(gui, routers, db_path, counters, hours=6):
     for router in routers:
         name = router["name"]
         key = gui._router_key("bras", name)
-        subs = fake_subscribers(db_path, name)
+        subs, hs = fake_subscribers(db_path, name), fake_subscribers(db_path, name, "hotspot")
         series = {key: ("router", lambda t: [fake_health(name, t)[k] for k in gui.RRD_SCHEMAS["router"]]),
-                  gui._rrd_ppp(key): ("ppp", lambda t: [fake_ppp(subs, name, t)])}
+                  gui._rrd_ppp(key): ("ppp", lambda t: [fake_ppp(subs, name, t)]),
+                  gui._rrd_hotspot(key): ("hotspot", lambda t: [fake_hotspot(hs, name, t)])}
         for iface in [n for n in router.get("monitor_interfaces") or [] if n] or FAKE_IFACES:
             series[gui._rrd_iface(key, iface)] = (
                 "iface", lambda t, i=iface: [v for f, v in counters.read(name, i, subs, t).items()])

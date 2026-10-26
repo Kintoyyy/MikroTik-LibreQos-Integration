@@ -2993,9 +2993,10 @@ function ovRenderKpis() {
   const routers = monitorData && monitorData.routers || [];
   if (routers.length) {
     const up = routers.filter(r => r.ok).length;
-    const ppp = routers.reduce((n, r) => n + (r.ppp || 0), 0);
+    const total = (k, label) => routers.some(r => r[k] != null)
+      ? `${routers.reduce((n, r) => n + (r[k] || 0), 0).toLocaleString()} ${label}` : '';
     ovSetKpi('kpi-routers', `${up}<small>of ${routers.length} up</small>`,
-             `${ppp.toLocaleString()} PPP sessions`);
+             [total('ppp', 'PPP sessions'), total('hotspot', 'hotspot users')].filter(Boolean).join(' · '));
   }
 }
 
@@ -3331,6 +3332,7 @@ function ovRenderRouters() {
       ${r.ok === false ? `<div class="err" title="${esc(r.error || '')}">${esc(r.error || 'unreachable')}</div>` : `
       ${bar('CPU', r.cpu)}${bar('RAM', r.mem)}
       ${r.ppp != null ? `<div class="ov-r"><span>PPP</span><b>${Number(r.ppp).toLocaleString()} sessions</b></div>` : ''}
+      ${r.hotspot != null ? `<div class="ov-r"><span>Hotspot</span><b>${Number(r.hotspot).toLocaleString()} users</b></div>` : ''}
       ${busiest}
       ${extra ? `<div class="ov-r muted"><span>${extra}</span></div>` : ''}`}
     </div>`;
@@ -3457,7 +3459,8 @@ function _renderMtCards(list) {
     const ram = Number(rt.ram_percent || 0).toFixed(1);
     const uptime = (rt.uptime || '').toString().trim() || '—';
     const ppp = rt.ppp == null ? '' : `<div class="row"><span>PPP</span><span class="pct">${Number(rt.ppp).toLocaleString()}</span></div>`;
-    return `<div class="mt-mini"><div class="name">${esc(title)}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div>${ppp}<div class="row"><span>Uptime</span><span class="pct uptime">${esc(uptime)}</span></div></div>`;
+    const hs = rt.hotspot == null ? '' : `<div class="row"><span>Hotspot</span><span class="pct">${Number(rt.hotspot).toLocaleString()}</span></div>`;
+    return `<div class="mt-mini"><div class="name">${esc(title)}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div>${ppp}${hs}<div class="row"><span>Uptime</span><span class="pct uptime">${esc(uptime)}</span></div></div>`;
   }).join('');
 }
 
@@ -3895,7 +3898,7 @@ function buildRouterCard(rt, idx) {
           <div style="font-size:.72rem;color:var(--muted);line-height:1.45">On the router: <code>/snmp set enabled=yes</code> and a read-only community limited to this host, e.g.
             <code>/snmp community add name=lqsync addresses=&lt;this host&gt;/32</code>. The API is still used for subscriber scans, the NAT check (every 15 min) and Pick from router.</div>
         </div>
-        <label class="form-label" for="mon-if-${idx}">Interfaces to graph <span style="font-weight:400">— traffic, errors and drops every minute, plus active PPP sessions (Pollers page)</span></label>
+        <label class="form-label" for="mon-if-${idx}">Interfaces to graph <span style="font-weight:400">— traffic, errors and drops every minute, plus active PPP / hotspot sessions when PPPoE / Hotspot is on (Pollers page)</span></label>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
           <input class="form-input" style="flex:1;min-width:220px" id="mon-if-${idx}"
             placeholder="empty = running ethernet ports, e.g. sfp-sfpplus1, ether2"
@@ -6911,11 +6914,13 @@ function fmtBps(bps) {
   if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
   return (bps / 1e3).toFixed(0) + ' kbps';
 }
-// A BRAS's active PPP sessions and its graphed interfaces (rates since the previous poll)
+// A BRAS's active PPP / hotspot sessions and its graphed interfaces (rates since the previous poll)
 function routerTrafficRows(r) {
   const rows = [];
   if (r.ppp != null) rows.push(kvRow('PPP', `${r.ppp.toLocaleString()} <span class="dim">active sessions</span>`));
   else if (r.ppp_error) rows.push(kvRow('PPP', `<span class="bad">${esc(r.ppp_error)}</span>`));
+  if (r.hotspot != null) rows.push(kvRow('Hotspot', `${r.hotspot.toLocaleString()} <span class="dim">active users</span>`));
+  else if (r.hotspot_error) rows.push(kvRow('Hotspot', `<span class="bad">${esc(r.hotspot_error)}</span>`));
   if (r.ifaces_error) rows.push(kvRow('Interfaces', `<span class="bad">${esc(r.ifaces_error)}</span>`));
   Object.entries(r.ifaces || {}).forEach(([name, c]) => {
     const per = (a, b) => (a || 0) + (b || 0);
@@ -6958,7 +6963,8 @@ function graphGroupFacts(g) {
   if (r.ok === false) return `<span class="dot dot-red"></span> ${esc(r.error || 'unreachable')}`;
   return `<span class="dot ${r.ok ? 'dot-green' : 'dot-grey'}"></span> ` + [
     r.cpu != null ? `CPU ${fmtPct(r.cpu)}` : '', r.mem != null ? `RAM ${fmtPct(r.mem)}` : '',
-    r.ppp != null ? `PPP ${Number(r.ppp).toLocaleString()}` : '', r.via ? r.via.toUpperCase() : ''].filter(Boolean).join(' · ');
+    r.ppp != null ? `PPP ${Number(r.ppp).toLocaleString()}` : '',
+    r.hotspot != null ? `HS ${Number(r.hotspot).toLocaleString()}` : '', r.via ? r.via.toUpperCase() : ''].filter(Boolean).join(' · ');
 }
 function graphCells(g) {
   const t = Date.now();

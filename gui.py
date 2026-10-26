@@ -610,7 +610,8 @@ RRD_SCHEMAS = {
     "polling": ["scan_s", "build_s", "apply_s", "wan_s", "errors"],
     "devices": ["pppoe", "hotspot", "dhcp", "address_list", "static"],
     "router":  ["cpu", "mem", "temp", "volt", "api_ms"],   # one file per router
-    "ppp":     ["ppp"],                                     # one file per BRAS: active PPP sessions
+    "ppp":     ["ppp"],                                     # one file per BRAS with PPPoE on: active PPP sessions
+    "hotspot": ["hotspot"],                                 # one file per BRAS with hotspot on: active hotspot users
     # One file per graphed BRAS interface: its byte, error and drop counters
     "iface":   ["rx_bytes", "tx_bytes", "rx_errors", "tx_errors", "rx_drops", "tx_drops"],
     "hostif":  ["rx_bytes", "tx_bytes"],                    # one file per interface of this host
@@ -638,6 +639,10 @@ def _rrd_path(name):
 
 def _rrd_ppp(router_key):
     return f"{router_key}-ppp"
+
+
+def _rrd_hotspot(router_key):
+    return f"{router_key}-hotspot"
 
 
 def _rrd_iface(router_key, iface):
@@ -1047,9 +1052,18 @@ def _router_key(kind, name):
     return f"router-{kind}-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", name or "router")
 
 
-def _ppp_active_count(api):
-    """Active PPP sessions: a count-only print, so a big BRAS does not send every session."""
-    resource = api.get_resource("/ppp/active")
+def _service_on(router, service):
+    """Whether a BRAS syncs subscribers from this source ("pppoe", "hotspot", "dhcp")."""
+    return bool((router.get(service) or {}).get("enabled"))
+
+
+# Sessions a BRAS poll counts, for the sources it syncs: source → (poll field, RouterOS path)
+ACTIVE_COUNTS = {"pppoe": ("ppp", "/ppp/active"), "hotspot": ("hotspot", "/ip/hotspot/active")}
+
+
+def _active_count(api, path):
+    """Active sessions under path: a count-only print, so a big BRAS does not send every session."""
+    resource = api.get_resource(path)
     try:
         ret = getattr(resource.call("print", {"count-only": ""}), "done_message", {}).get("ret")
         if ret is not None:
@@ -1107,7 +1121,7 @@ def _add_interface_rates(info, prev):
 
 
 def _poll_router(kind, router):
-    """One router's health (and for a BRAS its PPP sessions and graphed interfaces):
+    """One router's health (and for a BRAS its PPP / hotspot sessions and graphed interfaces):
     over SNMP when the router has it enabled, else over the RouterOS API."""
     if snmp_monitor.settings(router):
         return _poll_router_snmp(kind, router)
@@ -1134,6 +1148,8 @@ def _poll_router_snmp(kind, router):
     info = {"name": name, "kind": kind, "address": router.get("address", ""), "at": time.time(),
             **snmp_monitor.poll(host, port, s["community"], kind, chosen,
                                 _snmp_caches.setdefault(key, snmp_monitor.RouterCache()), MAX_GRAPHED_INTERFACES)}
+    if not _service_on(router, "pppoe"):
+        info.pop("ppp", None)             # the "<…>" interface count means PPP sessions only with PPPoE on
     if kind == "bras" and info["ok"] and time.time() - _nat_checked.get(key, 0) >= NAT_CHECK_INTERVAL:
         pool = None
         try:
@@ -1153,8 +1169,8 @@ def _poll_router_snmp(kind, router):
 
 
 def _poll_router_api(kind, router):
-    """Read CPU, memory, temperature and voltage from one router over the API; for a
-    BRAS also its active PPP sessions and the counters of its graphed interfaces."""
+    """Read CPU, memory, temperature and voltage from one router over the API; for a BRAS also
+    its active PPP / hotspot sessions (those it syncs) and the counters of its graphed interfaces."""
     info = {"name": router.get("name") or router.get("address", ""), "kind": kind,
             "address": router.get("address", ""), "ok": False, "error": "", "at": time.time(), "via": "api"}
     t0, pool = time.monotonic(), None
@@ -1173,10 +1189,13 @@ def _poll_router_api(kind, router):
         temp, volt = _health_values(health)
         if kind == "bras":
             info["nat_rules"], info["nat_lists"] = _read_nat(api)
-            try:
-                info["ppp"] = _ppp_active_count(api)
-            except Exception as e:
-                info["ppp_error"] = str(e)
+            for service, (field, path) in ACTIVE_COUNTS.items():
+                if not _service_on(router, service):
+                    continue
+                try:
+                    info[field] = _active_count(api, path)
+                except Exception as e:
+                    info[f"{field}_error"] = str(e)
             try:
                 info["ifaces"] = _read_interfaces(api, router)
             except Exception as e:
@@ -1280,6 +1299,15 @@ def _router_ips(conn, router_name):
     return ips
 
 
+def _scanned_hotspot_users(conn, router_name):
+    """Active hotspot users the last subscriber scan found on a router (SNMP has no hotspot session count)."""
+    try:
+        return conn.execute("SELECT COUNT(*) FROM devices WHERE router = ? AND source = 'hotspot' AND is_static = 0",
+                            (router_name,)).fetchone()[0]
+    except sqlite3.Error:
+        return None               # the scanner has not created the table yet
+
+
 def _poll_routers(conn):
     """Poll every configured router once, record each poll as a job, update the router RRDs."""
     targets = _router_targets(_load_config())
@@ -1298,11 +1326,15 @@ def _poll_routers(conn):
             info["nat"] = _nat_findings(rules, lists, _router_ips(conn, name))
         elif info.get("via") == "snmp" and prev and "nat" in prev:
             info["nat"] = prev["nat"]        # SNMP polls check NAT (over the API) only now and then
+        if kind == "bras" and info.get("via") == "snmp" and info.get("ok") and _service_on(router, "hotspot"):
+            info["hotspot"] = _scanned_hotspot_users(conn, name)
         _add_interface_rates(info, prev)
         latest[key] = info
         updates = [(key, "router", [info.get(k) for k in RRD_SCHEMAS["router"]])]
         if info.get("ppp") is not None:
             updates.append((_rrd_ppp(key), "ppp", [info["ppp"]]))
+        if info.get("hotspot") is not None:
+            updates.append((_rrd_hotspot(key), "hotspot", [info["hotspot"]]))
         for iface, counters in (info.get("ifaces") or {}).items():
             updates.append((_rrd_iface(key, iface), "iface", [counters.get(k) for k in RRD_SCHEMAS["iface"]]))
         for rrd, schema, values in updates:
@@ -1704,9 +1736,14 @@ def _graph_defs(cfg):
         ], group)
         if kind != "bras":
             continue
-        graph(_rrd_ppp(key), f"Router {name} PPP sessions", "sessions", _rrd_ppp(key), [
-            ("ppp", "active PPP sessions", "3b82f6", "AREA", "", False),
-        ], group)
+        if _service_on(router, "pppoe"):
+            graph(_rrd_ppp(key), f"Router {name} PPP sessions", "sessions", _rrd_ppp(key), [
+                ("ppp", "active PPP sessions", "3b82f6", "AREA", "", False),
+            ], group)
+        if _service_on(router, "hotspot"):
+            graph(_rrd_hotspot(key), f"Router {name} hotspot users", "users", _rrd_hotspot(key), [
+                ("hotspot", "active hotspot users", "22c55e", "AREA", "", False),
+            ], group)
         for iface in _graph_interface_names(key, router, polled.get(key)):
             rrd = _rrd_iface(key, iface)
             graph(rrd, f"Router {name} {iface}: traffic, errors, drops", "Mbps", rrd, [
@@ -3934,6 +3971,7 @@ def dashboard_mikrotik_resource():
             "ram_percent": round(info["mem"], 1) if info.get("mem") is not None else None,
             "uptime": info.get("uptime"),
             "ppp": info.get("ppp"),
+            "hotspot": info.get("hotspot"),
             "ok": bool(info.get("ok")),
             "error": info.get("error") or ("" if info else "waiting for first poll"),
         })
