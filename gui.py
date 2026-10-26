@@ -35,6 +35,7 @@ from device_database import (
     ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges,
     ensure_webhook_table, record_webhook_event,
 )
+import app_update
 import cpu_planner
 import snmp
 import snmp_monitor
@@ -140,6 +141,28 @@ def _csrf_guard():
             and request.method not in ("GET", "HEAD", "OPTIONS")
             and request.headers.get("X-Requested-With") != "fetch"):
         return jsonify({"ok": False, "error": "Missing X-Requested-With header"}), 403
+
+@app.errorhandler(Exception)
+def _api_error(e):
+    """
+    Errors under /api/ are JSON like every API answer, so the page shows what
+    went wrong (an HTML error page only gives "Unexpected token '<'").
+    """
+    from werkzeug.exceptions import HTTPException
+    if not request.path.startswith("/api/"):
+        if isinstance(e, HTTPException):
+            return e
+        app.logger.exception(f"{request.method} {request.path} failed")
+        return "Internal Server Error", 500
+    if isinstance(e, HTTPException):
+        error = e.description
+        if e.code == 404:
+            error = (f"{request.path} does not exist on this LQ-Sync. If you just updated, the GUI may "
+                     "still be running the old code: restart the gui service.")
+        return jsonify({"ok": False, "error": error, "status": e.code}), e.code
+    app.logger.exception(f"{request.method} {request.path} failed")
+    return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}", "status": 500}), 500
+
 
 def require_auth(f):
     @functools.wraps(f)
@@ -2101,11 +2124,14 @@ def router_interfaces():
     pool = None
     try:
         pool = _router_connect(router)
+        # Filtered here, not with a "?dynamic=false" API query: on a real router that query
+        # matched no interfaces at all. PPP sessions are dynamic "<pppoe-…>" interfaces.
         rows = pool.get_api().get_resource("/interface").call(
-            "print", {"proplist": "name,type,running,disabled,comment"}, {"dynamic": "false"})
+            "print", {"proplist": "name,type,running,disabled,dynamic,comment"})
         interfaces = sorted(({"name": r.get("name", ""), "type": r.get("type", ""),
                               "running": r.get("running") == "true", "disabled": r.get("disabled") == "true",
-                              "comment": r.get("comment", "")} for r in rows if r.get("name")),
+                              "comment": r.get("comment", "")} for r in rows
+                             if r.get("name") and r.get("dynamic") != "true" and not r["name"].startswith("<")),
                             key=lambda i: (not i["running"], i["name"]))
         return jsonify({"ok": True, "router": name, "interfaces": interfaces,
                         "graphed": router.get("monitor_interfaces") or []})
@@ -2728,131 +2754,117 @@ def restart_ubuntu_host():
 
 
 # ---------------------------------------------------------------------------
-# App update (pull from GitHub, reinstall in place)
+# App update from GitHub (app_update.py): check, download, verify, install, roll back
 # ---------------------------------------------------------------------------
-GITHUB_REPO_URL = "https://github.com/Kintoyyy/MikroTik-LibreQos-Integration"
-
-# "Update App" replaces every top-level *.py file plus templates/ with the
-# GitHub copy, so modules added later are picked up too. Anything holding
-# live state or credentials — config.json, settings.json, gui_auth.json,
-# devices.db, ShapedDevices.csv, network.json, lqos.conf, and the systemd
-# unit files — is never touched, so an update can't silently roll back
-# routers, WAN assignments, or the login password.
+GITHUB_REPO_URL = app_update.REPO_URL
 # Services are try-restarted: stopped or disabled ones (e.g. wan_service with
 # WAN assignment off) stay that way. gui.service restarts itself, separately, last.
 UPDATE_SERVICES = ["updatecsv.service", "wan_service.service"]
-
-
-def _installed_version_path():
-    return SCRIPT_DIR / ".installed_version"
+# The version this process runs: the installed version can differ until the GUI restarts.
+_RUNNING_VERSION = app_update.installed_version(SCRIPT_DIR)
+_update_lock = threading.Lock()
 
 
 def _current_version():
-    marker = _installed_version_path()
-    if marker.exists():
+    return app_update.installed_version(SCRIPT_DIR)
+
+
+def _restart_after_update():
+    """Restart the other services now and this GUI shortly after the response is sent."""
+    errors = []
+    for svc in UPDATE_SERVICES:
         try:
-            return marker.read_text().strip() or "unknown"
-        except Exception:
-            pass
-    return "unknown"
+            result = _systemctl("try-restart", svc, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                errors.append(f"{svc}: {result.stderr.strip()}")
+        except Exception as ex:
+            errors.append(f"{svc}: {ex}")
+
+    def restart_gui():
+        time.sleep(2)              # let the response reach the browser first
+        try:
+            r = _systemctl("restart", "gui.service", capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                app.logger.error(f"gui restart after update failed: {r.stderr.strip()}")
+        except Exception as ex:
+            app.logger.error(f"gui restart after update failed: {ex}")
+
+    threading.Thread(target=restart_gui, daemon=True).start()
+    return errors
 
 
 @app.route("/api/system/version")
 @require_auth
 def system_version():
-    return jsonify({"ok": True, "version": _current_version(), "repo": GITHUB_REPO_URL})
+    installed = _current_version()
+    return jsonify({
+        "ok": True, "version": _RUNNING_VERSION, "running": _RUNNING_VERSION, "installed": installed,
+        "restart_needed": installed != _RUNNING_VERSION, "repo": GITHUB_REPO_URL, "branch": app_update.BRANCH,
+        "backups": app_update.backups(SCRIPT_DIR)[:app_update.KEEP_BACKUPS],
+    })
+
+
+@app.route("/api/system/update/check")
+@require_auth
+def update_check():
+    """Latest commit on GitHub and the commits since the installed one, without downloading."""
+    try:
+        return jsonify({"ok": True, **app_update.check(SCRIPT_DIR)})
+    except app_update.UpdateError as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
 
 
 @app.route("/api/system/update", methods=["POST"])
 @require_auth
 def update_app():
     """
-    Pull the latest code from GitHub and reinstall it in place.
-
-    Only the top-level *.py files plus templates/ are replaced. A copy
-    of every file about to be overwritten is stashed in a timestamped backup
-    folder next to gui.py first, so a bad update can be rolled back by hand.
+    Download the latest code from GitHub, check it (compiles, tests pass on
+    this host), then replace the app's *.py files and templates/, backing up
+    every replaced file, and restart the services. {"force": true} installs
+    even when the checks fail.
     """
-    git = _which("git")
-    if not git:
-        return jsonify({"ok": False, "error": "git is not installed on this host"}), 500
-
-    tmp_dir = tempfile.mkdtemp(prefix="libreqos-update-")
+    if not _update_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "An update is already running"}), 409
+    clone = app_update.temp_dir()
     try:
-        clone = subprocess.run(
-            [git, "clone", "--depth", "1", GITHUB_REPO_URL, tmp_dir],
-            capture_output=True, text=True, timeout=120,
-        )
-        if clone.returncode != 0:
-            return jsonify({"ok": False, "error": f"git clone failed: {clone.stderr.strip()}"}), 500
-
-        src_root = Path(tmp_dir)
-        if not (src_root / "gui.py").exists():
-            return jsonify({"ok": False, "error": "Downloaded repo is missing gui.py — aborting"}), 500
-
-        backup_dir = SCRIPT_DIR / f".update_backup_{int(time.time())}"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-
-        updated = []
-        for src in sorted(src_root.glob("*.py")):
-            name = src.name
-            dest = SCRIPT_DIR / name
-            if dest.exists():
-                shutil.copy2(dest, backup_dir / name)
-            shutil.copy2(src, dest)
-            updated.append(name)
-
-        templates_src = src_root / "templates"
-        if templates_src.exists():
-            templates_dest = SCRIPT_DIR / "templates"
-            if templates_dest.exists():
-                shutil.copytree(templates_dest, backup_dir / "templates", dirs_exist_ok=True)
-            shutil.copytree(templates_src, templates_dest, dirs_exist_ok=True)
-            updated.append("templates/")
-
-        rev = subprocess.run(
-            [git, "-C", tmp_dir, "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=5,
-        )
-        new_version = rev.stdout.strip() if rev.returncode == 0 else ""
-        if new_version:
-            _installed_version_path().write_text(new_version + "\n")
-
-        restart_errors = []
-        for svc in UPDATE_SERVICES:
-            try:
-                result = _systemctl("try-restart", svc, capture_output=True, text=True)
-                if result.returncode != 0:
-                    restart_errors.append(f"{svc}: {result.stderr.strip()}")
-            except Exception as ex:
-                restart_errors.append(f"{svc}: {ex}")
-
-        # gui.service restarts itself — deferred a couple seconds on a
-        # background thread so this response reaches the browser first,
-        # instead of dying mid-request the way an inline restart would.
-        def _restart_gui_later():
-            time.sleep(2)
-            try:
-                _systemctl("restart", "gui.service", capture_output=True, text=True)
-            except Exception:
-                pass
-
-        threading.Thread(target=_restart_gui_later, daemon=True).start()
-
+        force = bool((request.get_json(silent=True) or {}).get("force"))
+        installed = _current_version()
+        version = app_update.download(clone / "src")
+        changes = app_update.changelog(clone / "src", installed)
+        ok, summary, output = app_update.verify(clone / "src")
+        if not ok and not force:
+            return jsonify({"ok": False, "stage": "verify", "error": f"Not installed: {summary}",
+                            "version": version, "changes": changes, "output": output}), 422
+        updated, backup = app_update.install(clone / "src", SCRIPT_DIR, version)
+        app.logger.info(f"Updated {installed} → {version} ({len(updated)} files, {summary})")
         return jsonify({
-            "ok": True,
-            "version": new_version or "unknown",
-            "updated_files": updated,
-            "backup": str(backup_dir),
-            "restart_errors": restart_errors,
-            "message": "Updated — GUI service is restarting now, reload in a few seconds.",
+            "ok": True, "from": installed, "version": version, "changes": changes,
+            "checks": summary, "checks_ok": ok, "updated_files": len(updated), "backup": backup.name,
+            "restart_errors": _restart_after_update(),
         })
-    except subprocess.TimeoutExpired:
-        return jsonify({"ok": False, "error": "git operation timed out"}), 500
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except app_update.UpdateError as e:
+        return jsonify({"ok": False, "stage": "download", "error": str(e)}), 502
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        shutil.rmtree(clone, ignore_errors=True)
+        _update_lock.release()
+
+
+@app.route("/api/system/rollback", methods=["POST"])
+@require_auth
+def rollback_app():
+    """Put the files of an update backup back and restart the services."""
+    if not _update_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "An update is already running"}), 409
+    try:
+        name = (request.get_json(silent=True) or {}).get("backup", "")
+        restored, version = app_update.rollback(SCRIPT_DIR, name)
+        app.logger.info(f"Rolled back to {version} from {name} ({len(restored)} files)")
+        return jsonify({"ok": True, "version": version, "restored_files": len(restored),
+                        "restart_errors": _restart_after_update()})
+    except app_update.UpdateError as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+    finally:
+        _update_lock.release()
 
 
 # ---------------------------------------------------------------------------

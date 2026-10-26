@@ -137,7 +137,18 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 | **Topology** | Sankey diagram showing bandwidth flow from parent nodes to devices; overview and detail modes |
 | **Builder** | Drag-and-drop editor for the site / AP / router hierarchy (`auto_cpu`), with a live preview of the per-core CPU plan, the generated `network.json` and its warnings |
 | **Devices** | Live device table with search and filter; manually add, edit, or delete devices |
-| **Troubleshooting** | MikroTik API diagnostics, lqusers reset, and one-click LibreQoS installer |
+| **Troubleshooting** | MikroTik API diagnostics, lqusers reset, one-click LibreQoS installer, and **App Update** (see below) |
+
+### Updating from GitHub
+
+**Troubleshooting → App Update** updates LQ-Sync in place:
+
+1. **Check for updates** shows the latest commit on GitHub and the commits you don't have yet.
+2. **Update App** downloads that code and checks it on this host first: every module must compile and the test suite must pass with this host's Python and packages. If a check fails, nothing is changed; you see the output and can still choose **Install anyway**.
+3. It replaces the app's `*.py` files and `templates/`, after backing up every replaced file (the last 5 backups are kept). `config.json`, `settings.json`, the login, `devices.db`, LibreQoS's files and the systemd units are never touched.
+4. It restarts updatecsv and wan_service, then the GUI, and the page waits until the GUI answers with the new version before reloading. If it doesn't come back, the page says so.
+
+The page compares the version the GUI is **running** with the one **installed** on disk and shows *Restart GUI* when they differ (an update whose restart didn't happen). **Roll back to an earlier version** puts a backup's files back the same way.
 
 ### Authentication
 

@@ -387,6 +387,18 @@ code { font-size: .8rem; color: #94a3b8; }
 .check a:hover { text-decoration: underline; }
 .check.info > i { color: var(--accent); }
 
+/* ── App update ── */
+.upd-versions { display: flex; gap: 1.2rem; flex-wrap: wrap; font-size: .78rem; color: var(--muted); margin-bottom: .75rem; }
+.upd-versions code { font-size: .78rem; background: #0d1117; padding: .1em .5em; border-radius: 4px; color: #94a3b8; }
+.upd-result { background: #0d1117; border: 1px solid var(--border); border-radius: 8px; padding: .65rem .85rem;
+              font-size: .78rem; margin-bottom: .75rem; line-height: 1.6; }
+.upd-result pre { font-family: var(--mono); font-size: .7rem; max-height: 260px; overflow: auto; white-space: pre-wrap;
+                  margin: .5rem 0 0; color: var(--text); }
+.upd-result .ok { color: var(--green); }
+.upd-result .bad { color: #ff7b72; }
+.upd-changes { font-size: .78rem; margin: 0 0 .75rem; padding-left: 1.1rem; max-height: 220px; overflow: auto; }
+.upd-changes code { font-size: .72rem; color: var(--muted); }
+
 /* ── Graphed interfaces picker ── */
 .if-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .3rem .9rem; margin-top: .6rem;
            border: 1px solid var(--border); border-radius: 8px; padding: .6rem .75rem; background: var(--bg); }
@@ -619,6 +631,7 @@ code { font-size: .8rem; color: #94a3b8; }
   <div class="ss-row" id="ss-routers"><i class="bi bi-hdd-stack"></i><span class="dot dot-grey"></span><b>Router</b><span>checking…</span></div>
   <div class="ss-row" id="ss-host"><i class="bi bi-display"></i><span class="dot dot-grey"></span><b>this host</b><span>checking…</span></div>
   <div class="ss-row ss-checks" id="ss-checks" style="display:none" onclick="switchTab('pollers')" title="Open Pollers for details"></div>
+  <div class="ss-row" id="ss-restart" style="display:none"></div>
 </div>
 
 <!-- ── Tab nav ── -->
@@ -1094,18 +1107,31 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
     <div class="card-bd">
       <p style="font-size:.83rem;color:#cbd5e1;line-height:1.7;margin:0 0 .5rem">
-        Pulls the latest code from
-        <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank" rel="noopener" style="color:var(--blue)">GitHub</a>
-        and reinstalls it in place. Routers, WAN assignments, device data, and your login password are never touched —
-        only application code and templates are replaced, and the previous code is backed up first.
+        Downloads the latest code from
+        <a href="https://github.com/Kintoyyy/MikroTik-LibreQos-Integration" target="_blank" rel="noopener" style="color:var(--blue)">GitHub</a>,
+        checks it on this host (it must compile and pass its tests), then replaces the app's code and templates
+        and restarts the services. Routers, WAN assignments, device data and your login password are never touched,
+        and the replaced code is backed up so you can roll back.
       </p>
-      <div style="font-size:.78rem;color:var(--muted);margin-bottom:.75rem">
-        Running version: <code id="app-version" style="font-size:.78rem;background:#0d1117;padding:.1em .5em;border-radius:4px;color:#94a3b8">—</code>
+      <div class="upd-versions">
+        <span>Running <code id="app-version">—</code></span>
+        <span>Installed <code id="app-installed">—</code></span>
+        <span>GitHub <code id="app-latest">not checked</code></span>
       </div>
-      <div id="update-app-result" style="display:none;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:.65rem .85rem;font-size:.78rem;margin-bottom:.75rem;white-space:pre-wrap"></div>
-      <button class="btn-primary" onclick="confirmUpdateApp()" id="btn-update-app">
-        <i class="bi bi-cloud-arrow-down"></i> Update App
-      </button>
+      <div id="app-restart-note"></div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem">
+        <button class="btn-ghost" onclick="checkAppUpdate()" id="btn-check-update"><i class="bi bi-arrow-repeat"></i> Check for updates</button>
+        <button class="btn-primary" onclick="confirmUpdateApp(false)" id="btn-update-app"><i class="bi bi-cloud-arrow-down"></i> Update App</button>
+      </div>
+      <div id="update-app-changes"></div>
+      <div id="update-app-result" class="upd-result" style="display:none"></div>
+      <details id="app-rollback" style="margin-top:.75rem;display:none">
+        <summary style="font-size:.8rem;color:var(--muted);cursor:pointer">Roll back to an earlier version</summary>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem">
+          <select class="search-input" id="rollback-select" style="min-width:260px"></select>
+          <button class="btn-danger-ghost" onclick="rollbackApp()"><i class="bi bi-arrow-counterclockwise"></i> Roll back</button>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -2965,7 +2991,7 @@ function selectStrategy(val) {
 async function loadQueuesDetect() {
   const el = document.getElementById('queues-detect');
   try {
-    const d = await (await fetch('/api/topology/queues')).json();
+    const d = await apiJson('/api/topology/queues');
     if (!d.ok) { el.textContent = ''; return; }
     const nic = Object.values(d.nic_queues || {}).filter(v => v);
     const parts = [];
@@ -3252,8 +3278,8 @@ async function testSnmp(idx) {
   out.innerHTML = '<i class="bi bi-hourglass-split"></i> Asking the router…';
   let d;
   try {
-    d = await (await fetch('/api/routers/snmp-test', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ router: _brasName(idx), address: r.address, port: s.port || 161, community: s.community || 'public' }) })).json();
+    d = await apiJson('/api/routers/snmp-test', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ router: _brasName(idx), address: r.address, port: s.port || 161, community: s.community || 'public' }) });
   } catch (e) { d = { ok: false, error: e.message }; }
   out.innerHTML = d.ok
     ? `<span style="color:var(--green)"><i class="bi bi-check-circle-fill"></i> ${esc(d.identity)}</span> · ${esc(d.board)} · RouterOS ${esc(d.version)} · ${d.interfaces ?? '?'} interfaces · ${Math.round(d.ms)} ms`
@@ -3276,7 +3302,7 @@ async function pickInterfaces(idx) {
   box.innerHTML = '<div class="bld-stat" style="margin-top:.5rem">Reading interfaces…</div>';
   let d;
   try {
-    d = await (await fetch(`/api/routers/interfaces?router=${encodeURIComponent(_brasName(idx))}`)).json();
+    d = await apiJson(`/api/routers/interfaces?router=${encodeURIComponent(_brasName(idx))}`);
   } catch (e) { d = { ok: false, error: e.message }; }
   if (!d.ok) { box.innerHTML = `<div class="bld-stat" style="margin-top:.5rem;color:#ff7b72">${esc(d.error)}</div>`; return; }
   const chosen = new Set(configData.bras[idx].monitor_interfaces || []);
@@ -3580,7 +3606,7 @@ function _brasByName(name) {
 async function loadWebhookStatus() {
   _whWire();
   try {
-    const d = await (await fetch('/api/webhook/status')).json();
+    const d = await apiJson('/api/webhook/status');
     if (!d.ok) return;
     wh.status = d;
     renderWebhook();
@@ -3661,11 +3687,11 @@ function renderWebhookPanel() {
     <div class="bld-stat" style="margin-top:.75rem">3. The router's test call shows under <b>Last call</b> above; from then on every PPP login and logout does.</div>
     <div class="wh-result" id="wh-result"></div>
   </div>`;
-  if (wh.tab === 'terminal') _whLoadScript(r);
+  if (wh.tab === 'terminal') _whLoadScript(r).catch(e => { document.getElementById('wh-script').value = `# ${e.message}`; });
 }
 async function _whLoadScript(r) {
   const box = document.getElementById('wh-script');
-  const d = await (await fetch(`/api/webhook/script?router=${encodeURIComponent(r.name)}&kind=${wh.kind}`)).json();
+  const d = await apiJson(`/api/webhook/script?router=${encodeURIComponent(r.name)}&kind=${wh.kind}`);
   if (box) box.value = d.ok ? d.script : `# ${d.error}`;
 }
 function _whResult(html, ok = true) {
@@ -3684,7 +3710,7 @@ async function _whAction(act) {
   if (act === 'token') {
     if (wh.status.routers.find(r => r.name === name)?.has_token &&
         !confirm(`Give ${name} a new token? The installed webhook stops working until you install it again.`)) return;
-    const d = await (await fetch('/api/webhook/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ router: name }) })).json();
+    const d = await apiJson('/api/webhook/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ router: name }) });
     if (!d.ok) { toast(d.error, false); return; }
     const entry = _brasByName(name);
     if (entry) entry.webhook_token = d.token;   // so a later Save Changes keeps it
@@ -3703,10 +3729,10 @@ async function _whAction(act) {
   const user = document.getElementById('wh-user')?.value.trim() || '';
   const pass = document.getElementById('wh-pass')?.value || '';
   _whResult(`<i class="bi bi-hourglass-split"></i> ${act === 'check' ? 'Checking' : act === 'install' ? 'Installing' : 'Removing'} on ${esc(name)}…`);
-  const d = await (await fetch('/api/webhook/router', {
+  const d = await apiJson('/api/webhook/router', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ router: name, action: act, username: user || undefined, password: user ? pass : undefined }),
-  })).json();
+  });
   if (!d.ok) { _whResult(esc(d.error || 'failed'), false); return; }
   if (act === 'check') { _whResult(_whStatusText(d)); return; }
   const changed = d.changed && d.changed.length ? `Changed profiles: ${d.changed.map(esc).join(', ')}. ` : 'No profile needed changes. ';
@@ -3720,7 +3746,10 @@ async function saveWebhookConfig() {
   const enabled = document.getElementById('wh-enabled').checked;
   let url = document.getElementById('wh-url').value.trim();
   if (enabled && !url && wh.status) url = wh.status.suggested_url;
-  const d = await (await fetch('/api/webhook/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, url }) })).json();
+  let d;
+  try {
+    d = await apiJson('/api/webhook/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, url }) });
+  } catch (e) { d = { ok: false, error: e.message }; }
   if (!d.ok) { toast(d.error, false); return; }
   if (configData) configData.webhook = d.webhook;   // so a later Save Changes keeps it
   toast(enabled ? 'Webhook on' : 'Webhook off');
@@ -3737,7 +3766,7 @@ function _whWire() {
       renderWebhook();
     } else if (b.dataset.whTab) { wh.tab = b.dataset.whTab; renderWebhookPanel(); }
     else if (b.dataset.whKind) { wh.kind = b.dataset.whKind; renderWebhookPanel(); }
-    else if (b.dataset.whAct) _whAction(b.dataset.whAct);
+    else if (b.dataset.whAct) _whAction(b.dataset.whAct).catch(e => _whResult(esc(e.message), false));
   });
 }
 
@@ -4092,62 +4121,158 @@ async function loadTroubleshooting() {
   await loadAppVersion();
 }
 
+// fetch + JSON with a readable error when the server answers with a page instead of data
+// (an old GUI process without the endpoint, a proxy, or a server error page).
+async function apiJson(url, opts) {
+  const r = await fetch(url, opts);
+  if (!(r.headers.get('content-type') || '').includes('application/json')) {
+    throw new Error(`HTTP ${r.status} from ${url.split('?')[0]}: the server answered with a web page instead of data. ` +
+      'If LQ-Sync was just updated, restart the gui service (Services tab).');
+  }
+  return r.json();
+}
+
+// ── App update ──
+let appVersion = null;
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function loadAppVersion() {
-  const el = document.getElementById('app-version');
-  if (!el) return;
-  try {
-    const r = await fetch('/api/system/version');
-    const d = await r.json();
-    el.textContent = d.ok ? d.version : 'unknown';
-  } catch (e) {
-    el.textContent = 'unknown';
+  let d;
+  try { d = await apiJson('/api/system/version'); } catch (e) { return; }
+  if (!d.ok) return;
+  appVersion = d;
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+  set('app-version', d.running);
+  set('app-installed', d.installed);
+  const note = d.restart_needed
+    ? `LQ-Sync ${esc(d.installed)} is installed, but this GUI still runs ${esc(d.running)}.`
+    : '';
+  const strip = document.getElementById('ss-restart');
+  strip.style.display = note ? '' : 'none';
+  strip.innerHTML = note ? `<i class="bi bi-arrow-clockwise" style="color:var(--yellow)"></i><span style="color:var(--yellow)">${note}</span>
+    <button class="btn-ghost" style="font-size:.75rem" onclick="restartGuiNow()">Restart GUI</button>` : '';
+  const card = document.getElementById('app-restart-note');
+  if (card) card.innerHTML = note ? `<div class="bld-note"><i class="bi bi-exclamation-triangle"></i><span>${note} Restart it to finish the update.</span>
+    <button class="btn-ghost" onclick="restartGuiNow()">Restart GUI</button></div>` : '';
+  const rb = document.getElementById('app-rollback');
+  if (rb) {
+    rb.style.display = d.backups && d.backups.length ? '' : 'none';
+    document.getElementById('rollback-select').innerHTML = (d.backups || []).map(b =>
+      `<option value="${esc(b.name)}">${esc(b.version)} · backed up ${esc(new Date(b.created * 1000).toLocaleString())}</option>`).join('');
   }
 }
 
-async function confirmUpdateApp() {
-  const confirmed = confirm(
-    'This will:\n\n' +
-    '  1. Pull the latest code from GitHub\n' +
-    '  2. Replace the app\'s Python files and templates (config, devices, and passwords are kept)\n' +
-    '  3. Restart updatecsv, wan_service, and this GUI\n\n' +
-    'The GUI will be briefly unreachable while it restarts. Continue?'
-  );
-  if (!confirmed) return;
-  const btn = document.getElementById('btn-update-app');
+function _updResult(html) {
   const res = document.getElementById('update-app-result');
+  res.style.display = html ? 'block' : 'none';
+  res.innerHTML = html;
+}
+function _updChanges(list, title) {
+  document.getElementById('update-app-changes').innerHTML = list && list.length
+    ? `<div class="form-label">${esc(title)}</div><ul class="upd-changes">${list.map(c => {
+        const [sha, subject] = typeof c === 'string' ? [c.split(' ')[0], c.slice(c.indexOf(' ') + 1)] : [c.sha, c.subject];
+        return `<li><code>${esc(sha)}</code> ${esc(subject)}</li>`;
+      }).join('')}</ul>`
+    : '';
+}
+
+async function checkAppUpdate() {
+  const btn = document.getElementById('btn-check-update');
   btn.disabled = true;
-  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Updating…';
-  res.style.display = 'none';
   try {
-    const r = await fetch('/api/system/update', { method: 'POST' });
-    const d = await r.json();
-    res.style.display = 'block';
-    if (d.ok) {
-      const lines = [
-        `✔ Updated to ${d.version}`,
-        `✔ Files: ${(d.updated_files || []).join(', ') || 'none'}`,
-        `✔ Backup: ${d.backup || 'n/a'}`,
-        ...((d.restart_errors || []).map(e => `✘ ${e}`)),
-        d.message || '',
-      ].filter(Boolean).join('\n');
-      res.style.color = 'var(--green)';
-      res.textContent = lines;
-      toast('App updated — GUI restarting…');
-      document.getElementById('app-version').textContent = d.version;
-    } else {
-      res.style.color = 'var(--red)';
-      res.textContent = '✘ ' + (d.error || 'Update failed');
-      toast(d.error || 'Update failed', false);
+    const d = await apiJson('/api/system/update/check');
+    if (!d.ok) throw new Error(d.error);
+    document.getElementById('app-latest').textContent = d.latest;
+    if (!d.available) { _updChanges([], ''); _updResult(`<span class="ok"><i class="bi bi-check-circle-fill"></i> Up to date (${esc(d.latest)})</span>`); }
+    else {
+      _updResult(`<i class="bi bi-cloud-arrow-down"></i> ${esc(d.latest)} is available${d.commits && d.commits.length ? `: ${d.commits.length} new commit(s)` : ''}.`);
+      _updChanges(d.commits || [], 'What is new');
     }
   } catch (e) {
-    res.style.display = 'block';
-    res.style.color = 'var(--yellow)';
-    res.textContent = 'Request interrupted — this is expected if the GUI restarted already. Reload the page in a few seconds to confirm.';
-    toast('Reload in a few seconds to confirm the update applied', false);
+    _updResult(`<span class="bad">${esc(e.message)}</span>`);
   } finally {
     btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Update App';
   }
+}
+
+async function confirmUpdateApp(force) {
+  if (!confirm(force
+    ? 'Install the downloaded code even though its checks failed?'
+    : 'Download the latest code from GitHub, check it, install it and restart updatecsv, wan_service and this GUI?\n\n' +
+      'Config, devices and passwords are kept, and the current code is backed up.')) return;
+  const btn = document.getElementById('btn-update-app');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Updating…';
+  _updResult('<i class="bi bi-hourglass-split"></i> Downloading, checking (compile and tests) and installing… this can take a minute.');
+  let d;
+  try {
+    d = await apiJson('/api/system/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ force: !!force }) });
+  } catch (e) {
+    d = { ok: false, error: e.message };
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Update App';
+  if (!d.ok) {
+    _updChanges(d.changes, 'In the downloaded version');
+    _updResult(`<span class="bad"><i class="bi bi-x-circle-fill"></i> ${esc(d.error || 'Update failed')}</span>` +
+      (d.stage === 'verify' ? ` Nothing was changed.
+        <button class="btn-danger-ghost" style="margin-left:.4rem" onclick="confirmUpdateApp(true)">Install anyway</button>` : '') +
+      (d.output ? `<pre>${esc(d.output)}</pre>` : ''));
+    return;
+  }
+  document.getElementById('app-installed').textContent = d.version;
+  _updChanges(d.changes, `Installed ${d.from} → ${d.version}`);
+  _updResult(`<span class="ok"><i class="bi bi-check-circle-fill"></i> Installed ${esc(d.version)}</span> · checks: ${esc(d.checks)}
+    ${d.checks_ok ? '' : '<span class="bad">(installed anyway)</span>'} · ${d.updated_files} files · backup ${esc(d.backup)}
+    ${(d.restart_errors || []).map(e => `<div class="bad">✘ ${esc(e)}</div>`).join('')}
+    <div id="upd-wait"><i class="bi bi-hourglass-split"></i> Restarting the GUI…</div>`);
+  await waitForGui(d.version);
+}
+
+// Wait until the restarted GUI answers with the new version, then reload the page.
+async function waitForGui(version) {
+  const line = html => { const el = document.getElementById('upd-wait'); if (el) el.innerHTML = html; };
+  const t0 = Date.now();
+  await _sleep(2500);
+  while (Date.now() - t0 < 60000) {
+    try {
+      const v = await apiJson('/api/system/version');
+      if (v.running === version) {
+        line(`<span class="ok"><i class="bi bi-check-circle-fill"></i> The GUI now runs ${esc(version)}: reloading…</span>`);
+        await _sleep(1200);
+        location.reload();
+        return;
+      }
+    } catch (e) { /* restarting */ }
+    await _sleep(1500);
+  }
+  line(`<span class="bad"><i class="bi bi-x-circle-fill"></i> The GUI did not come back on ${esc(version)} within a minute.
+    Restart it on the Services tab, or run <code>sudo systemctl restart gui</code>.</span>`);
+  loadAppVersion();
+}
+
+async function restartGuiNow() {
+  try { await fetch('/api/services/gui/restart', { method: 'POST' }); } catch (e) { /* the GUI went down: expected */ }
+  toast('Restarting the GUI…');
+  const target = appVersion && appVersion.installed;
+  _updResult(`<div id="upd-wait"><i class="bi bi-hourglass-split"></i> Restarting the GUI…</div>`);
+  await waitForGui(target);
+}
+
+async function rollbackApp() {
+  const sel = document.getElementById('rollback-select');
+  if (!sel.value || !confirm(`Put back the code from ${sel.options[sel.selectedIndex].text} and restart the services?`)) return;
+  let d;
+  try {
+    d = await apiJson('/api/system/rollback', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                               body: JSON.stringify({ backup: sel.value }) });
+  } catch (e) { d = { ok: false, error: e.message }; }
+  if (!d.ok) { _updResult(`<span class="bad">${esc(d.error)}</span>`); return; }
+  _updChanges([], '');
+  _updResult(`<span class="ok"><i class="bi bi-check-circle-fill"></i> Restored ${esc(d.version)} (${d.restored_files} files)</span>
+    <div id="upd-wait"><i class="bi bi-hourglass-split"></i> Restarting the GUI…</div>`);
+  await waitForGui(d.version);
 }
 
 async function loadTroubleRouters() {
@@ -6195,7 +6320,7 @@ function bldApply(d) {
 }
 async function loadBuilder() {
   try {
-    const d = await (await fetch('/api/topology/plan')).json();
+    const d = await apiJson('/api/topology/plan');
     if (!d.ok) { bld.error = d.error || 'Could not load the topology'; bldRenderPlan(); toast(bld.error, false); return; }
     bldApply(d);
     const t = JSON.parse(JSON.stringify(d.topology || {}));
@@ -6758,6 +6883,7 @@ function builderRevert() {
 }
 
 function initApp() {
+  loadAppVersion();
   loadConfig().then(renderConfig);
   loadYaml('libreqos');
   loadTroubleshooting();

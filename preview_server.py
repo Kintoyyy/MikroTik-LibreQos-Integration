@@ -808,6 +808,7 @@ def install_fakes(gui, ring, systemd, netplan, counters):
 
     gui.app.view_functions["service_logs"] = gui.require_auth(logs)
     gui.app.view_functions["update_app"] = gui.require_auth(no_update)
+    gui.app.view_functions["rollback_app"] = gui.require_auth(no_update)
 
 
 # ── Main ────────────────────────────────────────────────────────────────────
