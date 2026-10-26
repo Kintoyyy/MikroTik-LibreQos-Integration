@@ -4066,11 +4066,15 @@ function renderServiceCards(services) {
 }
 
 async function svcAction(name, action) {
+  if (name === 'gui' && action !== 'start') {
+    const d = await guiServiceAction(action);
+    if (d && action === 'restart') await waitForGui(null, d.started);
+    return;
+  }
   const card = document.getElementById(`svc-card-${name}`);
   if (card) card.style.opacity = '.5';
   try {
-    const r = await fetch(`/api/services/${name}/${action}`, { method: 'POST' });
-    const d = await r.json();
+    const d = await apiJson(`/api/services/${name}/${action}`, { method: 'POST' });
     if (card) card.style.opacity = '1';
     if (!d.ok) { toast(name === 'lqosd' || d.log ? restartResultText(d) : d.error, false, 12000); loadServices(); return; }
     toast(name === 'lqosd' && action !== 'stop' ? restartResultText(d) : `${name} ${action}ed`);
@@ -4227,37 +4231,60 @@ async function confirmUpdateApp(force) {
     ${d.checks_ok ? '' : '<span class="bad">(installed anyway)</span>'} · ${d.updated_files} files · backup ${esc(d.backup)}
     ${(d.restart_errors || []).map(e => `<div class="bad">✘ ${esc(e)}</div>`).join('')}
     <div id="upd-wait"><i class="bi bi-hourglass-split"></i> Restarting the GUI…</div>`);
-  await waitForGui(d.version);
+  await waitForGui(d.version, d.started);
 }
 
-// Wait until the restarted GUI answers with the new version, then reload the page.
-async function waitForGui(version) {
+// Wait until a new GUI process answers (its start time differs from `started`, the old
+// process's, and it runs `version` when given), then reload the page. Errors while it is
+// down are expected and ignored.
+async function waitForGui(version, started) {
   const line = html => { const el = document.getElementById('upd-wait'); if (el) el.innerHTML = html; };
   const t0 = Date.now();
   await _sleep(2500);
   while (Date.now() - t0 < 60000) {
     try {
       const v = await apiJson('/api/system/version');
-      if (v.running === version) {
-        line(`<span class="ok"><i class="bi bi-check-circle-fill"></i> The GUI now runs ${esc(version)}: reloading…</span>`);
+      if (v.ok && v.started !== started && (!version || v.running === version)) {
+        line(`<span class="ok"><i class="bi bi-check-circle-fill"></i> The GUI is back${version ? ' on ' + esc(version) : ''}: reloading…</span>`);
+        toast('GUI restarted: reloading');
         await _sleep(1200);
         location.reload();
-        return;
+        return true;
       }
-    } catch (e) { /* restarting */ }
+    } catch (e) { /* down while restarting */ }
     await _sleep(1500);
   }
-  line(`<span class="bad"><i class="bi bi-x-circle-fill"></i> The GUI did not come back on ${esc(version)} within a minute.
-    Restart it on the Services tab, or run <code>sudo systemctl restart gui</code>.</span>`);
+  const msg = `The GUI did not come back${version ? ' on ' + version : ''} within a minute. ` +
+              'Check it on the server: sudo systemctl status gui';
+  line(`<span class="bad"><i class="bi bi-x-circle-fill"></i> ${esc(msg)}</span>`);
+  toast(msg, false, 15000);
   loadAppVersion();
+  return false;
+}
+
+// Restart, stop or disable this GUI's own service. The server answers first and acts a
+// moment later, so the request itself never dies with the process.
+async function guiServiceAction(action) {
+  if (action !== 'restart' && !confirm(`${action === 'stop' ? 'Stop' : 'Disable'} the GUI? This page stops working ` +
+      'until it is started again on the server (sudo systemctl start gui).')) return null;
+  let d;
+  try {
+    d = await apiJson(`/api/services/gui/${action}`, { method: 'POST' });
+  } catch (e) {
+    toast('Request failed: ' + e.message, false, 12000);
+    return null;
+  }
+  if (!d.ok) { toast(d.error || `GUI ${action} failed`, false); return null; }
+  if (action !== 'restart') { toast(`The GUI is ${action === 'stop' ? 'stopping' : 'being disabled'}…`); return d; }
+  toast('Restarting the GUI…');
+  return d;
 }
 
 async function restartGuiNow() {
-  try { await fetch('/api/services/gui/restart', { method: 'POST' }); } catch (e) { /* the GUI went down: expected */ }
-  toast('Restarting the GUI…');
-  const target = appVersion && appVersion.installed;
+  const d = await guiServiceAction('restart');
+  if (!d) return;
   _updResult(`<div id="upd-wait"><i class="bi bi-hourglass-split"></i> Restarting the GUI…</div>`);
-  await waitForGui(target);
+  await waitForGui(appVersion && appVersion.installed, d.started);
 }
 
 async function rollbackApp() {
@@ -4272,7 +4299,7 @@ async function rollbackApp() {
   _updChanges([], '');
   _updResult(`<span class="ok"><i class="bi bi-check-circle-fill"></i> Restored ${esc(d.version)} (${d.restored_files} files)</span>
     <div id="upd-wait"><i class="bi bi-hourglass-split"></i> Restarting the GUI…</div>`);
-  await waitForGui(d.version);
+  await waitForGui(d.version, d.started);
 }
 
 async function loadTroubleRouters() {

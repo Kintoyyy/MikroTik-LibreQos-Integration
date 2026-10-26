@@ -547,12 +547,13 @@ class RingLog(logging.Handler):
 
 class FakeSystemd:
     """systemctl stand-in that keeps unit state in memory."""
-    def __init__(self, units, on_restart):
+    def __init__(self, units, on_restart, on_gui_restart=None):
         now = datetime.datetime.now().astimezone().strftime("%a %Y-%m-%d %H:%M:%S %Z")
         self.units = {f"{u}.service": {"active": "active", "enabled": "enabled", "since": now, "pid": 4000 + i}
                       for i, u in enumerate(units)}
         self.units["wan_service.service"].update(active="inactive", enabled="disabled", pid=0)
         self.on_restart = on_restart
+        self.on_gui_restart = on_gui_restart
 
     def _unit(self, name):
         name = name if name.endswith(".service") else name + ".service"
@@ -564,6 +565,8 @@ class FakeSystemd:
                  pid=random.randint(5000, 60000))
         if unit.startswith("updatecsv"):
             self.on_restart()
+        if unit.startswith("gui") and self.on_gui_restart:
+            self.on_gui_restart()
 
     def __call__(self, *args, **kwargs):
         args = [str(a) for a in args]
@@ -897,7 +900,11 @@ def main():
                 cycle_db.close()
 
     import gui
-    systemd = FakeSystemd(gui.MANAGED_SERVICES + ["lqosd", "lqos_scheduler"], lambda: rebuild("restart"))
+    def gui_restarted():
+        gui._STARTED_AT = time.time()      # the page sees a new GUI process, as after a real restart
+
+    systemd = FakeSystemd(gui.MANAGED_SERVICES + ["lqosd", "lqos_scheduler"], lambda: rebuild("restart"),
+                          gui_restarted)
     counters = FakeCounters()
     install_fakes(gui, ring, systemd, netplan, counters)
     rebuild("startup")

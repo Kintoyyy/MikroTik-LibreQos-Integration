@@ -2769,6 +2769,29 @@ def _current_version():
     return app_update.installed_version(SCRIPT_DIR)
 
 
+def _gui_action_later(command=("restart",), delay=2.0):
+    """
+    Run `systemctl <command> gui.service` (restart, stop, disable --now) a
+    moment after the current request is answered. Done inside the request,
+    systemd would kill this process before it replied, and the browser would
+    get no answer (or a proxy's error page) instead of JSON.
+    """
+    command = [command] if isinstance(command, str) else list(command)
+
+    def run():
+        time.sleep(delay)
+        try:
+            if command[0] == "restart":
+                _systemctl("reset-failed", "gui.service", capture_output=True, text=True, timeout=10)
+            r = _systemctl(*command, "gui.service", capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                app.logger.error(f"gui {' '.join(command)} failed: {r.stderr.strip()}")
+        except Exception as ex:
+            app.logger.error(f"gui {' '.join(command)} failed: {ex}")
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _restart_after_update():
     """Restart the other services now and this GUI shortly after the response is sent."""
     errors = []
@@ -2779,17 +2802,7 @@ def _restart_after_update():
                 errors.append(f"{svc}: {result.stderr.strip()}")
         except Exception as ex:
             errors.append(f"{svc}: {ex}")
-
-    def restart_gui():
-        time.sleep(2)              # let the response reach the browser first
-        try:
-            r = _systemctl("restart", "gui.service", capture_output=True, text=True, timeout=60)
-            if r.returncode != 0:
-                app.logger.error(f"gui restart after update failed: {r.stderr.strip()}")
-        except Exception as ex:
-            app.logger.error(f"gui restart after update failed: {ex}")
-
-    threading.Thread(target=restart_gui, daemon=True).start()
+    _gui_action_later()
     return errors
 
 
@@ -2800,6 +2813,7 @@ def system_version():
     return jsonify({
         "ok": True, "version": _RUNNING_VERSION, "running": _RUNNING_VERSION, "installed": installed,
         "restart_needed": installed != _RUNNING_VERSION, "repo": GITHUB_REPO_URL, "branch": app_update.BRANCH,
+        "started": _STARTED_AT,       # changes when the GUI restarts
         "backups": app_update.backups(SCRIPT_DIR)[:app_update.KEEP_BACKUPS],
     })
 
@@ -2840,7 +2854,7 @@ def update_app():
         return jsonify({
             "ok": True, "from": installed, "version": version, "changes": changes,
             "checks": summary, "checks_ok": ok, "updated_files": len(updated), "backup": backup.name,
-            "restart_errors": _restart_after_update(),
+            "restart_errors": _restart_after_update(), "started": _STARTED_AT,
         })
     except app_update.UpdateError as e:
         return jsonify({"ok": False, "stage": "download", "error": str(e)}), 502
@@ -2860,7 +2874,7 @@ def rollback_app():
         restored, version = app_update.rollback(SCRIPT_DIR, name)
         app.logger.info(f"Rolled back to {version} from {name} ({len(restored)} files)")
         return jsonify({"ok": True, "version": version, "restored_files": len(restored),
-                        "restart_errors": _restart_after_update()})
+                        "restart_errors": _restart_after_update(), "started": _STARTED_AT})
     except app_update.UpdateError as e:
         return jsonify({"ok": False, "error": str(e)}), 400
     finally:
@@ -3009,6 +3023,10 @@ def manage_service(name, action):
     }
     if action not in commands:
         return jsonify({"ok": False, "error": "invalid action"}), 400
+    if name == "gui" and action in ("restart", "stop", "disable"):
+        # Answer first: this process is the one being restarted or stopped.
+        _gui_action_later(commands[action], delay=1.5)
+        return jsonify({"ok": True, "pending": True, "started": _STARTED_AT})
     try:
         # lqosd, and the scheduler while lqosd is down, go through the ordered restart
         if action in ("start", "restart") and (

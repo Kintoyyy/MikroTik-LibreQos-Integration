@@ -144,6 +144,36 @@ class UpdateTest(unittest.TestCase):
             r = client.post("/api/system/rollback", json={"backup": v["backups"][0]["name"]}, headers=headers)
             self.assertEqual(r.get_json()["version"], self.v1)
 
+    def test_gui_restarts_itself_after_answering(self):
+        import gui
+        client = gui.app.test_client()
+        with client.session_transaction() as s:
+            s["authed"] = True
+        headers = {"X-Requested-With": "fetch"}
+        with mock.patch.object(gui, "_gui_action_later") as later, \
+                mock.patch.object(gui, "_systemctl", side_effect=AssertionError("systemctl run inside the request")):
+            for action, command in (("restart", ["restart"]), ("stop", ["stop"]), ("disable", ["disable", "--now"])):
+                r = client.post(f"/api/services/gui/{action}", headers=headers)
+                self.assertEqual(r.status_code, 200)
+                d = r.get_json()
+                self.assertEqual((d["ok"], d["pending"], d["started"]), (True, True, gui._STARTED_AT))
+                self.assertEqual(later.call_args.args[0], command)
+        self.assertEqual(client.get("/api/system/version").get_json()["started"], gui._STARTED_AT)
+
+    def test_gui_action_later_runs_systemctl_after_the_delay(self):
+        import gui
+        calls = []
+        with mock.patch.object(gui, "_systemctl", side_effect=lambda *a, **k: calls.append(a) or
+                               subprocess.CompletedProcess(a, 0, "", "")):
+            gui._gui_action_later(["restart"], delay=0.05)
+            self.assertEqual(calls, [])                       # not inside the request
+            for _ in range(50):
+                if len(calls) == 2:
+                    break
+                import time
+                time.sleep(0.02)
+        self.assertEqual(calls, [("reset-failed", "gui.service"), ("restart", "gui.service")])
+
     def test_api_errors_are_json(self):
         import gui
         client = gui.app.test_client()
