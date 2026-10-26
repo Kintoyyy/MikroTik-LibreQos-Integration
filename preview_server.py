@@ -19,6 +19,7 @@ import collections
 import datetime
 import json
 import logging
+import math
 import os
 import random
 import shutil
@@ -197,13 +198,150 @@ class _FakeResource:
         self.rows[:] = [r for r in self.rows if r["id"] != id]
         return []
 
-    def call(self, command, arguments=None):
+    def call(self, command, arguments=None, queries=None):
+        arguments = self._keys(arguments or {})
+        if command == "print":
+            rows = self.get(**(queries or {}))
+            if "count-only" in arguments:
+                return _FakeReply([], {"ret": str(len(rows))})
+            if "proplist" in arguments:
+                keep = arguments["proplist"].split(",")
+                rows = [{k: v for k, v in r.items() if k in keep} for r in rows]
+            return _FakeReply(rows, {})
         if command == "run" and self.ros.on_run:
-            name = (arguments or {}).get("number")
+            name = arguments.get("number")
             for r in self.rows:
                 if r.get("name") == name or r["id"] == name:
                     self.ros.on_run(r)
         return []
+
+
+class _FakeReply(list):
+    """A reply list with the !done attributes, as routeros_api returns it."""
+    def __init__(self, rows, done):
+        super().__init__(rows)
+        self.done_message = done
+
+
+# ── Fake SNMP agent ─────────────────────────────────────────────────────────
+
+class FakeSnmpAgent:
+    """
+    SNMP v2c agent on a local UDP port answering GET / GETNEXT / GETBULK
+    from mib(), a callable returning {oid: value} (values typed with the
+    snmp module's Counter64, TimeTicks, … classes). Wrong communities get
+    no answer, as on a real agent.
+    """
+    def __init__(self, mib, community="public", host="127.0.0.1"):
+        import socket
+        self.mib, self.community = mib, community
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind((host, 0))
+        self.port = self.sock.getsockname()[1]
+        self.requests = 0
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def close(self):
+        self.sock.close()
+
+    def _serve(self):
+        while True:
+            try:
+                data, addr = self.sock.recvfrom(65535)
+            except OSError:
+                return
+            try:
+                reply = self._answer(data)
+            except Exception:
+                continue
+            if reply:
+                self.sock.sendto(reply, addr)
+
+    def _answer(self, data):
+        import bisect
+        import snmp
+        _, community, pdu, request_id, a, b, varbinds = snmp.decode_message(data)
+        if community != self.community.encode():
+            return None
+        self.requests += 1
+        table = sorted((snmp.oid_tuple(o), v) for o, v in self.mib().items() if v is not None)
+        keys, values = [k for k, _ in table], dict(table)
+
+        def after(oid):
+            i = bisect.bisect_right(keys, oid)
+            return (keys[i], values[keys[i]]) if i < len(keys) else (oid, snmp.END_OF_MIB_VIEW)
+
+        out = []
+        if pdu == snmp.GET:
+            out = [(o, values.get(snmp.oid_tuple(o), snmp.NO_SUCH_OBJECT)) for o, _ in varbinds]
+        elif pdu == snmp.GETNEXT:
+            out = [(snmp.oid_str(k), v) for k, v in (after(snmp.oid_tuple(o)) for o, _ in varbinds)]
+        elif pdu == snmp.GETBULK:                  # a = non-repeaters (not used here), b = max-repetitions
+            for o, _ in varbinds:
+                current = snmp.oid_tuple(o)
+                for _ in range(max(1, b)):
+                    current, v = after(current)
+                    out.append((snmp.oid_str(current), v))
+                    if v is snmp.END_OF_MIB_VIEW:
+                        break
+        return snmp.encode_message(community, snmp.RESPONSE, request_id, out)
+
+
+SNMP_STATIC_IFACES = [   # (ifIndex, name, ifType, running) of a simulated BRAS
+    (1, "ether1", 6, True), (2, "ether2", 6, True), (3, "ether3", 6, False), (4, "sfp-sfpplus1", 6, True),
+    (5, "sfp-sfpplus2", 6, False), (6, "vlan100-pppoe", 135, True), (7, "bridge-access", 209, True),
+]
+
+
+def fake_snmp_mib(name, sessions, counters, t, ros7=True, static=None):
+    """
+    The MIB a simulated MikroTik BRAS answers with at time t: system and
+    health objects (RouterOS 7 gauge table, or RouterOS 6 scalars), CPU and
+    memory, one "<pppoe-…>" interface per active session, and IF-MIB
+    counters (counters(iface) → {rx_bytes, …}).
+    """
+    import snmp
+    h = fake_health(name, t)
+    static = static if static is not None else SNMP_STATIC_IFACES
+    mib = {
+        "1.3.6.1.2.1.1.1.0": "RouterOS CCR2116-12G-4S+",
+        "1.3.6.1.2.1.1.3.0": snmp.TimeTicks(int(t * 100) % 2 ** 32),
+        "1.3.6.1.2.1.1.5.0": name,
+        "1.3.6.1.2.1.2.1.0": len(static) + sessions,
+        "1.3.6.1.2.1.25.1.1.0": snmp.TimeTicks(200_226_900),         # 3w2d04:11:09
+        "1.3.6.1.4.1.14988.1.1.4.4.0": "7.16.2" if ros7 else "6.49.17",
+        "1.3.6.1.2.1.25.2.3.1.3.65536": "main memory", "1.3.6.1.2.1.25.2.3.1.4.65536": 1024,
+        "1.3.6.1.2.1.25.2.3.1.5.65536": 4194304, "1.3.6.1.2.1.25.2.3.1.6.65536": int(4194304 * h["mem"] / 100),
+        "1.3.6.1.2.1.25.2.3.1.3.131072": "system disk", "1.3.6.1.2.1.25.2.3.1.5.131072": 131072,
+    }
+    for cpu in range(4):
+        mib[f"1.3.6.1.2.1.25.3.3.1.2.{cpu + 1}"] = int(h["cpu"]) + cpu
+    if ros7:
+        for i, (gauge, value, unit) in enumerate([("cpu-temperature", int(h["temp"]), 1), ("fan1-speed", 4200, 2),
+                                                  ("voltage", int(h["volt"] * 10), 3)], start=1):
+            mib[f"1.3.6.1.4.1.14988.1.1.3.100.1.2.{i}"] = gauge
+            mib[f"1.3.6.1.4.1.14988.1.1.3.100.1.3.{i}"] = value
+            mib[f"1.3.6.1.4.1.14988.1.1.3.100.1.4.{i}"] = unit
+    else:
+        mib["1.3.6.1.4.1.14988.1.1.3.8.0"] = int(h["volt"] * 10)
+        mib["1.3.6.1.4.1.14988.1.1.3.10.0"] = int(h["temp"] * 10)
+    interfaces = [(i, n, typ, up) for i, n, typ, up in static] + \
+        [(1000 + s, f"<pppoe-sub{s:04d}>", 23, True) for s in range(sessions)]
+    for index, iname, typ, up in interfaces:
+        mib[f"1.3.6.1.2.1.31.1.1.1.1.{index}"] = iname
+        mib[f"1.3.6.1.2.1.2.2.1.3.{index}"] = typ
+        mib[f"1.3.6.1.2.1.2.2.1.8.{index}"] = 1 if up else 2
+        if iname.startswith("<"):
+            continue
+        c = counters(iname) if up else dict.fromkeys(("rx_bytes", "tx_bytes", "rx_errors", "tx_errors",
+                                                       "rx_drops", "tx_drops"), 0)
+        mib[f"1.3.6.1.2.1.31.1.1.1.6.{index}"] = snmp.Counter64(c["rx_bytes"])
+        mib[f"1.3.6.1.2.1.31.1.1.1.10.{index}"] = snmp.Counter64(c["tx_bytes"])
+        mib[f"1.3.6.1.2.1.2.2.1.14.{index}"] = snmp.Counter32(c["rx_errors"] % 2 ** 32)
+        mib[f"1.3.6.1.2.1.2.2.1.20.{index}"] = snmp.Counter32(c["tx_errors"] % 2 ** 32)
+        mib[f"1.3.6.1.2.1.2.2.1.13.{index}"] = snmp.Counter32(c["rx_drops"] % 2 ** 32)
+        mib[f"1.3.6.1.2.1.2.2.1.19.{index}"] = snmp.Counter32(c["tx_drops"] % 2 ** 32)
+    return mib
 
 
 # ── Sandbox ─────────────────────────────────────────────────────────────────
@@ -225,6 +363,8 @@ def seed_sandbox(sandbox, port):
     config["webhook"]["url"] = f"http://localhost:{port}"
     for r in config["bras"]:
         r["webhook_token"] = os.urandom(16).hex()
+        if r["name"] != "BRAS-S2":           # one router stays on the API, to show both
+            r["snmp"] = {"enabled": True, "community": "public", "port": 161}
     _write_new(os.path.join(sandbox, "config.json"), json.dumps(config, indent=4))
     _write_new(os.path.join(sandbox, "lqos.conf"), SEED_LQOS_CONF.format(libreqos=libreqos))
     _write_new(os.path.join(libreqos, "VERSION_STRING"), "1.5\n")
@@ -456,13 +596,108 @@ class FakeSystemd:
         return subprocess.CompletedProcess(["systemctl"] + args, 0, stdout, "" if kwargs.get("text") else b"")
 
 
-def fake_poll_router(kind, router):
-    name = router.get("name") or router.get("address", "")
-    rng = random.Random(f"{name}{int(time.time() // 60)}")
-    return {"name": name, "kind": kind, "address": router.get("address", ""), "ok": True, "error": "",
-            "at": time.time(), "cpu": rng.uniform(4, 45), "mem": rng.uniform(20, 60),
-            "temp": rng.uniform(38, 55), "volt": 24.1, "uptime": "3w2d04:11:09", "identity": name,
-            "version": "7.16.2 (stable)", "board": "CCR2116-12G-4S+", "api_ms": rng.uniform(4, 20)}
+FAKE_IFACES = ["sfp-sfpplus1", "ether2"]     # graphed when a BRAS has no monitor_interfaces
+
+
+def _busy(t):
+    """Share of peak traffic at time t: highest around 21:00, lowest around 09:00."""
+    hour = time.localtime(t).tm_hour + time.localtime(t).tm_min / 60
+    return 0.55 + 0.45 * math.cos(2 * math.pi * (hour - 21) / 24)
+
+
+def fake_health(name, t):
+    rng = random.Random(f"{name}{int(t // 60)}")
+    return {"cpu": rng.uniform(4, 20) + 30 * _busy(t), "mem": rng.uniform(30, 45),
+            "temp": rng.uniform(40, 46) + 6 * _busy(t), "volt": 24.1, "api_ms": rng.uniform(4, 20)}
+
+
+def fake_ppp(subs, name, t):
+    """Active sessions: most subscribers are online, a few more in the evening."""
+    return max(0, int(subs * (0.82 + 0.15 * _busy(t)) + random.Random(f"ppp{name}{int(t // 60)}").randint(-4, 4)))
+
+
+def fake_rates(subs, name, iface, t):
+    """(rx bytes/s, tx bytes/s, rx/tx errors per s, rx/tx drops per s) of a simulated interface."""
+    rng = random.Random(f"{name}{iface}{int(t // 60)}")
+    down = subs * 1.6e6 / 8 * _busy(t) * rng.uniform(0.85, 1.15)     # ~1.6 Mbps per subscriber at peak
+    up = down * rng.uniform(0.10, 0.16)
+    uplink = iface.startswith("sfp") or iface == FAKE_IFACES[0]
+    rx, tx = (down, up) if uplink else (up, down)                       # the access side mirrors the uplink
+    burst = rng.random() < 0.03                                         # now and then a dirty optic or port
+    errors = (rng.uniform(0.05, 0.8) if burst else 0.0, rng.uniform(0, 0.05) if burst and not uplink else 0.0)
+    drops = (rng.uniform(0.2, 3) if _busy(t) > 0.9 and rng.random() < 0.3 else 0.0, 0.0)
+    return rx, tx, errors[0], errors[1], drops[0], drops[1]
+
+
+class FakeCounters:
+    """Ever-growing interface counters of the simulated routers, as /interface reports them."""
+    FIELDS = ("rx_bytes", "tx_bytes", "rx_errors", "tx_errors", "rx_drops", "tx_drops")
+
+    def __init__(self):
+        self.state = {}       # (router, iface) → (t, [counters as floats])
+
+    def read(self, name, iface, subs, t):
+        last_t, values = self.state.get((name, iface), (t - 60, [random.uniform(1e12, 5e12), random.uniform(1e11, 5e11),
+                                                                   1000.0, 10.0, 5000.0, 0.0]))
+        dt = max(0.0, t - last_t)
+        values = [v + r * dt for v, r in zip(values, fake_rates(subs, name, iface, t))]
+        self.state[(name, iface)] = (t, values)
+        return {f: int(v) for f, v in zip(self.FIELDS, values)}
+
+
+def fake_subscribers(db_path, router):
+    try:
+        import sqlite3
+        con = sqlite3.connect(db_path, timeout=5)
+        try:
+            return con.execute("SELECT COUNT(*) FROM devices WHERE router = ? AND source = 'pppoe'",
+                               (router,)).fetchone()[0]
+        finally:
+            con.close()
+    except Exception:
+        return 0
+
+
+def make_fake_poll(db_path, counters):
+    def poll(kind, router):
+        name = router.get("name") or router.get("address", "")
+        t = time.time()
+        info = {"name": name, "kind": kind, "address": router.get("address", ""), "ok": True, "error": "",
+                "at": t, "via": "api", "uptime": "3w2d04:11:09", "identity": name, "version": "7.16.2 (stable)",
+                "board": "CCR2116-12G-4S+", **fake_health(name, t)}
+        if kind == "bras":
+            subs = fake_subscribers(db_path, name)
+            info["ppp"] = fake_ppp(subs, name, t)
+            ifaces = [n for n in router.get("monitor_interfaces") or [] if n] or FAKE_IFACES
+            info["ifaces"] = {i: {**counters.read(name, i, subs, t), "running": True} for i in ifaces}
+        return info
+    return poll
+
+
+def seed_rrd_history(gui, routers, db_path, counters, hours=6):
+    """Back-fill the simulated routers' graphs so the preview shows history at once."""
+    if not gui.RRDTOOL:
+        return
+    now = int(time.time()) // 60 * 60
+    start = now - hours * 3600
+    for router in routers:
+        name = router["name"]
+        key = gui._router_key("bras", name)
+        subs = fake_subscribers(db_path, name)
+        series = {key: ("router", lambda t: [fake_health(name, t)[k] for k in gui.RRD_SCHEMAS["router"]]),
+                  gui._rrd_ppp(key): ("ppp", lambda t: [fake_ppp(subs, name, t)])}
+        for iface in [n for n in router.get("monitor_interfaces") or [] if n] or FAKE_IFACES:
+            series[gui._rrd_iface(key, iface)] = (
+                "iface", lambda t, i=iface: [v for f, v in counters.read(name, i, subs, t).items()])
+        for rrd, (schema, sample) in series.items():
+            path = gui._rrd_path(rrd)
+            if path.exists():
+                continue
+            gui._rrd_create(path, schema, start=start - 60)
+            rows = [f"{t}:" + ":".join(gui._rrd_value(v) for v in sample(t)) for t in range(start, now, 60)]
+            for i in range(0, len(rows), 120):
+                subprocess.run([gui.RRDTOOL, "update", str(path)] + rows[i:i + 120],
+                               capture_output=True, text=True, timeout=30)
 
 
 def fake_router_api(name):
@@ -490,14 +725,27 @@ def fake_router_api(name):
                 logging.getLogger("gui").warning(f"preview: {name} could not call {url.group(1)}: {e}")
         threading.Thread(target=send, daemon=True).start()
 
-    return FakeRouterOS({"/ppp/profile": [
-        {"name": "default", "on-up": "", "on-down": ""},
-        {"name": "default-encryption", "on-up": "", "on-down": ""},
-        {"name": "PPPoE-plans", "on-up": ':log info ("PPP up " . $user)', "on-down": ""},
-    ]}, on_run=run)
+    def iface(name, kind="ether", running=True, comment="", dynamic=False):
+        return {"name": name, "type": kind, "running": str(running).lower(), "disabled": "false",
+                "comment": comment, "dynamic": str(dynamic).lower()}
+
+    return FakeRouterOS({
+        "/ppp/profile": [
+            {"name": "default", "on-up": "", "on-down": ""},
+            {"name": "default-encryption", "on-up": "", "on-down": ""},
+            {"name": "PPPoE-plans", "on-up": ':log info ("PPP up " . $user)', "on-down": ""},
+        ],
+        "/interface": [
+            iface("ether1", comment="management"), iface("ether2", comment="access / OLT"),
+            iface("ether3", running=False), iface("sfp-sfpplus1", comment="uplink to LibreQoS"),
+            iface("sfp-sfpplus2", running=False), iface("vlan100-pppoe", "vlan", comment="PPPoE VLAN"),
+            iface("bridge-access", "bridge"),
+            iface("<pppoe-alice>", "pppoe-in", dynamic=True), iface("<pppoe-bob>", "pppoe-in", dynamic=True),
+        ],
+    }, on_run=run)
 
 
-def install_fakes(gui, ring, systemd, netplan):
+def install_fakes(gui, ring, systemd, netplan, counters):
     from flask import jsonify, request
 
     def raise_preview(*_a, **_k):
@@ -505,7 +753,7 @@ def install_fakes(gui, ring, systemd, netplan):
 
     routers = {}
 
-    def webhook_connect(router, username=None, password=None):
+    def router_connect(router, username=None, password=None):
         if router["name"] not in routers:
             routers[router["name"]] = fake_router_api(router["name"])
         return routers[router["name"]]
@@ -518,10 +766,31 @@ def install_fakes(gui, ring, systemd, netplan):
     gui._systemctl = systemd
     gui._restart_libreqos = restart_libreqos
     gui._journal_tail = lambda unit, lines=15: ring.tail(unit, lines)
+    # Routers with SNMP on are polled by the real SNMP code, against one fake agent each.
+    agents = {}
+
+    def snmp_target(router):
+        name = router.get("name") or router.get("address", "")
+        if name not in agents:
+            ros7 = zlib.crc32(name.encode()) % 2 == 0          # some answer like RouterOS 7, some like 6
+
+            def mib(name=name, ros7=ros7):
+                t = time.time()
+                subs = fake_subscribers(str(gui.DB_PATH), name)
+                return fake_snmp_mib(name, fake_ppp(subs, name, t), lambda i: counters.read(name, i, subs, t), t, ros7)
+            agents[name] = FakeSnmpAgent(mib)
+        return "127.0.0.1", agents[name].port
+
+    api_poll, real_poll = make_fake_poll(str(gui.DB_PATH), counters), gui._poll_router
+
+    def poll(kind, router):
+        return real_poll(kind, router) if gui.snmp_monitor.settings(router) else api_poll(kind, router)
+
     gui._connect_router_api = raise_preview
-    gui._webhook_connect = webhook_connect
+    gui._router_connect = router_connect
+    gui._snmp_target = snmp_target
     gui._as_root = raise_preview
-    gui._poll_router = fake_poll_router
+    gui._poll_router = poll
     gui.YAML_FILES["libreqos"] = gui.Path(netplan) / "libreqos.yaml"
     gui.YAML_FILES["network"] = gui.Path(netplan) / "50-cloud-init.yaml"
 
@@ -628,8 +897,13 @@ def main():
 
     import gui
     systemd = FakeSystemd(gui.MANAGED_SERVICES + ["lqosd", "lqos_scheduler"], lambda: rebuild("restart"))
-    install_fakes(gui, ring, systemd, netplan)
+    counters = FakeCounters()
+    install_fakes(gui, ring, systemd, netplan, counters)
     rebuild("startup")
+    try:
+        seed_rrd_history(gui, updatecsv.read_config_json().routers, str(gui.DB_PATH), counters)
+    except Exception as e:
+        log.warning(f"preview: could not back-fill graphs: {e}")
 
     def sync_loop():
         """updatecsv.py's wait: a full cycle every --interval, webhook cycles as events arrive."""

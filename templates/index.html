@@ -387,6 +387,13 @@ code { font-size: .8rem; color: #94a3b8; }
 .check a:hover { text-decoration: underline; }
 .check.info > i { color: var(--accent); }
 
+/* ── Graphed interfaces picker ── */
+.if-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: .3rem .9rem; margin-top: .6rem;
+           border: 1px solid var(--border); border-radius: 8px; padding: .6rem .75rem; background: var(--bg); }
+.if-pick label { display: flex; gap: .45rem; align-items: baseline; font-size: .8rem; cursor: pointer; min-width: 0; }
+.if-pick label .dim { font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kv-k { overflow-wrap: anywhere; }
+
 /* ── PPP webhook ── */
 .wh-panel { border: 1px solid var(--border); border-radius: 8px; padding: .9rem; margin-top: .9rem; background: var(--bg); }
 .wh-script { font-family: var(--mono); font-size: .72rem; min-height: 240px; resize: vertical; white-space: pre; overflow: auto; }
@@ -2645,7 +2652,8 @@ function _renderMtCards(list) {
     const cpu = Number(rt.cpu_percent || 0).toFixed(1);
     const ram = Number(rt.ram_percent || 0).toFixed(1);
     const uptime = (rt.uptime || '').toString().trim() || '—';
-    return `<div class="mt-mini"><div class="name">${esc(title)}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div><div class="row"><span>Uptime</span><span class="pct uptime">${esc(uptime)}</span></div></div>`;
+    const ppp = rt.ppp == null ? '' : `<div class="row"><span>PPP</span><span class="pct">${Number(rt.ppp).toLocaleString()}</span></div>`;
+    return `<div class="mt-mini"><div class="name">${esc(title)}</div><div class="row"><span>CPU</span><span class="pct">${cpu}%</span></div><div class="row"><span>RAM</span><span class="pct ram">${ram}%</span></div>${ppp}<div class="row"><span>Uptime</span><span class="pct uptime">${esc(uptime)}</span></div></div>`;
   }).join('');
 }
 
@@ -3081,6 +3089,36 @@ function buildRouterCard(rt, idx) {
         </div>
       </div>
 
+      <!-- Monitoring -->
+      <div style="margin-bottom:1rem">
+        <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.6rem">Monitoring</div>
+        <label class="toggle-wrap" style="margin-bottom:.6rem">
+          <div class="toggle"><input type="checkbox" ${rt.snmp && rt.snmp.enabled ? 'checked' : ''}
+            onchange="setSnmpField(${idx},'enabled',this.checked)"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+          <span style="font-size:.85rem">Poll over SNMP <span style="font-size:.72rem;color:var(--muted)">(v2c: health, PPP sessions and interface counters without the API)</span></span>
+        </label>
+        <div id="snmp-fields-${idx}" style="display:${rt.snmp && rt.snmp.enabled ? '' : 'none'};margin-bottom:.75rem">
+          <div class="form-row form-row-3">
+            <div><label class="form-label">SNMP community</label>
+              <input class="form-input" value="${esc((rt.snmp && rt.snmp.community) || 'public')}" oninput="setSnmpField(${idx},'community',this.value)"></div>
+            <div><label class="form-label">SNMP port</label>
+              <input class="form-input" type="number" min="1" max="65535" value="${(rt.snmp && rt.snmp.port) || 161}" oninput="setSnmpField(${idx},'port',+this.value)"></div>
+            <div style="display:flex;align-items:flex-end"><button class="btn-ghost" type="button" onclick="testSnmp(${idx})"><i class="bi bi-broadcast"></i> Test SNMP</button></div>
+          </div>
+          <div class="bld-stat" id="snmp-result-${idx}" style="margin:.4rem 0 0"></div>
+          <div style="font-size:.72rem;color:var(--muted);line-height:1.45">On the router: <code>/snmp set enabled=yes</code> and a read-only community limited to this host, e.g.
+            <code>/snmp community add name=lqsync addresses=&lt;this host&gt;/32</code>. The API is still used for subscriber scans, the NAT check (every 15 min) and Pick from router.</div>
+        </div>
+        <label class="form-label" for="mon-if-${idx}">Interfaces to graph <span style="font-weight:400">— traffic, errors and drops every minute, plus active PPP sessions (Pollers page)</span></label>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <input class="form-input" style="flex:1;min-width:220px" id="mon-if-${idx}"
+            placeholder="empty = running ethernet ports, e.g. sfp-sfpplus1, ether2"
+            value="${esc((rt.monitor_interfaces || []).join(', '))}" oninput="setMonitorInterfaces(${idx}, this.value)">
+          <button class="btn-ghost" type="button" onclick="pickInterfaces(${idx})"><i class="bi bi-list-check"></i> Pick from router</button>
+        </div>
+        <div id="if-pick-${idx}"></div>
+      </div>
+
       <!-- Sources -->
       <div style="font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:.6rem">Sources &amp; Default Speeds</div>
 
@@ -3193,6 +3231,71 @@ function setSourceField(idx, src, field, val) {
   if (!configData.bras[idx][src]) configData.bras[idx][src] = {};
   configData.bras[idx][src][field] = val;
 }
+// ── Graphed interfaces (per BRAS) ──
+const MAX_GRAPHED_INTERFACES = 8;
+function setMonitorInterfaces(idx, text) {
+  const r = configData && configData.bras[idx];
+  if (!r) return;
+  const names = [...new Set(String(text).split(',').map(s => s.trim()).filter(Boolean))];
+  if (names.length) r.monitor_interfaces = names.slice(0, MAX_GRAPHED_INTERFACES);
+  else delete r.monitor_interfaces;
+}
+function setSnmpField(idx, key, val) {
+  const r = configData && configData.bras[idx];
+  if (!r) return;
+  r.snmp = { enabled: false, community: 'public', port: 161, ...(r.snmp || {}), [key]: val };
+  if (key === 'enabled') document.getElementById(`snmp-fields-${idx}`).style.display = val ? '' : 'none';
+}
+async function testSnmp(idx) {
+  const r = configData.bras[idx], s = r.snmp || {};
+  const out = document.getElementById(`snmp-result-${idx}`);
+  out.innerHTML = '<i class="bi bi-hourglass-split"></i> Asking the router…';
+  let d;
+  try {
+    d = await (await fetch('/api/routers/snmp-test', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ router: _brasName(idx), address: r.address, port: s.port || 161, community: s.community || 'public' }) })).json();
+  } catch (e) { d = { ok: false, error: e.message }; }
+  out.innerHTML = d.ok
+    ? `<span style="color:var(--green)"><i class="bi bi-check-circle-fill"></i> ${esc(d.identity)}</span> · ${esc(d.board)} · RouterOS ${esc(d.version)} · ${d.interfaces ?? '?'} interfaces · ${Math.round(d.ms)} ms`
+    : `<span style="color:#ff7b72"><i class="bi bi-x-circle-fill"></i> ${esc(d.error)}</span>`;
+}
+
+// The name the sync service gives bras[idx] (repeated names get " 2", " 3", …)
+function _brasName(idx) {
+  const seen = {};
+  let out = '';
+  (configData.bras || []).forEach((r, i) => {
+    let n = r.name;
+    if (seen[n]) { seen[n]++; n = `${n} ${seen[n]}`; } else seen[n] = 1;
+    if (i === idx) out = n;
+  });
+  return out;
+}
+async function pickInterfaces(idx) {
+  const box = document.getElementById(`if-pick-${idx}`);
+  box.innerHTML = '<div class="bld-stat" style="margin-top:.5rem">Reading interfaces…</div>';
+  let d;
+  try {
+    d = await (await fetch(`/api/routers/interfaces?router=${encodeURIComponent(_brasName(idx))}`)).json();
+  } catch (e) { d = { ok: false, error: e.message }; }
+  if (!d.ok) { box.innerHTML = `<div class="bld-stat" style="margin-top:.5rem;color:#ff7b72">${esc(d.error)}</div>`; return; }
+  const chosen = new Set(configData.bras[idx].monitor_interfaces || []);
+  box.innerHTML = `<div class="if-pick">${d.interfaces.map(i => `
+      <label><input type="checkbox" value="${esc(i.name)}" ${chosen.has(i.name) ? 'checked' : ''}>
+        <b>${esc(i.name)}</b> <span class="dim">${esc(i.type)}${i.running ? '' : ' · down'}${i.disabled ? ' · disabled' : ''}${i.comment ? ' · ' + esc(i.comment) : ''}</span></label>`).join('')
+    || '<span class="dim">No interfaces</span>'}</div>`;
+  box.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', () => {
+    const picked = [...box.querySelectorAll('input:checked')].map(c => c.value);
+    if (picked.length > MAX_GRAPHED_INTERFACES) {
+      cb.checked = false;
+      toast(`Graph at most ${MAX_GRAPHED_INTERFACES} interfaces per router`, false);
+      return;
+    }
+    document.getElementById(`mon-if-${idx}`).value = picked.join(', ');
+    setMonitorInterfaces(idx, picked.join(','));
+  }));
+}
+
 function addRouter() {
   if (!configData) return;
   configData.bras = configData.bras || [];
@@ -5781,7 +5884,8 @@ function renderPollers(d) {
             kvRow('Memory', `${mbar(r.mem)}${fmtPct(r.mem)}`) +
             kvRow('Health', `${r.temp == null ? '—' : r.temp.toFixed(0) + ' C'} <span class="dim">·</span> ${r.volt == null ? '—' : r.volt.toFixed(1) + ' V'}`) +
             kvRow('Uptime', `${esc(r.uptime || '—')} <span class="dim">· ${esc(r.board || '')} ${esc(r.version || '')}</span>`) +
-            kvRow('API', `${Math.round(r.api_ms || 0)} ms <span class="dim">· ${fmtAgo(r.at, now)}</span>`)
+            kvRow('Poll', `${Math.round(r.api_ms || 0)} ms <span class="dim">· ${r.via === 'snmp' ? 'SNMP' : 'API'} · ${fmtAgo(r.at, now)}</span>`) +
+            (r.kind === 'bras' ? routerTrafficRows(r) : '')
           : r.ok === false
             ? kvRow('Error', `<span class="bad">${esc(r.error || 'unreachable')}</span>`) + kvRow('Checked', fmtAgo(r.at, now))
             : kvRow('Status', '<span class="dim">waiting for first poll</span>')}
@@ -5804,6 +5908,30 @@ function renderPollers(d) {
         <td>${j.runs}</td>
         <td class="${j.errors ? 'errs' : ''}" title="${j.errors ? esc(`last error ${fmtAgo(j.last_error_at, now)}: ${j.last_error}`) : ''}">${j.errors}</td>
       </tr>`).join('');
+}
+
+function fmtBps(bps) {
+  if (bps == null) return '…';
+  if (bps >= 1e9) return (bps / 1e9).toFixed(2) + ' Gbps';
+  if (bps >= 1e6) return (bps / 1e6).toFixed(1) + ' Mbps';
+  return (bps / 1e3).toFixed(0) + ' kbps';
+}
+// A BRAS's active PPP sessions and its graphed interfaces (rates since the previous poll)
+function routerTrafficRows(r) {
+  const rows = [];
+  if (r.ppp != null) rows.push(kvRow('PPP', `${r.ppp.toLocaleString()} <span class="dim">active sessions</span>`));
+  else if (r.ppp_error) rows.push(kvRow('PPP', `<span class="bad">${esc(r.ppp_error)}</span>`));
+  if (r.ifaces_error) rows.push(kvRow('Interfaces', `<span class="bad">${esc(r.ifaces_error)}</span>`));
+  Object.entries(r.ifaces || {}).forEach(([name, c]) => {
+    const per = (a, b) => (a || 0) + (b || 0);
+    const errs = per(c.rx_errors_min, c.tx_errors_min), drops = per(c.rx_drops_min, c.tx_drops_min);
+    const trouble = [errs > 0 ? `${errs.toFixed(1)} err/min` : '', drops > 0 ? `${drops.toFixed(1)} drop/min` : '']
+      .filter(Boolean).join(' · ');
+    rows.push(kvRow(name, (c.running ? '' : '<span class="bad">down</span> ') +
+      `rx ${fmtBps(c.rx_bps)} <span class="dim">·</span> tx ${fmtBps(c.tx_bps)}` +
+      (trouble ? ` <span class="bad">· ${trouble}</span>` : '')));
+  });
+  return rows.join('');
 }
 
 async function loadGraphs() {

@@ -36,6 +36,8 @@ from device_database import (
     ensure_webhook_table, record_webhook_event,
 )
 import cpu_planner
+import snmp
+import snmp_monitor
 import webhook
 from cpu_planner import dedupe_router_names, topology_errors
 from node_assigner import NodeAssigner, ALL_STRATEGIES, STRATEGY_AUTO_CPU
@@ -526,7 +528,18 @@ RRD_SCHEMAS = {
     "polling": ["scan_s", "build_s", "apply_s", "wan_s", "errors"],
     "devices": ["pppoe", "hotspot", "dhcp", "address_list", "static"],
     "router":  ["cpu", "mem", "temp", "volt", "api_ms"],   # one file per router
+    "ppp":     ["ppp"],                                     # one file per BRAS: active PPP sessions
+    # One file per graphed BRAS interface: its byte, error and drop counters
+    "iface":   ["rx_bytes", "tx_bytes", "rx_errors", "tx_errors", "rx_drops", "tx_drops"],
 }
+# Schemas fed with the router's ever-growing counters: rrdtool stores them as
+# per-second rates (DERIVE, minimum 0, so a counter reset leaves a gap
+# instead of a negative spike).
+RRD_COUNTERS = {"iface"}
+# /interface counters per "iface" data source
+IFACE_COUNTERS = {"rx_bytes": "rx-byte", "tx_bytes": "tx-byte", "rx_errors": "rx-error",
+                  "tx_errors": "tx-error", "rx_drops": "rx-drop", "tx_drops": "tx-drop"}
+MAX_GRAPHED_INTERFACES = 8
 
 # Latest samples, shared with the request threads
 _mon = {"host": {}, "app": {}, "routers": {}, "job_cpu_now": {}}
@@ -537,18 +550,38 @@ def _rrd_path(name):
     return RRD_DIR / f"{name}.rrd"
 
 
+def _rrd_ppp(router_key):
+    return f"{router_key}-ppp"
+
+
+def _rrd_iface(router_key, iface):
+    return f"{router_key}-if-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", iface)
+
+
+def _rrd_create(path, schema, start="now-120"):
+    RRD_DIR.mkdir(parents=True, exist_ok=True)
+    kind, low = ("DERIVE", "0") if schema in RRD_COUNTERS else ("GAUGE", "U")
+    ds = [f"DS:{ds}:{kind}:{MONITOR_STEP * 2}:{low}:U" for ds in RRD_SCHEMAS[schema]]
+    subprocess.run([RRDTOOL, "create", str(path), "--step", str(MONITOR_STEP),
+                    "--start", str(start)] + ds + _RRAS,
+                   capture_output=True, text=True, timeout=10, check=True)
+
+
+def _rrd_value(v):
+    """One sample value: U for unknown; counters (ints) as integers, which DERIVE requires."""
+    if v is None:
+        return "U"
+    return str(v) if isinstance(v, int) else f"{v:.4f}"
+
+
 def _rrd_update(name, schema, values):
     """Append one sample to RRD file `name` (created on first use). None is stored as unknown."""
     if not RRDTOOL:
         return
     path = _rrd_path(name)
     if not path.exists():
-        RRD_DIR.mkdir(parents=True, exist_ok=True)
-        ds = [f"DS:{ds}:GAUGE:{MONITOR_STEP * 2}:U:U" for ds in RRD_SCHEMAS[schema]]
-        subprocess.run([RRDTOOL, "create", str(path), "--step", str(MONITOR_STEP),
-                        "--start", "now-120"] + ds + _RRAS,
-                       capture_output=True, text=True, timeout=10, check=True)
-    sample = ":".join("U" if v is None else f"{v:.4f}" for v in values)
+        _rrd_create(path, schema)
+    sample = ":".join(_rrd_value(v) for v in values)
     r = subprocess.run([RRDTOOL, "update", str(path), f"N:{sample}"],
                        capture_output=True, text=True, timeout=10)
     if r.returncode != 0:
@@ -741,10 +774,116 @@ def _router_key(kind, name):
     return f"router-{kind}-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", name or "router")
 
 
+def _ppp_active_count(api):
+    """Active PPP sessions: a count-only print, so a big BRAS does not send every session."""
+    resource = api.get_resource("/ppp/active")
+    try:
+        ret = getattr(resource.call("print", {"count-only": ""}), "done_message", {}).get("ret")
+        if ret is not None:
+            return int(ret)
+    except Exception:
+        pass
+    return len(resource.call("print", {"proplist": ".id"}))
+
+
+def _graphed_interfaces(api, router):
+    """A BRAS's interfaces to graph: its monitor_interfaces, else its running ethernet ports."""
+    chosen = [str(n).strip() for n in router.get("monitor_interfaces") or [] if str(n).strip()]
+    if chosen:
+        return chosen[:MAX_GRAPHED_INTERFACES]
+    rows = api.get_resource("/interface").call("print", {"proplist": "name,running,disabled"}, {"type": "ether"})
+    return [r["name"] for r in rows
+            if r.get("name") and r.get("running") == "true" and r.get("disabled") != "true"][:MAX_GRAPHED_INTERFACES]
+
+
+def _read_interfaces(api, router):
+    """{interface: {rx_bytes, tx_bytes, rx_errors, …, running}} counters of the graphed interfaces."""
+    resource = api.get_resource("/interface")
+    props = "name,running," + ",".join(IFACE_COUNTERS.values())
+    out = {}
+    for name in _graphed_interfaces(api, router):
+        rows = resource.call("print", {"proplist": props}, {"name": name})
+        if not rows:
+            continue                      # renamed or removed on the router
+        counters = {}
+        for key, field in IFACE_COUNTERS.items():
+            try:
+                counters[key] = int(rows[0].get(field))
+            except (TypeError, ValueError):
+                counters[key] = None      # not every interface type counts errors
+        counters["running"] = rows[0].get("running") == "true"
+        out[name] = counters
+    return out
+
+
+def _add_interface_rates(info, prev):
+    """Rates since the previous poll for the Pollers page: bits/s, and errors and drops per minute."""
+    dt = info.get("at", 0) - (prev or {}).get("at", 0)
+    old = (prev or {}).get("ifaces") or {}
+    for name, c in (info.get("ifaces") or {}).items():
+        p = old.get(name)
+        if not p or dt <= 0:
+            continue
+
+        def rate(key, scale):
+            a, b = c.get(key), p.get(key)
+            return None if a is None or b is None or a < b else (a - b) / dt * scale
+        c.update(rx_bps=rate("rx_bytes", 8), tx_bps=rate("tx_bytes", 8),
+                 rx_errors_min=rate("rx_errors", 60), tx_errors_min=rate("tx_errors", 60),
+                 rx_drops_min=rate("rx_drops", 60), tx_drops_min=rate("tx_drops", 60))
+
+
 def _poll_router(kind, router):
-    """Read CPU, memory, temperature and voltage from one router."""
+    """One router's health (and for a BRAS its PPP sessions and graphed interfaces):
+    over SNMP when the router has it enabled, else over the RouterOS API."""
+    if snmp_monitor.settings(router):
+        return _poll_router_snmp(kind, router)
+    return _poll_router_api(kind, router)
+
+
+# SNMP polls keep a per-router interface map; their NAT check (the API) runs only every NAT_CHECK_INTERVAL.
+_snmp_caches: dict = {}
+_nat_checked: dict = {}
+NAT_CHECK_INTERVAL = 900
+
+
+def _snmp_target(router):
+    """(host, port) the router answers SNMP on (the preview points this at its fake agents)."""
+    return router.get("address", ""), snmp_monitor.settings(router)["port"]
+
+
+def _poll_router_snmp(kind, router):
+    name = router.get("name") or router.get("address", "")
+    key = _router_key(kind, name)
+    s = snmp_monitor.settings(router)
+    host, port = _snmp_target(router)
+    chosen = [str(n).strip() for n in router.get("monitor_interfaces") or [] if str(n).strip()]
+    info = {"name": name, "kind": kind, "address": router.get("address", ""), "at": time.time(),
+            **snmp_monitor.poll(host, port, s["community"], kind, chosen,
+                                _snmp_caches.setdefault(key, snmp_monitor.RouterCache()), MAX_GRAPHED_INTERFACES)}
+    if kind == "bras" and info["ok"] and time.time() - _nat_checked.get(key, 0) >= NAT_CHECK_INTERVAL:
+        pool = None
+        try:
+            pool = _router_connect(router)
+            pool.socket_timeout = 5
+            info["nat_rules"], info["nat_lists"] = _read_nat(pool.get_api())
+            _nat_checked[key] = time.time()
+        except Exception as e:
+            info["nat_error"] = str(e) or type(e).__name__
+        finally:
+            if pool is not None:
+                try:
+                    pool.disconnect()
+                except Exception:
+                    pass
+    return info
+
+
+def _poll_router_api(kind, router):
+    """Read CPU, memory, temperature and voltage from one router over the API; for a
+    BRAS also its active PPP sessions and the counters of its graphed interfaces."""
     info = {"name": router.get("name") or router.get("address", ""), "kind": kind,
-            "address": router.get("address", ""), "ok": False, "error": "", "at": time.time()}
+            "address": router.get("address", ""), "ok": False, "error": "", "at": time.time(), "via": "api"}
     t0, pool = time.monotonic(), None
     try:
         pool = _connect_router_api(router)
@@ -761,6 +900,14 @@ def _poll_router(kind, router):
         temp, volt = _health_values(health)
         if kind == "bras":
             info["nat_rules"], info["nat_lists"] = _read_nat(api)
+            try:
+                info["ppp"] = _ppp_active_count(api)
+            except Exception as e:
+                info["ppp_error"] = str(e)
+            try:
+                info["ifaces"] = _read_interfaces(api, router)
+            except Exception as e:
+                info["ifaces_error"] = str(e)
         info.update(
             ok=True, cpu=float(res.get("cpu-load", 0) or 0),
             mem=(total - free) / total * 100 if total else None,
@@ -870,15 +1017,26 @@ def _poll_routers(conn):
         with timed_job(conn, f"router {name}", "router", "gui", MONITOR_STEP) as job:
             info = _poll_router(kind, router)
             job["error"] = info["error"]
+        key = _router_key(kind, name)
+        with _mon_lock:
+            prev = _mon["routers"].get(key)
         rules, lists = info.pop("nat_rules", None), info.pop("nat_lists", {})
         if rules is not None:
             info["nat"] = _nat_findings(rules, lists, _router_ips(conn, name))
-        key = _router_key(kind, name)
+        elif info.get("via") == "snmp" and prev and "nat" in prev:
+            info["nat"] = prev["nat"]        # SNMP polls check NAT (over the API) only now and then
+        _add_interface_rates(info, prev)
         latest[key] = info
-        try:
-            _rrd_update(key, "router", [info.get(k) for k in RRD_SCHEMAS["router"]])
-        except Exception as e:
-            app.logger.warning(f"router RRD {key}: {e}")
+        updates = [(key, "router", [info.get(k) for k in RRD_SCHEMAS["router"]])]
+        if info.get("ppp") is not None:
+            updates.append((_rrd_ppp(key), "ppp", [info["ppp"]]))
+        for iface, counters in (info.get("ifaces") or {}).items():
+            updates.append((_rrd_iface(key, iface), "iface", [counters.get(k) for k in RRD_SCHEMAS["iface"]]))
+        for rrd, schema, values in updates:
+            try:
+                _rrd_update(rrd, schema, values)
+            except Exception as e:
+                app.logger.warning(f"router RRD {rrd}: {e}")
     prune_jobs(conn, "gui", "router", job_names)
     with _mon_lock:
         _mon["routers"] = latest
@@ -1140,22 +1298,43 @@ _GRAPH_STYLE = [
 _graph_cache: dict = {}
 
 
-def _series(rrd, ds, var, label, color, draw="LINE1", unit="", stack=False):
-    """DEF/VDEF/draw/GPRINT arguments for one series with an avg / max / now legend."""
+def _series(rrd, ds, var, label, color, draw="LINE1", unit="", stack=False, rpn=""):
+    """
+    DEF/VDEF/draw/GPRINT arguments for one series with an avg / max / now
+    legend. rpn converts the stored value (e.g. "8,*,1000000,/" bytes/s →
+    Mbps). draw "TICK" marks every interval where the value is not zero.
+    """
     path = str(_rrd_path(rrd)).replace(":", "\\:")
     fmt = "%6.2lf" + unit.replace("%", "%%")
     label = label.replace(":", "\\:")
-    return [
-        f"DEF:{var}={path}:{ds}:AVERAGE",
-        f"DEF:{var}x={path}:{ds}:MAX",
+    if rpn:
+        defs = [f"DEF:{var}r={path}:{ds}:AVERAGE", f"DEF:{var}rx={path}:{ds}:MAX",
+                f"CDEF:{var}={var}r,{rpn}", f"CDEF:{var}x={var}rx,{rpn}"]
+    else:
+        defs = [f"DEF:{var}={path}:{ds}:AVERAGE", f"DEF:{var}x={path}:{ds}:MAX"]
+    # TICK's legend marker is wider and covers the first character: pad it.
+    drawn = (f"TICK:{var}#{color}:1: {label:<19}" if draw == "TICK"
+             else f"{draw}:{var}#{color}:{label:<20}" + (":STACK" if stack else ""))
+    return defs + [
         f"VDEF:{var}a={var},AVERAGE",
         f"VDEF:{var}m={var}x,MAXIMUM",
         f"VDEF:{var}l={var},LAST",
-        f"{draw}:{var}#{color}:{label:<20}" + (":STACK" if stack else ""),
+        drawn,
         f"GPRINT:{var}a:avg {fmt}",
         f"GPRINT:{var}m:max {fmt}",
         f"GPRINT:{var}l:now {fmt}\\l",
     ]
+
+
+def _graph_interface_names(key, router, info):
+    """Interfaces with a graph: the configured ones, else the last poll's, else those with an RRD file."""
+    chosen = [str(n).strip() for n in router.get("monitor_interfaces") or [] if str(n).strip()]
+    if chosen:
+        return chosen[:MAX_GRAPHED_INTERFACES]
+    if info and info.get("ifaces"):
+        return list(info["ifaces"])
+    prefix = f"{key}-if-"
+    return sorted(p.stem[len(prefix):] for p in RRD_DIR.glob(f"{prefix}*.rrd"))
 
 
 def _graph_defs(cfg):
@@ -1164,8 +1343,8 @@ def _graph_defs(cfg):
 
     def graph(gid, title, vlabel, rrd, series):
         args = []
-        for i, (ds, label, color, draw, unit, stack) in enumerate(series):
-            args += _series(rrd, ds, f"v{i}", label, color, draw, unit, stack)
+        for i, (ds, label, color, draw, unit, stack, *rpn) in enumerate(series):
+            args += _series(rrd, ds, f"v{i}", label, color, draw, unit, stack, *rpn)
         defs[gid] = {"title": title, "vlabel": vlabel, "rrd": rrd, "args": args}
 
     graph("app-cpu", "LQ-Sync CPU by job", "% of one core", "app", [
@@ -1201,6 +1380,8 @@ def _graph_defs(cfg):
         ("address_list", "Address list", "8b5cf6", "AREA", "", True),
         ("static",       "manual",       "8b949e", "AREA", "", True),
     ])
+    with _mon_lock:
+        polled = dict(_mon["routers"])
     for kind, router in _router_targets(cfg):
         name = router.get("name") or router.get("address", "")
         key = _router_key(kind, name)
@@ -1209,8 +1390,23 @@ def _graph_defs(cfg):
             ("mem",    "memory %",      "22c55e", "LINE1", "%",   False),
             ("temp",   "temperature C", "ef4444", "LINE1", " C",  False),
             ("volt",   "voltage V",     "f59e0b", "LINE1", " V",  False),
-            ("api_ms", "API latency",   "8b5cf6", "LINE1", " ms", False),
+            ("api_ms", "poll latency",  "8b5cf6", "LINE1", " ms", False),
         ])
+        if kind != "bras":
+            continue
+        graph(_rrd_ppp(key), f"Router {name} PPP sessions", "sessions", _rrd_ppp(key), [
+            ("ppp", "active PPP sessions", "3b82f6", "AREA", "", False),
+        ])
+        for iface in _graph_interface_names(key, router, polled.get(key)):
+            rrd = _rrd_iface(key, iface)
+            graph(rrd, f"Router {name} {iface}: traffic, errors, drops", "Mbps", rrd, [
+                ("rx_bytes",  "rx Mbps",        "22c55e",   "AREA",  "", False, "8,*,1000000,/"),
+                ("tx_bytes",  "tx Mbps",        "3b82f6",   "LINE1", "", False, "8,*,1000000,/"),
+                ("rx_errors", "rx errors /min", "ef444488", "TICK",  "", False, "60,*"),
+                ("tx_errors", "tx errors /min", "f59e0b88", "TICK",  "", False, "60,*"),
+                ("rx_drops",  "rx drops /min",  "a371f766", "TICK",  "", False, "60,*"),
+                ("tx_drops",  "tx drops /min",  "8b949e66", "TICK",  "", False, "60,*"),
+            ])
     return defs
 
 
@@ -1504,6 +1700,20 @@ def _config_error(content):
     for r in bras:
         if not isinstance(r.get("webhook_token", ""), str):
             return f"BRAS '{r.get('name')}': webhook_token must be a string"
+        graphed = r.get("monitor_interfaces", [])
+        if not isinstance(graphed, list) or not all(isinstance(n, str) for n in graphed):
+            return f"BRAS '{r.get('name')}': monitor_interfaces must be a list of interface names"
+        if len(graphed) > MAX_GRAPHED_INTERFACES:
+            return f"BRAS '{r.get('name')}': graph at most {MAX_GRAPHED_INTERFACES} interfaces"
+        s = r.get("snmp", {})
+        if not isinstance(s, dict):
+            return f"BRAS '{r.get('name')}': snmp must be an object"
+        if s.get("enabled"):
+            port = s.get("port", 161)
+            if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+                return f"BRAS '{r.get('name')}': SNMP port must be 1-65535"
+            if not isinstance(s.get("community", "public"), str) or not s.get("community", "public"):
+                return f"BRAS '{r.get('name')}': SNMP community must not be empty"
     return topology_errors(content.get("topology"), _router_names(content))
 
 
@@ -1840,12 +2050,73 @@ def webhook_script():
     return jsonify({"ok": True, "script": webhook.terminal_install(base, token, name)})
 
 
-def _webhook_connect(router, username=None, password=None):
+def _router_connect(router, username=None, password=None):
     """API pool for a router. username/password replace the configured account (often read-only)."""
     r = dict(router)
     if username:
         r.update(username=username, password=password or "")
     return _connect_router_api(r)
+
+
+@app.route("/api/routers/snmp-test", methods=["POST"])
+@require_auth
+def router_snmp_test():
+    """Read a few objects over SNMP with the form's (possibly unsaved) address, port and community."""
+    body = request.get_json(silent=True) or {}
+    address = str(body.get("address") or "").strip()
+    if not address:
+        return jsonify({"ok": False, "error": "Enter the router's address first"}), 400
+    try:
+        port = int(body.get("port") or 161)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "SNMP port must be a number"}), 400
+    router = {"name": str(body.get("router") or ""), "address": address,
+              "snmp": {"enabled": True, "port": port, "community": str(body.get("community") or "public")}}
+    host, port = _snmp_target(router)
+    t0 = time.monotonic()
+    try:
+        with snmp.Client(host, router["snmp"]["community"], port, timeout=2.0) as c:
+            v = c.get([snmp_monitor.SYS["name"], snmp_monitor.SYS["descr"],
+                       snmp_monitor.SYS["version"], snmp_monitor.SYS["if_count"]])
+        if v[snmp_monitor.SYS["name"]] is None and v[snmp_monitor.SYS["descr"]] is None:
+            return jsonify({"ok": False, "error": "The agent answered but has no system information"}), 502
+        return jsonify({"ok": True, "identity": v[snmp_monitor.SYS["name"]] or "",
+                        "board": re.sub(r"^RouterOS\s*", "", str(v[snmp_monitor.SYS["descr"]] or "")),
+                        "version": v[snmp_monitor.SYS["version"]] or "",
+                        "interfaces": v[snmp_monitor.SYS["if_count"]], "ms": (time.monotonic() - t0) * 1000})
+    except snmp.SnmpError as e:
+        return jsonify({"ok": False, "error": f"{e}. Check /snmp is enabled on the router, the community, "
+                                              "and that the community allows this host's address."}), 502
+
+
+@app.route("/api/routers/interfaces")
+@require_auth
+def router_interfaces():
+    """A saved BRAS's own (non-dynamic) interfaces, to pick the ones to graph."""
+    cfg = _load_config()
+    name = request.args.get("router", "")
+    router = next((r for r in _config_routers(cfg) if r["name"] == name), None)
+    if router is None:
+        return jsonify({"ok": False, "error": f"Unknown router '{name}': save the Routers page first"}), 404
+    pool = None
+    try:
+        pool = _router_connect(router)
+        rows = pool.get_api().get_resource("/interface").call(
+            "print", {"proplist": "name,type,running,disabled,comment"}, {"dynamic": "false"})
+        interfaces = sorted(({"name": r.get("name", ""), "type": r.get("type", ""),
+                              "running": r.get("running") == "true", "disabled": r.get("disabled") == "true",
+                              "comment": r.get("comment", "")} for r in rows if r.get("name")),
+                            key=lambda i: (not i["running"], i["name"]))
+        return jsonify({"ok": True, "router": name, "interfaces": interfaces,
+                        "graphed": router.get("monitor_interfaces") or []})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e) or type(e).__name__}), 502
+    finally:
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
 
 
 @app.route("/api/webhook/router", methods=["POST"])
@@ -1869,7 +2140,7 @@ def webhook_router_action():
         return jsonify({"ok": False, "error": "Save the LQ-Sync address and generate a token first"}), 400
     pool = None
     try:
-        pool = _webhook_connect(router, body.get("username"), body.get("password"))
+        pool = _router_connect(router, body.get("username"), body.get("password"))
         api = pool.get_api()
         if action == "check":
             result = webhook.status(api, base, token)
@@ -2957,6 +3228,7 @@ def dashboard_mikrotik_resource():
             "cpu_percent": info.get("cpu"),
             "ram_percent": round(info["mem"], 1) if info.get("mem") is not None else None,
             "uptime": info.get("uptime"),
+            "ppp": info.get("ppp"),
             "ok": bool(info.get("ok")),
             "error": info.get("error") or ("" if info else "waiting for first poll"),
         })

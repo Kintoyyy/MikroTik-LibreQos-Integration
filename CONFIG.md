@@ -181,6 +181,42 @@ The `routers` array defines one or more MikroTik routers to poll. Each router is
 | `username` | string | Yes | API username. |
 | `password` | string | Yes | API password. Can be empty string `""` for no password. |
 | `site` | string | No | Site name for `ap_site` and `full` strategies. Devices from this router will be nested under this site in `network.json`. |
+| `monitor_interfaces` | string[] | No | Interfaces graphed on the Pollers page (at most 8), e.g. `["sfp-sfpplus1", "ether2"]`. Empty or missing: the router's running ethernet ports. Pick them in the GUI with **Pick from router**. |
+| `snmp` | object | No | `{"enabled": true, "community": "lqsync", "port": 161}`: poll health, PPP sessions and interface counters over SNMP v2c instead of the API (see [Router monitoring](#router-monitoring)). |
+| `webhook_token` | string | No | Token of this router's PPP webhook (see [Instant PPP Updates](#instant-ppp-updates-webhook-optional)). Set from the GUI. |
+
+### Router monitoring
+
+The GUI polls every BRAS once a minute and keeps the history in RRD files (`rrd/` next to `config.json`), graphed on the **Pollers** page:
+
+| Graph | What | How it is read |
+|-------|------|----------------|
+| Router *name* | CPU, memory, temperature, voltage, API latency | `/system/resource`, `/system/health` |
+| Router *name* PPP sessions | Active PPP sessions | `/ppp/active` with `count-only`, so a large BRAS does not send every session |
+| Router *name* *interface* | rx / tx Mbps, with rx / tx errors and drops per minute marked as ticks | The interface's `rx-byte`, `tx-byte`, `rx-error`, `tx-error`, `rx-drop` and `tx-drop` counters, stored as rates |
+
+The Pollers router cards and the Overview router tiles show the latest values: the PPP count, and each interface's current rx/tx rate with any errors or drops in the last minute. "rx" and "tx" are from the router's side of that interface: on the uplink, rx is your subscribers' download.
+
+#### Over SNMP instead of the API
+
+Turn on **Poll over SNMP** in a router's Monitoring section (or set `"snmp": {"enabled": true, ...}`) to read all of the above over SNMP v2c, so the once-a-minute poll no longer opens an API session. LQ-Sync has its own small SNMP client: nothing extra to install. On the router:
+
+```
+/snmp set enabled=yes
+/snmp community add name=lqsync addresses=<LQ-Sync address>/32 read-access=yes write-access=no
+```
+
+Use that community name in LQ-Sync and press **Test SNMP**. Prefer a community limited to LQ-Sync's address over the default `public`, and allow UDP 161 from LQ-Sync if a firewall sits in between.
+
+| Value | SNMP source |
+|-------|-------------|
+| Identity, board, version | `sysName`, `sysDescr`, MIKROTIK-MIB `mtxrLicVersion` |
+| CPU, memory, uptime | HOST-RESOURCES-MIB (`hrProcessorLoad`, `hrStorage` main memory, `hrSystemUptime`) |
+| Temperature, voltage | MIKROTIK-MIB `mtxrHlTemperature` / `mtxrHlVoltage` (RouterOS 6), or the `mtxrGaugeTable` (RouterOS 7) |
+| Active PPP sessions | Each PPP session is a dynamic `<pppoe-…>` interface, so sessions = `ifNumber` minus the router's own interfaces. Those are counted from an `ifName` walk repeated every hour, or sooner when interfaces change |
+| Interface counters | IF-MIB `ifHCInOctets` / `ifHCOutOctets` (32-bit counters when missing), `ifIn/OutErrors`, `ifIn/OutDiscards` |
+
+With SNMP on, the API is still used for the subscriber scans (sessions, leases and address lists have no SNMP equivalent), for the NAT check (every 15 minutes instead of every minute), for **Pick from router**, and for the PPP webhook installer. The Pollers card shows how each router was polled. If you add or remove interfaces on the router, the PPP count can be off by that many until the next hourly walk.
 
 ---
 
