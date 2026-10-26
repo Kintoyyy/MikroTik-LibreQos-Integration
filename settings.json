@@ -54,6 +54,12 @@
         "login_max_attempts": 5,
         "login_lockout_seconds": 60
     },
+    "webhook": {
+        "debounce_seconds": 2,
+        "min_interval_seconds": 10,
+        "full_scan_over": 50,
+        "keep_days": 7
+    },
     "burst": {
         "enabled": false,
         "seconds": 4,

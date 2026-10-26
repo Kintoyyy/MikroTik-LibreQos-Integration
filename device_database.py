@@ -68,8 +68,68 @@ _CREATE_JOBS_SQL = """
 """
 
 
+# PPP session events the routers' webhook script reports (gui.py records
+# them, updatecsv.py acts on them). processed_at = 0 while waiting.
+_CREATE_WEBHOOK_EVENTS_SQL = """
+    CREATE TABLE IF NOT EXISTS webhook_events (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        router       TEXT NOT NULL,
+        event        TEXT NOT NULL,
+        service      TEXT DEFAULT '',
+        user         TEXT DEFAULT '',
+        ip           TEXT DEFAULT '',
+        caller_id    TEXT DEFAULT '',
+        source_ip    TEXT DEFAULT '',
+        received_at  REAL NOT NULL,
+        processed_at REAL DEFAULT 0
+    )
+"""
+_CREATE_WEBHOOK_INDEX_SQL = "CREATE INDEX IF NOT EXISTS webhook_events_pending ON webhook_events (processed_at)"
+
+
 def ensure_jobs_table(conn):
     conn.execute(_CREATE_JOBS_SQL)
+    conn.commit()
+
+
+def ensure_webhook_table(conn):
+    conn.execute(_CREATE_WEBHOOK_EVENTS_SQL)
+    conn.execute(_CREATE_WEBHOOK_INDEX_SQL)
+    conn.commit()
+
+
+def record_webhook_event(conn, router, event, service='', user='', ip='', caller_id='',
+                         source_ip='', now=None):
+    """Queue one webhook event. Test events only show the router can reach LQ-Sync: stored as done."""
+    now = now or time.time()
+    conn.execute("""
+        INSERT INTO webhook_events (router, event, service, user, ip, caller_id, source_ip,
+                                    received_at, processed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (router, event, service, user, ip, caller_id, source_ip, now, now if event == 'test' else 0))
+    conn.commit()
+
+
+def pending_webhook_events(conn):
+    return conn.execute("SELECT COUNT(*) FROM webhook_events WHERE processed_at = 0").fetchone()[0]
+
+
+def take_webhook_events(conn, now=None):
+    """Mark every waiting event done and return them, oldest first, as dicts."""
+    rows = conn.execute(
+        "SELECT id, router, event, service, user, ip, caller_id, received_at FROM webhook_events "
+        "WHERE processed_at = 0 ORDER BY id").fetchall()
+    if rows:
+        conn.execute("UPDATE webhook_events SET processed_at = ? WHERE processed_at = 0 AND id <= ?",
+                     (now or time.time(), rows[-1][0]))
+        conn.commit()
+    keys = ('id', 'router', 'event', 'service', 'user', 'ip', 'caller_id', 'received_at')
+    return [dict(zip(keys, row)) for row in rows]
+
+
+def prune_webhook_events(conn, keep_seconds, now=None):
+    conn.execute("DELETE FROM webhook_events WHERE processed_at > 0 AND received_at < ?",
+                 ((now or time.time()) - keep_seconds,))
     conn.commit()
 
 
@@ -236,6 +296,8 @@ class DeviceDatabase:
             logger.info(f"Re-keyed {cur.rowcount} DHCP device(s) by MAC address")
 
         self.conn.execute(_CREATE_JOBS_SQL)
+        self.conn.execute(_CREATE_WEBHOOK_EVENTS_SQL)
+        self.conn.execute(_CREATE_WEBHOOK_INDEX_SQL)
         self.conn.commit()
 
     def _new_ids(self):
@@ -335,6 +397,15 @@ class DeviceDatabase:
                   rx_max + tx_max))
             logger.info(f"New device: {code} (source={source}, IP={ipv4})")
             return True
+
+    def remove_device(self, code, router) -> bool:
+        """Delete one dynamic device of router (a session that ended). Returns True if it existed."""
+        removed = self.conn.execute(
+            "DELETE FROM devices WHERE code = ? AND router = ? AND is_static = 0", (code, router)
+        ).rowcount > 0
+        if removed:
+            logger.info(f"Removed {code} ({router}): session ended")
+        return removed
 
     def remove_inactive(self, scan_time, scanned_routers, configured_routers) -> bool:
         """

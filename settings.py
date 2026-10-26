@@ -101,6 +101,18 @@ _DEFAULTS = {
         "login_max_attempts": 5,
         "login_lockout_seconds": 60,
     },
+    "webhook": {
+        # PPP webhook (routers' on-up / on-down scripts): seconds to collect a
+        # burst of events before acting on them. Keep at least 1: the session
+        # must be gone from /ppp active when an on-down event is looked up.
+        "debounce_seconds": 2,
+        # Least seconds between webhook-triggered syncs (each may run LibreQoS).
+        "min_interval_seconds": 10,
+        # More users than this on one router in one batch: rescan the whole router instead.
+        "full_scan_over": 50,
+        # Days of received events kept for the GUI.
+        "keep_days": 7,
+    },
     "burst": {
         # PowerBoost-style burst for all traffic: an idle subscriber may send
         # `seconds` worth of its plan at full speed before LibreQoS holds it to
@@ -240,6 +252,17 @@ def topology_settings():
         "split_ratio":          max(float(t.get("auto_cpu_split_ratio", 1.0)), 0.0),
         "move_budget":          max(int(t.get("auto_cpu_move_budget", 0) or 0), 0),
         "tc_u16_warn":          int(s["database"].get("tc_u16_warn_threshold", 60000)),
+    }
+
+
+def webhook_settings():
+    """The [webhook] settings, re-read from settings.json on every call (no restart needed)."""
+    w = _load()["webhook"]
+    return {
+        "debounce":     min(max(float(w.get("debounce_seconds", 2)), 0.5), 60.0),
+        "min_interval": min(max(float(w.get("min_interval_seconds", 10)), 0.0), 3600.0),
+        "full_scan_over": max(int(w.get("full_scan_over", 50)), 1),
+        "keep_seconds": max(float(w.get("keep_days", 7)), 0.1) * 86400,
     }
 
 

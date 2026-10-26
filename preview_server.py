@@ -62,6 +62,8 @@ SEED_CONFIG = {
     ],
     "cores": [],
     "wan_assignment": {"enabled": False, "include_hotspot": False, "include_dhcp": False, "interval": 300},
+    # url is filled in from --port when the sandbox is seeded
+    "webhook": {"enabled": True, "url": ""},
     "topology": {
         "version": 1,
         "nodes": [
@@ -136,6 +138,74 @@ SEED_NETPLAN = {
 }
 
 
+# ── Fake RouterOS API ───────────────────────────────────────────────────────
+
+class FakeRouterOS:
+    """
+    Just enough of a routeros_api connection (pool and api in one) for the
+    webhook installer and the PPP lookup: in-memory tables with get(filters),
+    add, set, remove, and "run" of a /system script (on_run is called with it).
+    Rows use the keys routeros_api returns ("id", "on-up", ...).
+    """
+    def __init__(self, tables=None, on_run=None):
+        self.tables = {path: [dict(r) for r in rows] for path, rows in (tables or {}).items()}
+        self.on_run = on_run
+        self._next = 1
+        for rows in self.tables.values():
+            for r in rows:
+                r.setdefault("id", self._new_id())
+
+    def _new_id(self):
+        self._next += 1
+        return f"*{self._next:X}"
+
+    def get_api(self):
+        return self
+
+    def disconnect(self):
+        pass
+
+    def get_resource(self, path):
+        return _FakeResource(self, "/" + path.strip("/"))
+
+
+class _FakeResource:
+    def __init__(self, ros, path):
+        self.ros, self.rows = ros, ros.tables.setdefault(path, [])
+
+    @staticmethod
+    def _keys(kwargs):
+        return {k.replace("_", "-"): v for k, v in kwargs.items()}
+
+    def get(self, **filters):
+        filters = self._keys(filters)
+        return [dict(r) for r in self.rows if all(str(r.get(k, "")) == str(v) for k, v in filters.items())]
+
+    def add(self, **kwargs):
+        row = {"id": self.ros._new_id(), **self._keys(kwargs)}
+        self.rows.append(row)
+        return row["id"]
+
+    def set(self, id, **kwargs):
+        for r in self.rows:
+            if r["id"] == id:
+                r.update(self._keys(kwargs))
+                return []
+        raise RuntimeError(f"no such item ({id})")
+
+    def remove(self, id):
+        self.rows[:] = [r for r in self.rows if r["id"] != id]
+        return []
+
+    def call(self, command, arguments=None):
+        if command == "run" and self.ros.on_run:
+            name = (arguments or {}).get("number")
+            for r in self.rows:
+                if r.get("name") == name or r["id"] == name:
+                    self.ros.on_run(r)
+        return []
+
+
 # ── Sandbox ─────────────────────────────────────────────────────────────────
 
 def _write_new(path, text):
@@ -144,14 +214,18 @@ def _write_new(path, text):
             f.write(text)
 
 
-def seed_sandbox(sandbox):
+def seed_sandbox(sandbox, port):
     """Create the sandbox files that are missing; never overwrite edits made in the GUI."""
     libreqos = os.path.join(sandbox, "libreqos")
     netplan = os.path.join(sandbox, "netplan")
     for d in (sandbox, libreqos, netplan):
         os.makedirs(d, exist_ok=True)
 
-    _write_new(os.path.join(sandbox, "config.json"), json.dumps(SEED_CONFIG, indent=4))
+    config = json.loads(json.dumps(SEED_CONFIG))
+    config["webhook"]["url"] = f"http://localhost:{port}"
+    for r in config["bras"]:
+        r["webhook_token"] = os.urandom(16).hex()
+    _write_new(os.path.join(sandbox, "config.json"), json.dumps(config, indent=4))
     _write_new(os.path.join(sandbox, "lqos.conf"), SEED_LQOS_CONF.format(libreqos=libreqos))
     _write_new(os.path.join(libreqos, "VERSION_STRING"), "1.5\n")
     for name, text in SEED_NETPLAN.items():
@@ -208,18 +282,22 @@ def _mac(rng):
     return ":".join(f"{rng.randrange(256):02X}" for _ in range(6))
 
 
-def add_dynamic(db, rng, router, ips, scan_time):
+def add_dynamic(db, rng, router, ips, scan_time, ppp_user=None, ip=None):
+    """A random subscriber on router; ppp_user/ip make it that PPPoE user (a webhook "up")."""
     from rate_resolver import RateResolver
-    source = _pick(rng, SOURCES)
+    source = "pppoe" if ppp_user else _pick(rng, SOURCES)
     dl, ul = _pick(rng, PLANS)
     mac = _mac(rng)
-    code = {"pppoe": f"PPP-{router.lower()}-{rng.getrandbits(24):06x}",
+    code = {"pppoe": f"PPP-{ppp_user or router.lower() + '-' + format(rng.getrandbits(24), '06x')}",
             "hotspot": f"HS-{mac}",
             "dhcp": "DHCP-" + mac.replace(":", "")}[source]
+    if not ip or ip in ips.used:
+        ip = ips.take()
+    ips.used.add(ip)
     rx_max, tx_max = RateResolver.calculate_max_rates(dl, ul)
     rx_min, tx_min = RateResolver.calculate_min_rates(rx_max, tx_max)
     comment = RateResolver.build_comment(source, f"{dl}M/{ul}M", False)
-    db.upsert_device(code, mac if source != "pppoe" else "", ips.take(), comment, source, router,
+    db.upsert_device(code, mac if source != "pppoe" else "", ip, comment, source, router,
                      rx_max, tx_max, rx_min, tx_min, scan_time)
 
 
@@ -246,29 +324,63 @@ def seed_devices(db, count, seed):
     db.conn.commit()
 
 
+class FakeScanner:
+    """
+    RouterScanner stand-in for the simulated routers. A full scan marks the
+    router's devices as seen (seeding a router that has none); the webhook
+    fast path treats each user's latest webhook event as the router's
+    session table: "up" adds the PPPoE user, "down" removes it.
+    """
+    def __init__(self, db, rng, churn=0):
+        self.db, self.rng, self.churn = db, rng, churn
+        self.ips = IpPool(db.conn)
+        self.last_error = ""
+
+    def scan_router(self, router, scan_time):
+        db, name = self.db, router["name"]
+        count = db.conn.execute(
+            "SELECT COUNT(*) FROM devices WHERE router = ? AND is_static = 0", (name,)).fetchone()[0]
+        if count == 0:
+            seeded = random.Random(zlib.crc32(name.encode()))
+            for _ in range(120):
+                add_dynamic(db, seeded, name, self.ips, scan_time)
+        db.conn.execute("UPDATE devices SET last_seen = ? WHERE router = ? AND is_static = 0",
+                        (scan_time, name))
+        for _ in range(self.churn):
+            # One subscriber leaves (remove_inactive deletes it), one joins.
+            db.conn.execute(
+                "UPDATE devices SET last_seen = ? WHERE code = (SELECT code FROM devices "
+                "WHERE router = ? AND is_static = 0 ORDER BY RANDOM() LIMIT 1)", (scan_time - 1, name))
+            add_dynamic(db, self.rng, name, self.ips, scan_time)
+        db.conn.commit()
+        return True, True
+
+    def apply_ppp_events(self, router, users, scan_time):
+        db, name = self.db, router["name"]
+        for user in users:
+            last = db.conn.execute(
+                "SELECT event, ip FROM webhook_events WHERE router = ? AND user = ? "
+                "AND event IN ('up', 'down') ORDER BY id DESC LIMIT 1", (name, user)).fetchone()
+            code = f"PPP-{user}"
+            if last and last[0] == "up":
+                if db.conn.execute("SELECT 1 FROM devices WHERE code = ?", (code,)).fetchone():
+                    db.conn.execute("UPDATE devices SET last_seen = ? WHERE code = ?", (scan_time, code))
+                else:
+                    add_dynamic(db, self.rng, name, self.ips, scan_time, ppp_user=user, ip=last[1])
+            else:
+                db.remove_device(code, name)
+        db.conn.commit()
+        return True, True
+
+
 def fake_scan(db, routers, scan_time, churn, rng):
-    """Mark every configured router's devices as seen; seed routers that have none."""
+    """A full scan of every configured router, recorded like updatecsv records its scans."""
     from device_database import timed_job, prune_jobs
     from settings import SCAN_INTERVAL
-    ips = IpPool(db.conn)
+    scanner = FakeScanner(db, rng, churn)
     for r in routers:
-        name = r["name"]
-        with timed_job(db.conn, f"scan {name}", "poller", "updatecsv", SCAN_INTERVAL):
-            count = db.conn.execute(
-                "SELECT COUNT(*) FROM devices WHERE router = ? AND is_static = 0", (name,)).fetchone()[0]
-            if count == 0:
-                seeded = random.Random(zlib.crc32(name.encode()))
-                for _ in range(120):
-                    add_dynamic(db, seeded, name, ips, scan_time)
-            db.conn.execute("UPDATE devices SET last_seen = ? WHERE router = ? AND is_static = 0",
-                            (scan_time, name))
-            for _ in range(churn):
-                # One subscriber leaves (remove_inactive deletes it), one joins.
-                db.conn.execute(
-                    "UPDATE devices SET last_seen = ? WHERE code = (SELECT code FROM devices "
-                    "WHERE router = ? AND is_static = 0 ORDER BY RANDOM() LIMIT 1)", (scan_time - 1, name))
-                add_dynamic(db, rng, name, ips, scan_time)
-    db.conn.commit()
+        with timed_job(db.conn, f"scan {r['name']}", "poller", "updatecsv", SCAN_INTERVAL):
+            scanner.scan_router(r, scan_time)
     prune_jobs(db.conn, "updatecsv", "poller", [f"scan {r['name']}" for r in routers])
 
 
@@ -353,11 +465,50 @@ def fake_poll_router(kind, router):
             "version": "7.16.2 (stable)", "board": "CCR2116-12G-4S+", "api_ms": rng.uniform(4, 20)}
 
 
+def fake_router_api(name):
+    """
+    A simulated router for the webhook installer: three PPP profiles (one
+    with a script of its own, to show it is kept). Running the installed
+    script POSTs a test call to LQ-Sync, the way the real script does.
+    """
+    def run(script):
+        import re
+        import urllib.request
+        source = script.get("source", "")
+        url = re.search(r':local url "([^"]*)"', source)
+        token = re.search(r':local token "([^"]*)"', source)
+        if not (url and token):
+            return
+        req = urllib.request.Request(
+            url.group(1), data=json.dumps({"event": "test", "service": "ppp"}).encode(), method="POST",
+            headers={"Content-Type": "application/json", "X-LQSync-Token": token.group(1)})
+
+        def send():
+            try:
+                urllib.request.urlopen(req, timeout=5).read()
+            except Exception as e:
+                logging.getLogger("gui").warning(f"preview: {name} could not call {url.group(1)}: {e}")
+        threading.Thread(target=send, daemon=True).start()
+
+    return FakeRouterOS({"/ppp/profile": [
+        {"name": "default", "on-up": "", "on-down": ""},
+        {"name": "default-encryption", "on-up": "", "on-down": ""},
+        {"name": "PPPoE-plans", "on-up": ':log info ("PPP up " . $user)', "on-down": ""},
+    ]}, on_run=run)
+
+
 def install_fakes(gui, ring, systemd, netplan):
     from flask import jsonify, request
 
     def raise_preview(*_a, **_k):
         raise RuntimeError("preview: routers and root actions are simulated")
+
+    routers = {}
+
+    def webhook_connect(router, username=None, password=None):
+        if router["name"] not in routers:
+            routers[router["name"]] = fake_router_api(router["name"])
+        return routers[router["name"]]
 
     def restart_libreqos(action="restart"):
         systemd(action, "lqosd.service")
@@ -368,6 +519,7 @@ def install_fakes(gui, ring, systemd, netplan):
     gui._restart_libreqos = restart_libreqos
     gui._journal_tail = lambda unit, lines=15: ring.tail(unit, lines)
     gui._connect_router_api = raise_preview
+    gui._webhook_connect = webhook_connect
     gui._as_root = raise_preview
     gui._poll_router = fake_poll_router
     gui.YAML_FILES["libreqos"] = gui.Path(netplan) / "libreqos.yaml"
@@ -407,7 +559,7 @@ def main():
     sandbox = os.path.abspath(args.dir)
     if args.reset and os.path.isdir(sandbox):
         shutil.rmtree(sandbox)
-    netplan = seed_sandbox(sandbox)
+    netplan = seed_sandbox(sandbox, args.port)
 
     # Before any app import: settings.py, updatecsv.py and gui.py read these at import.
     os.environ["LQSYNC_HOME"] = sandbox
@@ -423,7 +575,7 @@ def main():
 
     import cpu_planner
     import updatecsv
-    from device_database import DeviceDatabase
+    from device_database import DeviceDatabase, take_webhook_events
     from node_assigner import NodeAssigner
     cpu_planner.CPU_COUNT = args.cpus
     cpu_planner.SYSFS_ROOT = os.environ["LQSYNC_SYSFS"]
@@ -439,8 +591,12 @@ def main():
     churn_rng = random.Random(args.seed + 1)
     log = logging.getLogger("updatecsv")
 
-    def rebuild(reason):
-        """One sync cycle, as updatecsv.py's main loop runs it, against the fake routers."""
+    def rebuild(reason, events=None):
+        """
+        One sync cycle against the fake routers, as updatecsv.py's main loop
+        runs it: a webhook cycle for events, else a full scan (which also
+        takes any events still waiting, like the real one).
+        """
         with lock:
             log.info(f"preview: sync cycle ({reason})")
             try:
@@ -451,10 +607,20 @@ def main():
             cycle_db = DeviceDatabase(updatecsv.DB_FILE, updatecsv.SHAPED_DEVICES_CSV)
             cycle_db.open()     # sqlite connections belong to one thread: one per cycle
             try:
+                assigner = NodeAssigner(updatecsv.NETWORK_JSON)
+                if events is not None:
+                    updatecsv.run_webhook_cycle(cycle_db, FakeScanner(cycle_db, churn_rng), assigner, cfg, events)
+                    return
                 t = time.time()
+                waiting = take_webhook_events(cycle_db.conn)
+                if waiting:     # the simulated routers' sessions follow the events they sent
+                    scanner = FakeScanner(cycle_db, churn_rng)
+                    for r in cfg.routers:
+                        users = {e["user"] for e in waiting if e["router"] == r["name"] and e["user"]}
+                        if users:
+                            scanner.apply_ppp_events(r, users, t)
                 fake_scan(cycle_db, cfg.routers, t, args.churn if reason == "timer" else 0, churn_rng)
-                updatecsv.build_and_apply(cycle_db, NodeAssigner(updatecsv.NETWORK_JSON), cfg, t,
-                                          [r["name"] for r in cfg.routers])
+                updatecsv.build_and_apply(cycle_db, assigner, cfg, t, [r["name"] for r in cfg.routers])
             except Exception as e:
                 log.error(f"preview: sync cycle failed: {e}")
             finally:
@@ -465,12 +631,25 @@ def main():
     install_fakes(gui, ring, systemd, netplan)
     rebuild("startup")
 
-    def timer():
+    def sync_loop():
+        """updatecsv.py's wait: a full cycle every --interval, webhook cycles as events arrive."""
+        import sqlite3
+        conn = sqlite3.connect(updatecsv.DB_FILE, timeout=30)
+        next_full_at, last_cycle_at = time.time() + max(30, args.interval), 0.0
         while True:
-            time.sleep(max(30, args.interval))
-            rebuild("timer")
+            try:
+                events = updatecsv.wait_for_work(conn, next_full_at, last_cycle_at)
+                last_cycle_at = time.time()
+                if events is None:
+                    rebuild("timer")
+                    next_full_at = time.time() + max(30, args.interval)
+                else:
+                    rebuild(f"webhook, {len(events)} event(s)", events)
+            except Exception as e:
+                log.error(f"preview: sync loop: {e}")
+                time.sleep(5)
 
-    threading.Thread(target=timer, daemon=True).start()
+    threading.Thread(target=sync_loop, daemon=True).start()
     if gui.HAS_PSUTIL:
         threading.Thread(target=gui._monitor_loop, args=(gui._stats_job, "stats"), daemon=True).start()
     threading.Thread(target=gui._monitor_loop, args=(gui._poll_routers, "router polls"), daemon=True).start()

@@ -161,45 +161,98 @@ class RouterScanner:
             logger.info(f"PPPoE disabled for {router['name']}")
             return False
 
-        router_name = router['name']
-        default_dl  = router.get('pppoe', {}).get('default_download_limit', 10)
-        default_ul  = router.get('pppoe', {}).get('default_upload_limit', 10)
-        changed     = False
-
-        logger.info(f"PPPoE: {len(sessions)} active sessions on {router_name}")
-
+        logger.info(f"PPPoE: {len(sessions)} active sessions on {router['name']}")
+        changed = False
         for session in sessions:
-            name      = session.get('name', '')
-            address   = session.get('address', '')
-            caller_id = session.get('caller-id', '')
-
-            if not address:
-                continue
-
-            code           = f"PPP-{name}"
-            mac            = caller_id.upper()
-            list_name      = ip_to_list.get(address, '')
-            comment_field  = session.get('comment', '')
-            rate_limit_str = session.get('rate', '')
-
-            rx_max, tx_max, rx_min, tx_min, rate_failed, rate_src, rate_used = \
-                RateResolver.resolve_rate_with_fallback(
-                    list_name, comment_field, rate_limit_str, default_dl, default_ul
-                )
-            logger.debug(
-                f"PPPoE {code}: IP={address} src={rate_src} "
-                f"rate='{rate_used}' → {rx_max}/{tx_max} Mbps"
-            )
-
-            comment = RateResolver.build_comment('pppoe', rate_used or list_name, rate_failed)
-
-            if self.db.upsert_device(
-                code, mac, address, comment, 'pppoe', router_name,
-                rx_max, tx_max, rx_min, tx_min, scan_time
-            ):
-                changed = True
-
+            changed |= self._upsert_ppp_session(router, session, ip_to_list, scan_time)
         return changed
+
+    def _upsert_ppp_session(self, router, session, ip_to_list, scan_time) -> bool:
+        """One active PPP session → its PPP-<name> device. Returns True if data changed."""
+        name      = session.get('name', '')
+        address   = session.get('address', '')
+        caller_id = session.get('caller-id', '')
+
+        if not address:
+            return False
+
+        code           = f"PPP-{name}"
+        mac            = caller_id.upper()
+        list_name      = ip_to_list.get(address, '')
+        comment_field  = session.get('comment', '')
+        rate_limit_str = session.get('rate', '')
+        default_dl     = router.get('pppoe', {}).get('default_download_limit', 10)
+        default_ul     = router.get('pppoe', {}).get('default_upload_limit', 10)
+
+        rx_max, tx_max, rx_min, tx_min, rate_failed, rate_src, rate_used = \
+            RateResolver.resolve_rate_with_fallback(
+                list_name, comment_field, rate_limit_str, default_dl, default_ul
+            )
+        logger.debug(
+            f"PPPoE {code}: IP={address} src={rate_src} "
+            f"rate='{rate_used}' → {rx_max}/{tx_max} Mbps"
+        )
+
+        comment = RateResolver.build_comment('pppoe', rate_used or list_name, rate_failed)
+
+        return self.db.upsert_device(
+            code, mac, address, comment, 'pppoe', router['name'],
+            rx_max, tx_max, rx_min, tx_min, scan_time
+        )
+
+    # ── Webhook fast path ───────────────────────────────────────────────────
+
+    def apply_ppp_events(self, router, users, scan_time):
+        """
+        Bring the given PPP users of one router up to date without a full scan
+        (the routers' on-up / on-down webhook): each user's /ppp active entry
+        and its IP's address-list entries are read, then the user is added or
+        updated exactly as a full scan would, or removed when it has no session
+        any more. Other devices are not touched; the next full scan still
+        reconciles everything. Returns (ok, changed).
+        """
+        name = router['name']
+        self.last_error = ''
+        if not router.get('pppoe', {}).get('enabled', False):
+            logger.info(f"Webhook from {name} ignored: PPPoE is not synced for it")
+            return True, False
+
+        # One attempt only: on failure the next full scan catches up.
+        with self.open_api(router, retries=1) as api:
+            if api is None:
+                self.last_error = f"connection failed: {RouterScanner.connect_errors.get(name, '')}"
+                return False, False
+            try:
+                active = api.get_resource('/ppp/active')
+                lists = api.get_resource('/ip/firewall/address-list')
+                sessions = {user: active.get(name=user) for user in sorted(users)}
+                ip_to_list = {}
+                for found in sessions.values():
+                    for s in found:
+                        if s.get('address'):
+                            for e in lists.get(address=s['address']):
+                                if e.get('address') and e.get('disabled', 'false') != 'true':
+                                    ip_to_list[e['address']] = e.get('list', '')
+            except Exception as e:
+                logger.error(f"Webhook lookup on {name} failed: {e}")
+                self.last_error = f"read failed: {e}"
+                return False, False
+
+        try:
+            changed = False
+            for user, found in sessions.items():
+                if found:
+                    for s in found:
+                        changed |= self._upsert_ppp_session(router, s, ip_to_list, scan_time)
+                else:
+                    changed |= self.db.remove_device(f"PPP-{user}", name)
+            self.db.conn.commit()
+            return True, changed
+        except Exception as e:
+            logger.error(f"Webhook update for {name} failed: {e}")
+            self.last_error = f"processing failed: {e}"
+            self.db.conn.rollback()
+            return False, False
 
     def _process_hotspot_users(self, router, users, ip_to_list, scan_time) -> bool:
         """

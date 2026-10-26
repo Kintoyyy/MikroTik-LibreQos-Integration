@@ -7,12 +7,15 @@ import time
 from typing import NamedTuple
 
 from cpu_planner import dedupe_router_names, topology_errors, lqos_conf_warnings
-from device_database import DeviceDatabase, timed_job, prune_jobs, unshaped_by_ip_ranges
+from device_database import (
+    DeviceDatabase, timed_job, prune_jobs, unshaped_by_ip_ranges,
+    pending_webhook_events, take_webhook_events, prune_webhook_events,
+)
 from node_assigner import NodeAssigner, STRATEGY_CPU, STRATEGY_FLAT, STRATEGY_AUTO_CPU, ALL_STRATEGIES
 from router_scanner import RouterScanner
 from settings import (
     SCAN_INTERVAL, ERROR_RETRY_INTERVAL, LIBREQOS_UPDATE_COMMAND, LIBREQOS_UPDATE_TIMEOUT,
-    LQOS_CONF_PATH, libreqos_dir, libreqos_version,
+    LQOS_CONF_PATH, libreqos_dir, libreqos_version, webhook_settings,
 )
 
 try:
@@ -254,6 +257,67 @@ def build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending=Fal
     return False
 
 
+def wait_for_work(conn, next_full_at, last_cycle_at):
+    """
+    Sleep until the next full scan is due (returns None) or routers' webhooks
+    have reported PPP session changes (returns those events). A burst of
+    events is collected for webhook debounce_seconds, and webhook cycles run
+    at most once per min_interval_seconds; a full scan due first covers them.
+    """
+    while True:
+        now = time.time()
+        if now >= next_full_at:
+            return None
+        if pending_webhook_events(conn):
+            ws = webhook_settings()
+            ready_at = max(now + ws['debounce'], last_cycle_at + ws['min_interval'])
+            if ready_at >= next_full_at:
+                time.sleep(max(0.0, next_full_at - now))
+                return None
+            time.sleep(max(0.0, ready_at - now))
+            events = take_webhook_events(conn)
+            if events:
+                return events
+            continue
+        time.sleep(min(1.0, next_full_at - now))
+
+
+def run_webhook_cycle(db, scanner, assigner, cfg, events, update_pending=False) -> bool:
+    """
+    Act on webhook events: each reported PPP user is looked up on its router
+    and added, updated or removed (scanner.apply_ppp_events). A router whose
+    events name no user, or more than full_scan_over users, is rescanned in
+    full instead. Then the files are rebuilt and LibreQoS updated as in a
+    full cycle. Returns True while a LibreQoS update is still pending.
+    """
+    ws = webhook_settings()
+    by_router = {}
+    for e in events:
+        by_router.setdefault(e['router'], []).append(e)
+    scan_time, scanned_ok = time.time(), []
+    for router in cfg.routers:
+        evs = by_router.pop(router['name'], None)
+        if not evs:
+            continue
+        users = {e['user'] for e in evs if e['event'] in ('up', 'down') and e['user']}
+        full = len(users) > ws['full_scan_over'] or any(
+            e['event'] not in ('up', 'down') or not e['user'] for e in evs)
+        with timed_job(db.conn, f"webhook {router['name']}", 'webhook', 'updatecsv', 0) as job:
+            if full:
+                ok, _ = scanner.scan_router(router, scan_time)
+                if ok:
+                    scanned_ok.append(router['name'])
+            else:
+                ok, _ = scanner.apply_ppp_events(router, users, scan_time)
+            job['error'] = scanner.last_error
+        what = "full rescan" if full else f"{len(users)} user(s)"
+        logger.info(f"Webhook: {len(evs)} event(s) from {router['name']} → {what}"
+                    f"{'' if ok else ' failed: ' + scanner.last_error}")
+    for name, evs in by_router.items():
+        logger.warning(f"Webhook: {len(evs)} event(s) for '{name}', which is not configured; ignored")
+    return build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending)
+
+
 def main():
     logger.info("Starting MikroTik-LibreQoS integration")
 
@@ -266,9 +330,14 @@ def main():
     # Set when a LibreQoS update fails, so it is retried even if the files
     # do not change again.
     update_pending = False
+    # Full scans every SCAN_INTERVAL; webhook events from the routers trigger
+    # quick partial cycles in between.
+    next_full_at = 0.0
+    last_cycle_at = 0.0
 
     while True:
         try:
+            events = wait_for_work(db.conn, next_full_at, last_cycle_at)
             try:
                 with timed_job(db.conn, 'read config.json', 'config', 'updatecsv', SCAN_INTERVAL):
                     cfg = read_config_json()
@@ -280,6 +349,12 @@ def main():
                 time.sleep(ERROR_RETRY_INTERVAL)
                 continue
 
+            last_cycle_at = time.time()
+            if events is not None:
+                update_pending = run_webhook_cycle(db, scanner, assigner, cfg, events, update_pending)
+                continue
+
+            take_webhook_events(db.conn)   # this full scan covers anything reported meanwhile
             scan_time  = time.time()
             scanned_ok = []
 
@@ -292,11 +367,13 @@ def main():
                 if ok:
                     scanned_ok.append(router['name'])
             prune_jobs(db.conn, 'updatecsv', 'poller', [f"scan {r['name']}" for r in cfg.routers])
+            prune_jobs(db.conn, 'updatecsv', 'webhook', [f"webhook {r['name']}" for r in cfg.routers])
 
             update_pending = build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending)
+            prune_webhook_events(db.conn, webhook_settings()['keep_seconds'])
 
-            logger.info(f"Scan complete. Next in {SCAN_INTERVAL}s.")
-            time.sleep(SCAN_INTERVAL)
+            next_full_at = time.time() + SCAN_INTERVAL
+            logger.info(f"Scan complete. Next full scan in {SCAN_INTERVAL}s.")
 
         except Exception as e:
             logger.error(f"Error in main loop: {e}")

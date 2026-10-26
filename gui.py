@@ -31,8 +31,12 @@ from settings import (
     atomic_write_text, write_if_changed, libreqos_dir, libreqos_version, burst_settings,
     topology_settings,
 )
-from device_database import ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges
+from device_database import (
+    ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges,
+    ensure_webhook_table, record_webhook_event,
+)
 import cpu_planner
+import webhook
 from cpu_planner import dedupe_router_names, topology_errors
 from node_assigner import NodeAssigner, ALL_STRATEGIES, STRATEGY_AUTO_CPU
 
@@ -126,9 +130,11 @@ def _csrf_guard():
     Reject state-changing API calls that lack the X-Requested-With header.
     The frontend adds it to every fetch; a cross-site form or image cannot
     set custom headers, and a cross-site fetch with one needs CORS approval
-    this app never grants.
+    this app never grants. The router webhook is exempt: it is authenticated
+    by its token header, not by the session cookie CSRF abuses.
     """
     if (request.path.startswith("/api/")
+            and request.path != webhook.WEBHOOK_PATH
             and request.method not in ("GET", "HEAD", "OPTIONS")
             and request.headers.get("X-Requested-With") != "fetch"):
         return jsonify({"ok": False, "error": "Missing X-Requested-With header"}), 403
@@ -503,7 +509,7 @@ RRDTOOL      = _which("rrdtool")
 MONITOR_STEP = 60                 # seconds between samples (the RRD step)
 APP_SCRIPTS  = {"updatecsv": "updatecsv.py", "wan_service": "wan_service.py", "gui": "gui.py"}
 # Job kind → CPU-by-job graph series
-JOB_SERIES   = {"poller": "cpu_poller", "config": "cpu_build", "build": "cpu_build",
+JOB_SERIES   = {"poller": "cpu_poller", "webhook": "cpu_poller", "config": "cpu_build", "build": "cpu_build",
                 "apply": "cpu_apply", "wan": "cpu_wan", "stats": "cpu_stats", "router": "cpu_stats",
                 "burst": "cpu_stats"}
 _STARTED_AT  = time.time()
@@ -1493,6 +1499,11 @@ def _config_error(content):
     queues = content.get("queues", True)
     if not isinstance(queues, bool) and not (isinstance(queues, int) and queues >= 1):
         return "'queues' must be true, false or a CPU count of at least 1"
+    if not isinstance(content.get("webhook", {}), dict):
+        return "'webhook' must be an object"
+    for r in bras:
+        if not isinstance(r.get("webhook_token", ""), str):
+            return f"BRAS '{r.get('name')}': webhook_token must be a string"
     return topology_errors(content.get("topology"), _router_names(content))
 
 
@@ -1655,6 +1666,239 @@ def topology_queues():
         return jsonify({"ok": True, "configured": configured, **info})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ── PPP webhook: instant adds/removes from the routers' on-up / on-down ─────
+
+_webhook_table_ready = False
+_webhook_rejects: dict = {}   # source IP → when a rejected call from it was last logged
+
+
+def _config_routers(cfg):
+    """config.json routers with their names as the sync service sees them."""
+    bras = [r for r in cfg.get("bras", []) if isinstance(r, dict)]
+    return [{**r, "name": n} for r, n in zip(bras, _router_names(cfg))]
+
+
+def _bras_entry(cfg, name):
+    """The config.json bras entry of the router the sync service calls name, or None."""
+    bras = [r for r in cfg.get("bras", []) if isinstance(r, dict)]
+    return next((r for r, n in zip(bras, _router_names(cfg)) if n == name), None)
+
+
+def _webhook_base_url(cfg):
+    return str((cfg.get("webhook") or {}).get("url") or "").strip().rstrip("/")
+
+
+def _write_config(cfg):
+    err = _config_error(cfg)
+    if err:
+        raise ValueError(err)
+    atomic_write_text(CONFIG_PATH, json.dumps(cfg, indent=4))
+
+
+@app.route(webhook.WEBHOOK_PATH, methods=["POST"])
+def mikrotik_webhook():
+    """
+    A PPP session started or ended on a router (its lqsync-webhook script,
+    called from the PPP profile on-up / on-down). Authenticated by the
+    router's own token in the X-LQSync-Token header; queued for the sync
+    service, which adds or removes the subscriber within seconds.
+    """
+    global _webhook_table_ready
+    cfg = _load_config()
+    src = request.remote_addr or ""
+
+    def reject(code, error):
+        now = time.time()
+        if now - _webhook_rejects.get(src, 0) > 60:      # log each source at most once a minute
+            if len(_webhook_rejects) > 1000:
+                _webhook_rejects.clear()
+            _webhook_rejects[src] = now
+            app.logger.warning(f"Webhook call from {src} rejected: {error}")
+        return jsonify({"ok": False, "error": error}), code
+
+    if not (cfg.get("webhook") or {}).get("enabled"):
+        return reject(403, "webhook disabled")
+    router = webhook.router_for_token(_config_routers(cfg), request.headers.get(webhook.TOKEN_HEADER, ""))
+    if router is None:
+        return reject(403, "unknown token")
+    if (request.content_length or 0) > 4096:
+        return reject(413, "body too large")
+    ev = webhook.parse_event(request.get_data()[:4096])
+    con = _db_con()
+    try:
+        if not _webhook_table_ready:
+            ensure_webhook_table(con)
+            _webhook_table_ready = True
+        record_webhook_event(con, router["name"], ev["event"], ev["service"], ev["user"],
+                             ev["ip"], ev["caller_id"], src)
+    finally:
+        con.close()
+    app.logger.info(f"Webhook {ev['event']} {ev['user'] or '-'} {ev['ip']} from {router['name']}")
+    return jsonify({"ok": True, "queued": ev["event"] != "test"}), 202
+
+
+@app.route("/api/webhook/config", methods=["POST"])
+@require_auth
+def webhook_config():
+    """Turn the webhook on/off and set the address the routers call LQ-Sync at."""
+    try:
+        body = request.get_json(silent=True) or {}
+        url = str(body.get("url") or "").strip().rstrip("/")
+        if url and not re.fullmatch(r"https?://[^\s/]+(/[^\s]*)?", url):
+            return jsonify({"ok": False, "error": "The address must look like http://10.0.0.5:5000"}), 400
+        cfg = json.loads(CONFIG_PATH.read_text())
+        cfg["webhook"] = {**(cfg.get("webhook") or {}), "enabled": bool(body.get("enabled")), "url": url}
+        _write_config(cfg)
+        return jsonify({"ok": True, "webhook": cfg["webhook"]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/webhook/token", methods=["POST"])
+@require_auth
+def webhook_token():
+    """Give a router a new webhook token (the old one stops working)."""
+    try:
+        name = (request.get_json(silent=True) or {}).get("router", "")
+        cfg = json.loads(CONFIG_PATH.read_text())
+        entry = _bras_entry(cfg, name)
+        if entry is None:
+            return jsonify({"ok": False, "error": f"Unknown router '{name}' (save the Routers page first)"}), 404
+        entry["webhook_token"] = webhook.new_token()
+        _write_config(cfg)
+        return jsonify({"ok": True, "router": name, "token": entry["webhook_token"]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+
+@app.route("/api/webhook/status")
+@require_auth
+def webhook_status():
+    """Webhook settings, and per router: token set, last call, calls in the last 24 h, waiting events."""
+    cfg = _load_config()
+    hook = cfg.get("webhook") or {}
+    counts, last, recent = {}, {}, []
+    if DB_PATH.exists():
+        con = _db_con()
+        try:
+            for row in con.execute(
+                    "SELECT router, COUNT(*), SUM(processed_at = 0) FROM webhook_events "
+                    "WHERE received_at >= ? GROUP BY router", (time.time() - 86400,)):
+                counts[row[0]] = (row[1], row[2] or 0)
+            for row in con.execute(
+                    "SELECT router, event, user, ip, received_at FROM webhook_events "
+                    "WHERE id IN (SELECT MAX(id) FROM webhook_events GROUP BY router)"):
+                last[row[0]] = dict(row)
+            recent = [dict(r) for r in con.execute(
+                "SELECT router, event, user, ip, source_ip, received_at, processed_at "
+                "FROM webhook_events ORDER BY id DESC LIMIT 25")]
+        except sqlite3.OperationalError:
+            pass                      # no event has been received yet
+        finally:
+            con.close()
+    try:
+        scanner_cfg = (json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}).get("scanner", {})
+    except Exception:
+        scanner_cfg = {}
+    routers = []
+    for r in _config_routers(cfg):
+        token = str(r.get("webhook_token") or "")
+        n, pending = counts.get(r["name"], (0, 0))
+        routers.append({
+            "name": r["name"], "address": r.get("address", ""),
+            "has_token": bool(token), "token_hint": token[:4] + "…" if token else "",
+            "pppoe": bool((r.get("pppoe") or {}).get("enabled")),
+            "calls_24h": n, "pending": pending, "last": last.get(r["name"]),
+        })
+    return jsonify({
+        "ok": True, "enabled": bool(hook.get("enabled")), "url": _webhook_base_url(cfg),
+        "suggested_url": request.host_url.rstrip("/"),
+        "apply_command_empty": str(scanner_cfg.get("libreqos_update_command", "auto")).strip() == "",
+        "scan_interval": scanner_cfg.get("scan_interval", SCAN_INTERVAL),
+        "routers": routers, "recent": recent,
+    })
+
+
+@app.route("/api/webhook/script")
+@require_auth
+def webhook_script():
+    """The commands to paste into a router's terminal (kind=install or uninstall)."""
+    cfg = _load_config()
+    name = request.args.get("router", "")
+    router = next((r for r in _config_routers(cfg) if r["name"] == name), None)
+    if router is None:
+        return jsonify({"ok": False, "error": f"Unknown router '{name}'"}), 404
+    if request.args.get("kind") == "uninstall":
+        return jsonify({"ok": True, "script": webhook.terminal_uninstall(name)})
+    base, token = _webhook_base_url(cfg), router.get("webhook_token")
+    if not base:
+        return jsonify({"ok": False, "error": "Save the LQ-Sync address the routers should call first"}), 400
+    if not token:
+        return jsonify({"ok": False, "error": "Generate a token for this router first"}), 400
+    return jsonify({"ok": True, "script": webhook.terminal_install(base, token, name)})
+
+
+def _webhook_connect(router, username=None, password=None):
+    """API pool for a router. username/password replace the configured account (often read-only)."""
+    r = dict(router)
+    if username:
+        r.update(username=username, password=password or "")
+    return _connect_router_api(r)
+
+
+@app.route("/api/webhook/router", methods=["POST"])
+@require_auth
+def webhook_router_action():
+    """
+    Install, remove or check the webhook on a router over its API. Install
+    and remove need write access: pass username/password of such an account
+    (used once, never stored) when the configured one is read-only.
+    """
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action not in ("install", "uninstall", "check"):
+        return jsonify({"ok": False, "error": "action must be install, uninstall or check"}), 400
+    cfg = _load_config()
+    router = next((r for r in _config_routers(cfg) if r["name"] == body.get("router")), None)
+    if router is None:
+        return jsonify({"ok": False, "error": "Unknown router"}), 404
+    base, token = _webhook_base_url(cfg), router.get("webhook_token") or ""
+    if action == "install" and not (base and token):
+        return jsonify({"ok": False, "error": "Save the LQ-Sync address and generate a token first"}), 400
+    pool = None
+    try:
+        pool = _webhook_connect(router, body.get("username"), body.get("password"))
+        api = pool.get_api()
+        if action == "check":
+            result = webhook.status(api, base, token)
+        elif action == "install":
+            result = webhook.install(api, base, token)
+            try:
+                webhook.send_test(api)
+                result["test_sent"] = True
+            except Exception as e:
+                result.update(test_sent=False, test_error=str(e))
+            result["status"] = webhook.status(api, base, token)
+        else:
+            result = webhook.uninstall(api)
+            result["status"] = webhook.status(api, base, token)
+        if action != "check":
+            app.logger.info(f"Webhook {action} on {router['name']}: {result.get('changed')}")
+        return jsonify({"ok": True, **result})
+    except Exception as e:
+        error = str(e) or type(e).__name__
+        if action != "check" and "permission" in error.lower():
+            error += (" — this account cannot write. Enter an account with write access, "
+                      "or paste the terminal script instead.")
+        return jsonify({"ok": False, "error": error}), 502
+    finally:
+        if pool is not None:
+            try:
+                pool.disconnect()
+            except Exception:
+                pass
 
 
 @app.route("/api/settings", methods=["GET"])

@@ -387,6 +387,13 @@ code { font-size: .8rem; color: #94a3b8; }
 .check a:hover { text-decoration: underline; }
 .check.info > i { color: var(--accent); }
 
+/* ── PPP webhook ── */
+.wh-panel { border: 1px solid var(--border); border-radius: 8px; padding: .9rem; margin-top: .9rem; background: var(--bg); }
+.wh-script { font-family: var(--mono); font-size: .72rem; min-height: 240px; resize: vertical; white-space: pre; overflow: auto; }
+.wh-result { font-size: .78rem; margin-top: .75rem; line-height: 1.55; }
+.wh-result .bad { color: #ff7b72; }
+.wh-result .ok  { color: var(--green); }
+
 /* ── Topology Builder (auto_cpu) ── */
 .bld-grid { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 1rem; align-items: start; }
 @media(max-width:1000px){ .bld-grid { grid-template-columns: 1fr; } }
@@ -925,6 +932,39 @@ code { font-size: .8rem; color: #94a3b8; }
       </div>
     </div>
 
+
+    <!-- PPP webhook -->
+    <div class="card" style="margin-bottom:1rem" id="webhook-card">
+      <div class="card-hd"><span><i class="bi bi-lightning-charge"></i> Instant PPP updates (webhook)</span>
+        <span style="display:flex;gap:.4rem;align-items:center"><span class="hd-sub" id="wh-sub"></span>
+          <button class="btn-ghost" style="font-size:.75rem" onclick="loadWebhookStatus()" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button></span>
+      </div>
+      <div class="card-bd">
+        <p style="font-size:.8rem;color:var(--muted);margin:0 0 1rem;line-height:1.5">
+          Each BRAS calls LQ-Sync from its PPP profiles' <code>on-up</code> / <code>on-down</code> scripts the moment a
+          session starts or ends, so the subscriber is added or removed within seconds instead of at the next poll.
+          The poll keeps running and corrects anything a missed call leaves behind.</p>
+        <div style="display:flex;gap:1.25rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:1rem">
+          <label class="toggle-wrap" style="margin-bottom:.45rem">
+            <div class="toggle"><input type="checkbox" id="wh-enabled"><div class="toggle-track"></div><div class="toggle-thumb"></div></div>
+            <span style="font-size:.875rem">Accept webhook calls</span>
+          </label>
+          <div style="flex:1;min-width:240px">
+            <label class="form-label" for="wh-url">LQ-Sync address the routers can reach</label>
+            <input class="form-input" id="wh-url" placeholder="http://10.0.0.5:5000">
+          </div>
+          <button class="btn-ghost" onclick="saveWebhookConfig()"><i class="bi bi-floppy"></i> Save</button>
+        </div>
+        <div id="wh-notes"></div>
+        <div style="overflow-x:auto">
+          <table class="jobs-table" id="wh-table">
+            <thead><tr><th>Router</th><th>Token</th><th>Last call</th><th>Calls 24 h</th><th></th></tr></thead>
+            <tbody><tr><td colspan="5" class="dim">Loading…</td></tr></tbody>
+          </table>
+        </div>
+        <div id="wh-panel"></div>
+      </div>
+    </div>
 
     <!-- Core Routers (shown only while WAN Assignment is on) -->
     <div id="cores-section">
@@ -2100,6 +2140,40 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
   </div>
 
+  <!-- PPP webhook -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd"><span><i class="bi bi-lightning-charge"></i> Instant PPP Updates (webhook)</span></div>
+    <div class="card-bd">
+      <div class="form-row form-row-3">
+        <div>
+          <label class="form-label">Collect Burst For</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-wh-debounce" min="0.5" max="60" step="0.5">
+            <span class="input-suffix">s</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Wait this long after a router's call so a burst of logins is handled in one sync (at least 1 s: an ended session must be gone from /ppp active)</div>
+        </div>
+        <div>
+          <label class="form-label">Minimum Gap Between Syncs</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-wh-min-interval" min="0" max="3600" step="1">
+            <span class="input-suffix">s</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">Webhook syncs run at most this often; each one that changes a file runs the LibreQoS update</div>
+        </div>
+        <div>
+          <label class="form-label">Rescan Router Above</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-wh-full-scan" min="1" max="100000">
+            <span class="input-suffix">users</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">More logins/logouts than this from one router in one batch (e.g. after it rebooted): read the whole router instead of each user</div>
+        </div>
+      </div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem">Turn the webhook on and install it on each BRAS on the <a href="#config" onclick="switchTab('config');return false" style="color:var(--accent)">Routers</a> page. These apply without a restart.</div>
+    </div>
+  </div>
+
   <!-- Burst -->
   <div class="card" style="margin-bottom:1rem">
     <div class="card-hd">
@@ -2908,6 +2982,7 @@ function renderConfig() {
   document.getElementById('toggle-queues').checked  = !!configData.queues;
   document.getElementById('toggle-promote').checked = !!configData.promote_to_root;
   loadQueuesDetect();
+  loadWebhookStatus();
   // wan assignment
   const wanCfg = configData.wan_assignment || {};
   const wanEnabled = wanCfg.enabled === true;   // WAN assignment is optional and off by default
@@ -3377,6 +3452,190 @@ async function saveConfig() {
       : 'WAN service stopped. Managed address-list entries stay on the core routers until you run Purge in Troubleshooting.', true);
   }
   _wanOnAtLoad = wanOn;
+}
+
+// ── PPP webhook (instant adds/removes from the routers' on-up / on-down) ──
+const wh = { status: null, open: null, tab: 'api', kind: 'install', wired: false };
+
+function _fmtAgo(ts) {
+  if (!ts) return 'never';
+  const s = Math.max(0, Date.now() / 1000 - ts);
+  if (s < 60) return `${Math.round(s)} s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} d ago`;
+}
+// The config.json bras entry the sync service calls `name` (repeated names get " 2", " 3", …).
+function _brasByName(name) {
+  const seen = {};
+  return (configData && configData.bras || []).find(r => {
+    let n = r.name;
+    if (seen[n]) { seen[n]++; n = `${n} ${seen[n]}`; } else seen[n] = 1;
+    return n === name;
+  });
+}
+async function loadWebhookStatus() {
+  _whWire();
+  try {
+    const d = await (await fetch('/api/webhook/status')).json();
+    if (!d.ok) return;
+    wh.status = d;
+    renderWebhook();
+  } catch (e) { /* offline: keep the last view */ }
+}
+function renderWebhook() {
+  const d = wh.status;
+  if (!d) return;
+  const urlEl = document.getElementById('wh-url');
+  if (document.activeElement !== urlEl) urlEl.value = d.url || '';
+  urlEl.placeholder = d.suggested_url || 'http://10.0.0.5:5000';
+  document.getElementById('wh-enabled').checked = d.enabled;
+  const ready = d.routers.filter(r => r.has_token).length;
+  document.getElementById('wh-sub').textContent = d.enabled ? `on · ${ready}/${d.routers.length} routers have a token` : 'off';
+
+  const notes = [];
+  if (!d.enabled) notes.push(['info', 'Off: LQ-Sync refuses calls from the routers until you turn it on and save.']);
+  if (d.enabled && !d.url) notes.push(['', 'Set the address the routers reach LQ-Sync at, then save.']);
+  if (d.apply_command_empty) notes.push(['', 'The LibreQoS update command is empty (Settings → Scanner), so new subscribers wait for lqos_scheduler\'s refresh. Set it to <code>auto</code> to apply them at once.']);
+  document.getElementById('wh-notes').innerHTML = notes.map(([cls, html]) =>
+    `<div class="bld-note ${cls}"><i class="bi bi-${cls ? 'info-circle' : 'exclamation-triangle'}"></i><span>${html}</span></div>`).join('');
+
+  document.querySelector('#wh-table tbody').innerHTML = d.routers.length ? d.routers.map(r => {
+    const last = r.last
+      ? `${esc(r.last.event)} ${esc(r.last.user || '')} <span class="dim">${esc(r.last.ip || '')} · ${_fmtAgo(r.last.received_at)}</span>`
+      : '<span class="dim">never</span>';
+    return `<tr>
+      <td class="name">${esc(r.name)}<div class="dim" style="font-size:.72rem">${esc(r.address)}</div></td>
+      <td>${r.has_token ? `<code>${esc(r.token_hint)}</code>` : '<span class="dim">none</span>'}</td>
+      <td>${last}${r.pppoe ? '' : '<span class="job-err">PPPoE sync is off for this router: its calls are ignored</span>'}</td>
+      <td>${r.calls_24h}${r.pending ? ` <span class="dim">(${r.pending} waiting)</span>` : ''}</td>
+      <td style="text-align:right"><button class="btn-ghost" data-wh-open="${esc(r.name)}">${wh.open === r.name ? 'Close' : 'Set up'}</button></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" class="dim">No routers saved yet.</td></tr>';
+  renderWebhookPanel();
+}
+function renderWebhookPanel() {
+  const el = document.getElementById('wh-panel');
+  const r = wh.status && wh.status.routers.find(x => x.name === wh.open);
+  if (!r) { el.innerHTML = ''; el.dataset.router = ''; return; }
+  if (el.dataset.router === r.name && el.dataset.tab === wh.tab && el.dataset.kind === wh.kind && el.dataset.token === r.token_hint) {
+    return;   // unchanged: keep typed credentials and the result
+  }
+  Object.assign(el.dataset, { router: r.name, tab: wh.tab, kind: wh.kind, token: r.token_hint });
+  const conf = _brasByName(r.name) || {};
+  const api = `
+    <div class="bld-stat">2. LQ-Sync adds the script <code>lqsync-webhook</code> and one line at the top of every PPP
+      profile's on-up and on-down (their own lines are kept), then the router sends a test call. This needs an API
+      account with <b>write</b> access; the polling account is usually read-only.</div>
+    <div class="form-row form-row-3">
+      <div><label class="form-label">API user with write access</label><input class="form-input" id="wh-user" autocomplete="off" placeholder="${esc(conf.username || 'admin')} (polling account)"></div>
+      <div><label class="form-label">Password</label><input class="form-input" type="password" id="wh-pass" autocomplete="new-password" placeholder="used once, never stored"></div>
+      <div style="display:flex;gap:.4rem;align-items:flex-end;flex-wrap:wrap">
+        <button class="btn-primary" data-wh-act="install"${r.has_token ? '' : ' disabled'}><i class="bi bi-download"></i> Install</button>
+        <button class="btn-ghost" data-wh-act="check">Check</button>
+        <button class="btn-danger-ghost" data-wh-act="uninstall">Remove</button>
+      </div>
+    </div>
+    <div style="font-size:.72rem;color:var(--muted)">Leave the user empty to use the polling account. Check only reads, so the polling account is enough for it.</div>`;
+  const term = `
+    <div class="bld-stat">2. Paste into the router's terminal (Winbox → New Terminal, or SSH). The install script adds or
+      updates the webhook in every PPP profile and sends a test call; the removal script takes it all out again.</div>
+    <div style="display:flex;gap:.4rem;margin-bottom:.5rem;flex-wrap:wrap">
+      <button class="seg-btn${wh.kind === 'install' ? ' active' : ''}" data-wh-kind="install">Install script</button>
+      <button class="seg-btn${wh.kind === 'uninstall' ? ' active' : ''}" data-wh-kind="uninstall">Removal script</button>
+      <button class="btn-ghost" style="margin-left:auto" data-wh-act="copy"><i class="bi bi-clipboard"></i> Copy</button>
+    </div>
+    <textarea class="form-input wh-script" id="wh-script" readonly spellcheck="false">Loading…</textarea>`;
+  el.innerHTML = `<div class="wh-panel">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.75rem;flex-wrap:wrap">
+      <b style="color:var(--strong)"><i class="bi bi-router" style="color:var(--green)"></i> ${esc(r.name)}</b>
+      <span class="seg"><button class="seg-btn${wh.tab === 'api' ? ' active' : ''}" data-wh-tab="api">Install over API</button><button class="seg-btn${wh.tab === 'terminal' ? ' active' : ''}" data-wh-tab="terminal">Paste in terminal</button></span>
+    </div>
+    <div class="bld-stat">1. Token: ${r.has_token ? `<code>${esc(r.token_hint)}</code> is set` : '<b>none yet</b>'}
+      <button class="btn-ghost" style="font-size:.75rem;margin-left:.4rem" data-wh-act="token">${r.has_token ? 'New token' : 'Generate token'}</button>
+      <span class="dim">${r.has_token ? ' A new token stops the old one, so install again afterwards.' : ' Each router gets its own.'}</span></div>
+    ${wh.tab === 'api' ? api : term}
+    <div class="bld-stat" style="margin-top:.75rem">3. The router's test call shows under <b>Last call</b> above; from then on every PPP login and logout does.</div>
+    <div class="wh-result" id="wh-result"></div>
+  </div>`;
+  if (wh.tab === 'terminal') _whLoadScript(r);
+}
+async function _whLoadScript(r) {
+  const box = document.getElementById('wh-script');
+  const d = await (await fetch(`/api/webhook/script?router=${encodeURIComponent(r.name)}&kind=${wh.kind}`)).json();
+  if (box) box.value = d.ok ? d.script : `# ${d.error}`;
+}
+function _whResult(html, ok = true) {
+  const el = document.getElementById('wh-result');
+  if (el) el.innerHTML = `<span class="${ok ? 'ok' : 'bad'}">${html}</span>`;
+}
+function _whStatusText(st) {
+  if (!st) return '';
+  const script = { current: 'installed and up to date', outdated: 'installed but outdated (address or token changed): install again', missing: 'not installed' }[st.script] || st.script;
+  let t = `Script: ${script}. PPP profiles with the hook: ${Math.min(st.hooked_up, st.hooked_down)} of ${st.profiles}.`;
+  if (st.unhooked && st.unhooked.length && st.script !== 'missing') t += ` Without it: ${st.unhooked.map(esc).join(', ')}.`;
+  return t;
+}
+async function _whAction(act) {
+  const name = wh.open;
+  if (act === 'token') {
+    if (wh.status.routers.find(r => r.name === name)?.has_token &&
+        !confirm(`Give ${name} a new token? The installed webhook stops working until you install it again.`)) return;
+    const d = await (await fetch('/api/webhook/token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ router: name }) })).json();
+    if (!d.ok) { toast(d.error, false); return; }
+    const entry = _brasByName(name);
+    if (entry) entry.webhook_token = d.token;   // so a later Save Changes keeps it
+    toast(`New webhook token for ${name}`);
+    await loadWebhookStatus();
+    return;
+  }
+  if (act === 'copy') {
+    const box = document.getElementById('wh-script');
+    try { await navigator.clipboard.writeText(box.value); }
+    catch (e) { box.select(); document.execCommand('copy'); }   // plain-http pages have no clipboard API
+    toast('Script copied');
+    return;
+  }
+  if (act === 'uninstall' && !confirm(`Remove the webhook from every PPP profile on ${name}?`)) return;
+  const user = document.getElementById('wh-user')?.value.trim() || '';
+  const pass = document.getElementById('wh-pass')?.value || '';
+  _whResult(`<i class="bi bi-hourglass-split"></i> ${act === 'check' ? 'Checking' : act === 'install' ? 'Installing' : 'Removing'} on ${esc(name)}…`);
+  const d = await (await fetch('/api/webhook/router', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ router: name, action: act, username: user || undefined, password: user ? pass : undefined }),
+  })).json();
+  if (!d.ok) { _whResult(esc(d.error || 'failed'), false); return; }
+  if (act === 'check') { _whResult(_whStatusText(d)); return; }
+  const changed = d.changed && d.changed.length ? `Changed profiles: ${d.changed.map(esc).join(', ')}. ` : 'No profile needed changes. ';
+  const test = act === 'install' ? (d.test_sent ? 'Test call sent: watch Last call. ' : `<span class="bad">The test call could not be started (${esc(d.test_error || '')}); run <code>/system script run lqsync-webhook</code> on the router.</span> `) : '';
+  _whResult(changed + test + _whStatusText(d.status));
+  toast(act === 'install' ? `Webhook installed on ${name}` : `Webhook removed from ${name}`);
+  setTimeout(loadWebhookStatus, 1500);
+  setTimeout(loadWebhookStatus, 5000);
+}
+async function saveWebhookConfig() {
+  const enabled = document.getElementById('wh-enabled').checked;
+  let url = document.getElementById('wh-url').value.trim();
+  if (enabled && !url && wh.status) url = wh.status.suggested_url;
+  const d = await (await fetch('/api/webhook/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, url }) })).json();
+  if (!d.ok) { toast(d.error, false); return; }
+  if (configData) configData.webhook = d.webhook;   // so a later Save Changes keeps it
+  toast(enabled ? 'Webhook on' : 'Webhook off');
+  await loadWebhookStatus();
+}
+function _whWire() {
+  if (wh.wired) return;
+  wh.wired = true;
+  document.getElementById('webhook-card').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.whOpen !== undefined) {
+      wh.open = wh.open === b.dataset.whOpen ? null : b.dataset.whOpen;
+      renderWebhook();
+    } else if (b.dataset.whTab) { wh.tab = b.dataset.whTab; renderWebhookPanel(); }
+    else if (b.dataset.whKind) { wh.kind = b.dataset.whKind; renderWebhookPanel(); }
+    else if (b.dataset.whAct) _whAction(b.dataset.whAct);
+  });
 }
 
 // A router renamed on the Routers page keeps its place in the Builder's topology.
@@ -5233,6 +5492,9 @@ async function loadAppSettings() {
   g('set-cpu-capacity',    s.topology?.cpu_capacity_mbps       ?? 0);
   g('set-split-ratio',     s.topology?.auto_cpu_split_ratio    ?? 1.0);
   g('set-move-budget',     s.topology?.auto_cpu_move_budget    ?? 0);
+  g('set-wh-debounce',     s.webhook?.debounce_seconds         ?? 2);
+  g('set-wh-min-interval', s.webhook?.min_interval_seconds     ?? 10);
+  g('set-wh-full-scan',    s.webhook?.full_scan_over           ?? 50);
   g('set-tc-u16',          s.database?.tc_u16_warn_threshold   ?? 60000);
   g('set-circuit-cap',     s.database?.mapped_circuit_warn_threshold ?? 1000);
   g('set-mt-group',        s.gui?.expected_mt_group            ?? 'API_READ');
@@ -5292,6 +5554,11 @@ async function saveAppSettings() {
     cpu_capacity_mbps:           Math.max(0, int_('set-cpu-capacity', 0)),
     auto_cpu_split_ratio:        Math.max(0, num('set-split-ratio', 1.0)),
     auto_cpu_move_budget:        Math.max(0, int_('set-move-budget', 0)),
+  });
+  Object.assign(sec('webhook'), {
+    debounce_seconds:     Math.max(0.5, num('set-wh-debounce', 2)),
+    min_interval_seconds: Math.max(0, num('set-wh-min-interval', 10)),
+    full_scan_over:       Math.max(1, int_('set-wh-full-scan', 50)),
   });
   Object.assign(sec('database'), {
     tc_u16_warn_threshold:         int_('set-tc-u16', 60000),
@@ -6377,6 +6644,9 @@ function initApp() {
     if (document.getElementById('page-pollers').classList.contains('active')) { loadGraphs(); }
   }, 60000);
   setInterval(loadDevices, 30000);
+  setInterval(() => {
+    if (document.getElementById('page-config').classList.contains('active')) loadWebhookStatus();
+  }, 15000);
   setInterval(loadMikrotikResource, 15000);
   setInterval(loadWanStats, 60000);
   checkService();

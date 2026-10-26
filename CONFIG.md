@@ -338,6 +338,38 @@ This suffix also affects parent node names in `ap_only`/`ap_site`/`full` strateg
 
 ---
 
+## Instant PPP Updates (webhook, optional)
+
+Without it, a new PPPoE subscriber is shaped at the next poll (`scanner.scan_interval`, 10 minutes by default) and a disconnected one lingers until then. With it, each BRAS calls LQ-Sync from its PPP profiles' `on-up` / `on-down` scripts the moment a session starts or ends, and LQ-Sync adds or removes that subscriber within seconds. The regular poll keeps running and corrects anything a missed call left behind.
+
+**Set up** on the **Routers** page, card *Instant PPP updates*:
+
+1. Turn on **Accept webhook calls**, enter the address the routers reach LQ-Sync at (e.g. `http://10.0.0.5:5000`), and save.
+2. For each BRAS, **Set up** → **Generate token**. Each router has its own token; LQ-Sync accepts a call only with a known token.
+3. Install it on the router, either:
+   - **Install over API**: LQ-Sync installs it directly. This needs an API account with write access (the polling account is read-only); it is used once and never stored. Or
+   - **Paste in terminal**: copy the install script into the router's terminal (Winbox → New Terminal, or SSH).
+4. The router sends a test call; it appears under **Last call**.
+
+What gets installed on the router:
+
+- `/system script lqsync-webhook`: POSTs `{"event", "user", "ip", "caller_id"}` to `<address>/api/webhook/mikrotik` with the token in an `X-LQSync-Token` header (`/tool fetch`, RouterOS 6.43+ or 7).
+- One line at the top of every PPP profile's `on-up` and `on-down` script that calls it. The profiles' own lines are kept, and the removal script (or **Remove**) takes out only these lines and the script.
+
+What LQ-Sync does with a call: the sync service collects calls for `webhook.debounce_seconds`, then, for each reported user, reads only that user's `/ppp active` entry and its IP's address-list entries. It adds or updates the user exactly as a full scan would (same rate lookup), or removes it if the session is gone, and runs the LibreQoS update if anything changed. A router that reports more than `webhook.full_scan_over` users at once (e.g. after a reboot) is rescanned in full instead. Only PPPoE is handled this way; hotspot and DHCP still update at the poll.
+
+```json
+"webhook": { "enabled": true, "url": "http://10.0.0.5:5000" },
+"bras": [ { "name": "BRAS-1", "webhook_token": "3f9c…", ... } ]
+```
+
+> **Notes**
+> - Keep `scanner.libreqos_update_command` set (`auto`). When it is empty, new subscribers wait for `lqos_scheduler`'s refresh (`queue_refresh_interval_mins`).
+> - On LibreQoS 1.5+ the Bakery adds and removes circuits without a full reload. A circuit whose rate changed still triggers a full reload, so do frequent rate changes through the poll.
+> - The calls are plain HTTP on the GUI port: keep them on your management network. The token only lets a router queue a lookup of its own sessions; LQ-Sync always reads the real state from the router.
+
+---
+
 ## WAN Assignment (optional)
 
 WAN assignment is **off by default**. `wan_service` is installed but not enabled, and core routers are ignored until you turn it on.
@@ -381,6 +413,10 @@ Every tunable value lives in `settings.json` and can be edited in **App Settings
 | `burst.enabled` | false | Burst for all traffic (see below) |
 | `burst.seconds` / `max_mb` | 4 / 256 | Burst size = plan rate × seconds, at most this many MB per subscriber |
 | `burst.pause_above_pct` / `resume_below_pct` | 80 / 60 | Bursts pause above this link use and return after 30 s below the second value |
+| `webhook.debounce_seconds` | 2 | PPP webhook: collect a burst of calls this long before acting (at least 1: an ended session must be gone from `/ppp active`) |
+| `webhook.min_interval_seconds` | 10 | PPP webhook: webhook-triggered syncs run at most this often (each may run the LibreQoS update) |
+| `webhook.full_scan_over` | 50 | PPP webhook: more users than this from one router in one batch → rescan that router in full |
+| `webhook.keep_days` | 7 | PPP webhook: days of received calls kept for the GUI |
 
 `updatecsv` also checks `/etc/lqos.conf` (Python 3.11+) and logs a warning when `[topology] compile_mode = "flat"` would ignore the parent hierarchy, or when device IPs fall outside `allow_subnets` or inside `ignore_subnets`. With `auto_cpu` it also warns about the settings listed under [Auto CPU](#auto-cpu-auto_cpu).
 
