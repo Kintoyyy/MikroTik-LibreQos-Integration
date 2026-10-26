@@ -29,7 +29,7 @@ from settings import (
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
     LQOS_CONF_PATH as _SETTINGS_LQOS_CONF,
     atomic_write_text, write_if_changed, libreqos_dir, libreqos_version, burst_settings,
-    topology_settings, host_snmp_settings,
+    topology_settings, host_snmp_settings, events_settings,
 )
 from device_database import (
     ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges,
@@ -37,6 +37,7 @@ from device_database import (
 )
 import app_update
 import cpu_planner
+import event_log
 import host_snmp
 import queue_stats
 import snmp
@@ -800,10 +801,173 @@ def _sample_stats(conn, prev):
     checks = _libreqos_checks(conn)
     with _mon_lock:
         _mon["lqos_checks"] = checks
+    _record_minute_events(conn, host)
 
 
 def _check(level, title, detail, fix="", link=""):
     return {"level": level, "title": title, "detail": detail, "fix": fix, "link": link}
+
+
+def _nat_checks(routers):
+    """
+    LibreQoS shapes pre-NAT subscriber addresses; NAT on a BRAS (which sits
+    before LibreQoS) hides every subscriber behind the NAT address.
+    """
+    out = []
+    for r in routers:
+        for f in r.get("nat") or []:
+            how = f["action"] + (f", out {f['out_interface']}" if f["out_interface"] else "") \
+                + (f", “{f['comment']}”" if f["comment"] else "")
+            out.append(_check(
+                "error", f"{r['name']} NATs subscriber traffic before LibreQoS",
+                f"srcnat rule {f['rule']} ({how}) rewrites {f['matched']} subscriber address(es), "
+                f"e.g. {', '.join(f['examples'])}. LibreQoS shapes pre-NAT addresses, so behind this "
+                f"router every subscriber shows up as the NAT address and is not shaped.",
+                "Move NAT to the border router after LibreQoS — LibreQoS must sit inline before NAT. "
+                "(Fine only if LibreQoS sits between the subscribers and this router.)",
+                LIBREQOS_NAT_DOCS))
+    return out
+
+
+# ── Warning & error history (Events tab) ────────────────────────────────────
+# Problems with a start and an end are synced every minute: each call gives
+# the full list of one category as it is now (event_log.sync_conditions).
+EVENT_PRUNE_EVERY = 3600
+_event_pruned = {"at": 0.0}
+
+
+def _record_conditions(conn, category, conditions):
+    try:
+        event_log.ensure_tables(conn)
+        event_log.sync_conditions(conn, "gui", category, conditions)
+    except sqlite3.Error as e:
+        app.logger.warning(f"events: could not record {category} conditions: {e}")
+
+
+def _from_check(c, key, context=None):
+    return {"key": key, "level": c["level"], "title": c["title"], "message": c["detail"], "fix": c.get("fix", ""),
+            "link": c.get("link", ""), "context": context or {}}
+
+
+def _router_conditions(latest):
+    """A router not answering, NAT before LibreQoS, a graphed interface down or with errors."""
+    out = []
+    for key, r in latest.items():
+        ctx = {"router": r["name"], "kind": "BRAS" if r["kind"] == "bras" else "core", "address": r.get("address", ""),
+               "polled over": (r.get("via") or "api").upper()}
+        if r.get("ok") is False:
+            out.append({"key": f"{key}:down", "level": "error", "title": f"{r['name']} does not answer",
+                        "message": f"{r['name']} ({r.get('address', '')}): {r.get('error') or 'no answer'}",
+                        "detail": "The once-a-minute health poll failed, so its graphs have a gap and the "
+                                  "Overview shows it as down until it answers again.",
+                        "fix": "Check that the router is up and reachable from this host, and its API / SNMP "
+                               "settings on the Routers tab (Troubleshoot has an API connect test).",
+                        "context": ctx})
+            continue
+        for c in _nat_checks([r]):
+            out.append(_from_check(c, f"{key}:nat", ctx))
+        if r.get("nat_error"):
+            out.append({"key": f"{key}:nat-check", "level": "warning",
+                        "title": f"{r['name']}: the NAT check could not read the firewall",
+                        "message": r["nat_error"], "context": ctx,
+                        "fix": "The API user needs read access to /ip/firewall/nat (the API_READ group)."})
+        for iface, c in (r.get("ifaces") or {}).items():
+            ictx = {**ctx, "interface": iface}
+            if c.get("running") is False:
+                out.append({"key": f"{key}:if:{iface}:down", "level": "warning", "title": f"{r['name']} {iface} is down",
+                            "message": f"{iface} on {r['name']} is not running.", "context": ictx,
+                            "fix": "Check the cable / optic and the far end, or remove it from the router's "
+                                   "graphed interfaces on the Routers tab."})
+            errors = (c.get("rx_errors_min") or 0) + (c.get("tx_errors_min") or 0)
+            if errors >= 1:
+                out.append({"key": f"{key}:if:{iface}:errors", "level": "warning",
+                            "title": f"{r['name']} {iface}: interface errors",
+                            "message": f"{iface} on {r['name']}: {c.get('rx_errors_min') or 0:.0f} rx and "
+                                       f"{c.get('tx_errors_min') or 0:.0f} tx errors per minute",
+                            "detail": "Errors (CRC, alignment, …) mean frames arrive damaged: subscribers on "
+                                      "this link see loss and retransmissions.",
+                            "fix": "Check the cable, optic and its light levels, and the duplex / speed of both ends.",
+                            "context": ictx})
+    return out
+
+
+def _job_conditions(conn, now):
+    """A job whose last run failed, or one that stopped running (its service is down or stuck)."""
+    wan_on = _wan_enabled(_load_config())
+    out = []
+    for name, kind, service, every, status, last_run, last_error, runs, errors in conn.execute(
+            "SELECT name, kind, service, every, status, last_run, last_error, runs, errors FROM jobs"):
+        if service == "wan_service" and not wan_on:
+            continue
+        ctx = {"job": name, "kind": kind, "service": service, "runs": runs, "failed runs": errors,
+               "last run": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_run)) if last_run else "never"}
+        if status == "error":
+            out.append({"key": f"job:{name}:failing", "level": "error", "title": f"Job '{name}' is failing",
+                        "message": last_error or "failed", "context": ctx,
+                        "detail": f"Its last run failed ({errors} of {runs} runs have failed so far).",
+                        "fix": f"See the {service} logs on the Services tab for the full error."})
+        if every and last_run and now - last_run > every * 2.5 + 60:
+            out.append({"key": f"job:{name}:late", "level": "warning", "title": f"Job '{name}' has stopped running",
+                        "message": f"'{name}' runs every {every:.0f} s but last ran {(now - last_run) / 60:.0f} min ago.",
+                        "context": ctx, "detail": f"The {service} service is stopped or stuck.",
+                        "fix": f"Restart {service} on the Services tab and check its logs."})
+    return out
+
+
+def _host_conditions(host):
+    """This host: disk or memory nearly full, its snmpd not answering."""
+    out = []
+    if host.get("disk") is not None and host["disk"] >= 90:
+        out.append({"key": "disk", "level": "error" if host["disk"] >= 97 else "warning",
+                    "title": f"Disk {host['disk']:.0f}% full",
+                    "message": f"/ has {_fmt_bytes(host['disk_total'] - host['disk_used'])} free of "
+                               f"{_fmt_bytes(host['disk_total'])}.",
+                    "detail": "A full disk stops the services from writing devices.db, the RRD graphs and LibreQoS's files.",
+                    "fix": "Free space: old journal logs (journalctl --vacuum-time=7d), apt caches (apt clean), old kernels."})
+    if host.get("mem") is not None and host["mem"] >= 92:
+        out.append({"key": "memory", "level": "warning", "title": f"Memory {host['mem']:.0f}% used",
+                    "message": f"{_fmt_bytes(host['mem_used'])} of {_fmt_bytes(host['mem_total'])} in use.",
+                    "fix": "See which process uses it (Pollers → this app, or top); lqosd grows with the circuit count."})
+    status = _host["status"]
+    if status and not status.get("ok"):
+        out.append({"key": "snmpd", "level": "warning", "title": "This host's snmpd does not answer",
+                    "message": f"{status.get('target')}: {status.get('error') or 'no answer'}",
+                    "detail": "The Overview falls back to psutil for this host's CPU, memory and interfaces.",
+                    "fix": "Settings → Host Monitoring (SNMP) → Set up automatically, or turn host SNMP off there."})
+    return out
+
+
+def _fmt_bytes(n):
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n:.0f} B"
+        n /= 1024
+
+
+def _record_minute_events(conn, host):
+    """The per-minute part of the history: jobs, LibreQoS checks, this host; and the hourly prune."""
+    now = time.time()
+    _record_conditions(conn, "job", _job_conditions(conn, now))
+    checks = _service_checks() + _libreqos_checks(conn)
+    _record_conditions(conn, "check", [_from_check(c, event_log.fold_key(c["title"])) for c in checks])
+    _record_conditions(conn, "host", _host_conditions(host))
+    if now - _event_pruned["at"] >= EVENT_PRUNE_EVERY:
+        _event_pruned["at"] = now
+        try:
+            event_log.prune(conn, events_settings()["keep_days"])
+        except sqlite3.Error as e:
+            app.logger.warning(f"events: prune failed: {e}")
+
+
+def _service_checks():
+    services = _libreqos_services()
+    if services.get("lqosd") not in ("active", "unknown", None):
+        return [_check("error", f"lqosd is {services['lqosd']}",
+                       "Nothing is shaped while lqosd is down.", "Restart it on the Services tab.")]
+    if services.get("lqos_scheduler") == "failed":
+        return [_check("warn", "lqos_scheduler has failed", "Queues are not refreshed until it runs again.",
+                       "Restart lqosd on the Services tab — it brings the scheduler back in order.")]
+    return []
 
 
 def _libreqos_checks(conn):
@@ -1148,6 +1312,7 @@ def _poll_routers(conn):
     prune_jobs(conn, "gui", "router", job_names)
     with _mon_lock:
         _mon["routers"] = latest
+    _record_conditions(conn, "router", _router_conditions(latest))
 
 
 # ── Burst (PowerBoost-style, for all traffic) ─────────────────────────────
@@ -1671,29 +1836,17 @@ def monitor_status():
         job["cpu_now"] = cpu_now.get(job["name"])
         jobs.append(job)
 
-    # LibreQoS shapes pre-NAT subscriber addresses; NAT on a BRAS (which sits
-    # before LibreQoS) hides every subscriber behind the NAT address.
-    for r in routers:
-        for f in r.get("nat") or []:
-            how = f["action"] + (f", out {f['out_interface']}" if f["out_interface"] else "") \
-                + (f", “{f['comment']}”" if f["comment"] else "")
-            checks.insert(0, _check(
-                "error", f"{r['name']} NATs subscriber traffic before LibreQoS",
-                f"srcnat rule {f['rule']} ({how}) rewrites {f['matched']} subscriber address(es), "
-                f"e.g. {', '.join(f['examples'])}. LibreQoS shapes pre-NAT addresses, so behind this "
-                f"router every subscriber shows up as the NAT address and is not shaped.",
-                "Move NAT to the border router after LibreQoS — LibreQoS must sit inline before NAT. "
-                "(Fine only if LibreQoS sits between the subscribers and this router.)",
-                LIBREQOS_NAT_DOCS))
+    checks = _service_checks() + _nat_checks(routers) + checks
+    services = _libreqos_services()             # cached for 15 s, so the second call is free
 
-    services = _libreqos_services()
-    if services.get("lqosd") not in ("active", "unknown", None):
-        checks.insert(0, _check("error", f"lqosd is {services['lqosd']}",
-                                "Nothing is shaped while lqosd is down.", "Restart it on the Services tab."))
-    elif services.get("lqos_scheduler") == "failed":
-        checks.insert(0, _check("warn", "lqos_scheduler has failed",
-                                "Queues are not refreshed until it runs again.",
-                                "Restart lqosd on the Services tab — it brings the scheduler back in order."))
+    try:
+        con = _events_con()
+        try:
+            events = event_log.summary(con)
+        finally:
+            con.close()
+    except sqlite3.Error:
+        events = None
 
     version = libreqos_version()
     return jsonify({
@@ -1709,6 +1862,7 @@ def monitor_status():
         "checks": checks,
         "burst": {k: _burst.get(k) for k in ("state", "util", "error", "classes", "raised", "seconds")},
         "wan_enabled": wan_on,
+        "events": events,
     })
 
 
@@ -1932,6 +2086,99 @@ def _snmpd_setup_job(community):
         except Exception as e:
             result.update(ok=False, error=f"saving settings.json: {e}")
     _snmpd_job.update(running=False, result=result)
+
+
+# ── Events: the warning & error history ─────────────────────────────────────
+EVENT_RANGES = {"1h": 3600, "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "all": 0}
+
+
+def _event_filters():
+    a = request.args
+    rng = EVENT_RANGES.get(a.get("range", "7d"), 7 * 86400)
+    return {"level": a.get("level", "") if a.get("level") in ("warning", "error") else "",
+            "source": a.get("source", "")[:40], "kind": a.get("kind", "") if a.get("kind") in ("log", "condition") else "",
+            "state": a.get("state", "") if a.get("state") in ("active", "resolved") else "",
+            "since": time.time() - rng if rng else 0, "q": a.get("q", "").strip()[:200]}
+
+
+def _events_con():
+    con = _db_con()
+    event_log.ensure_tables(con)
+    return con
+
+
+@app.route("/api/events")
+@require_auth
+def events_list():
+    """Entries matching the filters, newest first (open problems on top), and the counts for the tab."""
+    try:
+        limit = min(max(int(request.args.get("limit", 100)), 1), 500)
+        offset = max(int(request.args.get("offset", 0)), 0)
+    except ValueError:
+        limit, offset = 100, 0
+    con = _events_con()
+    try:
+        rows, total = event_log.query(con, limit=limit, offset=offset, **_event_filters())
+        sources = [r[0] for r in con.execute("SELECT DISTINCT source FROM events ORDER BY source")]
+        summary = event_log.summary(con)
+    finally:
+        con.close()
+    return jsonify({"ok": True, "events": rows, "total": total, "sources": sources, "summary": summary,
+                    "keep_days": events_settings()["keep_days"]})
+
+
+@app.route("/api/events/<int:event_id>")
+@require_auth
+def event_detail(event_id):
+    con = _events_con()
+    try:
+        ev = event_log.get(con, event_id)
+    finally:
+        con.close()
+    if not ev:
+        return jsonify({"ok": False, "error": "no such entry (it may have been cleared)"}), 404
+    return jsonify({"ok": True, "event": ev})
+
+
+@app.route("/api/events.csv")
+@require_auth
+def events_csv():
+    """The filtered entries as CSV, with their full text, traceback and context."""
+    import csv
+    import io
+    con = _events_con()
+    try:
+        rows, _ = event_log.query(con, limit=100000, **_event_filters())
+    finally:
+        con.close()
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["first_seen", "last_seen", "resolved", "level", "state", "source", "category", "title", "count",
+                "message", "detail", "fix", "context"])
+    stamp = lambda t: time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t)) if t else ""
+    for r in rows:
+        w.writerow([stamp(r["first_at"]), stamp(r["last_at"]), stamp(r["resolved_at"]), r["level"], r["state"],
+                    r["source"], r["category"], r["title"], r["count"], r["message"], r["detail"], r["fix"],
+                    json.dumps(r["context"])])
+    name = f"lqsync-events-{time.strftime('%Y%m%d-%H%M')}.csv"
+    return Response(out.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.route("/api/events/clear", methods=["POST"])
+@require_auth
+def events_clear():
+    """Forget entries: all, or only the logged ones and resolved problems (open problems stay)."""
+    keep_open = bool((request.get_json(silent=True) or {}).get("keep_open", True))
+    con = _events_con()
+    try:
+        where = "NOT (kind = 'condition' AND resolved_at = 0)" if keep_open else "1"
+        n = con.execute(f"DELETE FROM events WHERE {where}").rowcount
+        con.execute("DELETE FROM event_occurrences WHERE event_id NOT IN (SELECT id FROM events)")
+        con.commit()
+    finally:
+        con.close()
+    return jsonify({"ok": True, "deleted": n})
 
 
 @app.route("/api/host-snmp/setup", methods=["GET", "POST"])
@@ -3928,5 +4175,6 @@ def save_lqos_conf():
 
 
 if __name__ == "__main__":
+    event_log.attach(DB_PATH, "gui")            # warnings and errors → the Events history
     start_monitoring()
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)

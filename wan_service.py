@@ -21,6 +21,7 @@ import logging
 import os
 import time
 
+import event_log
 from device_database import DeviceDatabase, timed_job
 from wan_manager import WANManager
 from router_scanner import RouterScanner
@@ -69,6 +70,7 @@ def _read_wan_config():
 
 
 def main():
+    event_log.attach(DB_FILE, "wan_service")    # warnings and errors → the GUI's Events history
     logger.info("Starting WAN service")
 
     db = DeviceDatabase(DB_FILE, SHAPED_DEVICES_CSV)

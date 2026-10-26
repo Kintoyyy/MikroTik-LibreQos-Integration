@@ -129,6 +129,7 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 | Tab | Description |
 |-----|-------------|
 | **Overview** | Live view of the shaper: download / upload now against the link, every LibreQoS CPU queue (2 to 64+) with its traffic and core load, sites / APs / routers against their limits, how much of their plan subscribers use, the busiest subscribers, this host (over SNMP or psutil), routers, subscriber counts and recent syncs / PPP events (see [CONFIG.md](CONFIG.md#overview)) |
+| **Events** | History of warnings and errors: everything the services log at WARNING / ERROR, and problems with a start and an end (router down, failing or stopped job, LibreQoS check, interface errors, disk full…). Each entry has the full message and traceback, where it came from, how to fix it, and every occurrence. Filter, search and export to CSV (see [CONFIG.md](CONFIG.md#events-warning--error-history)) |
 | **Settings** | Form-based `config.json` editor — routers, sources, topology strategy. Saving restarts `updatecsv` automatically |
 | **Services** | Start / restart / stop all integration and LibreQoS services; view live logs |
 | **Network** | Netplan configuration — Option A (Linux bridge) or Option B (Bifrost XDP); interface cards with speed and IP |

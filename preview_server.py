@@ -923,10 +923,19 @@ def fake_subscribers(db_path, router):
         return 0
 
 
+def fake_outage(name, t):
+    """BRAS-S2 stops answering for a few minutes twice an hour, so the Events tab has problems to show."""
+    minute = time.localtime(t).tm_min
+    return name == "BRAS-S2" and (8 <= minute < 12 or 38 <= minute < 40)
+
+
 def make_fake_poll(db_path, counters):
     def poll(kind, router):
         name = router.get("name") or router.get("address", "")
         t = time.time()
+        if fake_outage(name, t):
+            return {"name": name, "kind": kind, "address": router.get("address", ""), "ok": False, "at": t,
+                    "via": "api", "error": f"timed out connecting to {router.get('address', '')}:{router.get('port', 8728)}"}
         info = {"name": name, "kind": kind, "address": router.get("address", ""), "ok": True, "error": "",
                 "at": t, "via": "api", "uptime": "3w2d04:11:09", "identity": name, "version": "7.16.2 (stable)",
                 "board": "CCR2116-12G-4S+", **fake_health(name, t)}
@@ -1250,6 +1259,11 @@ def main():
                 cycle_db.close()
 
     import gui
+    import event_log
+    # One process runs both here: name the service by the module that logged it.
+    sync_modules = {"updatecsv", "node_assigner", "cpu_planner", "router_scanner", "device_database", "rate_resolver"}
+    event_log.attach(str(gui.DB_PATH), lambda rec: "updatecsv" if rec.name.split(".")[0] in sync_modules else "gui")
+
     def gui_restarted():
         gui._STARTED_AT = time.time()      # the page sees a new GUI process, as after a real restart
 

@@ -463,6 +463,7 @@ Every tunable value lives in `settings.json` and can be edited in **App Settings
 | `webhook.min_interval_seconds` | 10 | PPP webhook: webhook-triggered syncs run at most this often (each may run the LibreQoS update) |
 | `webhook.full_scan_over` | 50 | PPP webhook: more users than this from one router in one batch → rescan that router in full |
 | `webhook.keep_days` | 7 | PPP webhook: days of received calls kept for the GUI |
+| `events.keep_days` | 30 | Events tab: days an entry is kept after it was last seen. Problems still open are always kept |
 | `host_snmp.enabled` | true | Overview: read this host's CPU, memory, load, uptime and interface traffic from its own snmpd (see [Overview](#overview)); psutil fills in whatever snmpd does not answer |
 | `host_snmp.address` / `port` / `community` | 127.0.0.1 / 161 / public | Where this host's snmpd listens (SNMP v2c) |
 
@@ -512,6 +513,46 @@ The GUI's first tab shows the shaper live:
   restart snmpd. **Test** shows what snmpd answers and what its view still hides.
 - **Routers, subscribers, activity:** each router's last poll (CPU, RAM, PPP sessions, busiest graphed interface, SNMP or API),
   devices by source, router and plan, the last sync jobs and the PPP webhook's latest events.
+
+---
+
+## Events (warning & error history)
+
+The **Events** tab keeps a history of what went wrong, in `devices.db`, for `events.keep_days` (30) days after each entry
+was last seen. It holds two kinds of entry:
+
+- **Logged messages.** Every WARNING and ERROR that updatecsv, wan_service or the GUI logs, the same lines as in their
+  journal. Repeats of one message within a day fold into one entry with a count. The numbers, addresses and quoted names in
+  it may differ between repeats.
+- **Problems.** The GUI checks these every minute; each has a start and an end:
+
+  | Problem | Level |
+  |---------|-------|
+  | A router does not answer its poll | error |
+  | A BRAS NATs subscriber traffic before LibreQoS, or its NAT check cannot read the firewall | error / warning |
+  | A graphed router interface is down, or has errors | warning |
+  | A job's last run failed | error |
+  | A job stopped running: its service is stopped or stuck | warning |
+  | `lqosd` down or `lqos_scheduler` failed; lqos.conf problems (subscribers outside its IP ranges, a built-in CRM integration, flat compile mode) | error / warning |
+  | This host's disk ≥ 90% (error at 97%) or memory ≥ 92% full; its snmpd does not answer | warning / error |
+
+  A problem stays **open** until the check passes, then it is **resolved**, with how long it lasted. If it comes back
+  within 10 minutes, the same entry reopens and counts another start.
+
+Click an entry for everything known about it:
+- **Message:** the full text.
+- **How to fix:** the fix for known problems, with a docs link where there is one.
+- **Traceback or details:** the traceback when an exception was logged, or what the problem means.
+- **When:** first seen, last seen, how long it lasted, how many times.
+- **Where:** service, logger, `file:line`, function, pid, thread and host for a logged message; router, interface, job
+  or address for a problem.
+- **Occurrences:** each occurrence (the last 50), or for a problem its history: start, message changes, resolved.
+
+**Copy details** puts all of it on the clipboard for a support request.
+
+Filter by level, problems or log messages, service and time range, and search the text. **CSV** downloads what the
+filters show. **Clear…** forgets everything except problems still open. The tab's badge counts open problems, red when
+one is an error. The Overview's Activity card lists them too, each linking to its entry.
 
 ---
 

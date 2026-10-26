@@ -6,6 +6,7 @@ import subprocess
 import time
 from typing import NamedTuple
 
+import event_log
 from cpu_planner import dedupe_router_names, topology_errors, lqos_conf_warnings
 from device_database import (
     DeviceDatabase, timed_job, prune_jobs, unshaped_by_ip_ranges,
@@ -319,6 +320,7 @@ def run_webhook_cycle(db, scanner, assigner, cfg, events, update_pending=False) 
 
 
 def main():
+    event_log.attach(DB_FILE, "updatecsv")      # warnings and errors → the GUI's Events history
     logger.info("Starting MikroTik-LibreQoS integration")
 
     db = DeviceDatabase(DB_FILE, SHAPED_DEVICES_CSV)

@@ -113,6 +113,11 @@ _DEFAULTS = {
         # Days of received events kept for the GUI.
         "keep_days": 7,
     },
+    "events": {
+        # Warning & error history (Events tab): days an entry is kept after it
+        # was last seen. Problems still open are always kept.
+        "keep_days": 30,
+    },
     "host_snmp": {
         # The Overview's host CPU, memory, load, uptime and interface traffic
         # from this host's own snmpd (net-snmp); psutil fills in whatever it
@@ -273,6 +278,16 @@ def webhook_settings():
         "full_scan_over": max(int(w.get("full_scan_over", 50)), 1),
         "keep_seconds": max(float(w.get("keep_days", 7)), 0.1) * 86400,
     }
+
+
+def events_settings():
+    """The [events] settings, re-read from settings.json on every call."""
+    e = _load()["events"]
+    try:
+        keep = float(e.get("keep_days", 30))
+    except (TypeError, ValueError):
+        keep = 30.0
+    return {"keep_days": min(max(keep, 1.0), 3650.0)}
 
 
 def host_snmp_settings():

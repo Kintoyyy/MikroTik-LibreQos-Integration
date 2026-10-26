@@ -233,10 +233,57 @@ body > footer { flex-shrink: 0; }
 .btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: .4rem .8rem; border-radius: 8px; font-size: .8rem; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: .35rem; }
 .btn-ghost:hover   { border-color: var(--blue); color: var(--text); }
 .btn-primary:disabled { opacity: .6; cursor: wait; }
+a.btn-ghost { text-decoration: none; }
 .hsnmp-log { margin-top: .6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: .55rem .75rem;
              font-family: var(--mono); font-size: .74rem; line-height: 1.6; color: var(--text); max-height: 220px; overflow: auto; }
 .hsnmp-log .ok { color: var(--green); }
 .hsnmp-log .bad { color: #ff7b72; }
+
+/* ── Events: warning & error history ── */
+.ev-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+@media(max-width:800px){ .ev-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ev-tiles button { text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.ev-tiles button:hover { border-color: var(--muted); }
+.ev-filters { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; padding: .75rem 1rem; border-bottom: 1px solid var(--border); }
+.ev-select { font-size: .78rem; padding: .3rem .6rem; max-width: 220px; }
+.ev-search { font-size: .78rem; padding: .3rem .6rem; flex: 1; min-width: 180px; }
+.ev-row { border-bottom: 1px solid var(--hair); }
+.ev-row:last-child { border-bottom: none; }
+.ev-hd { width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: .6rem; align-items: center;
+         background: none; border: 0; color: var(--text); padding: .55rem 1rem; text-align: left; cursor: pointer; font-size: .82rem; }
+.ev-hd:hover { background: var(--raised); }
+.ev-row.open > .ev-hd { background: var(--raised); }
+.ev-lvl.error { color: #ff7b72; }
+.ev-lvl.warning { color: var(--yellow); }
+.ev-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--strong); }
+.ev-title small { color: var(--muted); margin-left: .45rem; font-size: .74rem; }
+.ev-meta { display: inline-flex; align-items: center; gap: .45rem; font-size: .72rem; color: var(--muted); white-space: nowrap; }
+.ev-pill { border: 1px solid var(--border); border-radius: 10px; padding: .05rem .5rem; font-size: .68rem; }
+.ev-pill.active { border-color: #f8514966; color: #ff7b72; }
+.ev-pill.active.warning { border-color: #d2992266; color: var(--yellow); }
+.ev-pill.resolved { border-color: #3fb95055; color: var(--green); }
+.ev-pill.src { font-family: var(--mono); }
+.ev-count { font-family: var(--mono); color: var(--text); }
+.ev-detail { padding: .4rem 1rem 1rem 2.6rem; font-size: .8rem; }
+.ev-detail h6 { font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: .9rem 0 .35rem; font-weight: 600; }
+.ev-detail h6:first-child { margin-top: .2rem; }
+.ev-pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: .55rem .75rem; margin: 0;
+          font-family: var(--mono); font-size: .74rem; white-space: pre-wrap; word-break: break-word; color: var(--text); max-height: 320px; overflow: auto; }
+.ev-fix { background: #2f81f714; border: 1px solid #2f81f744; border-radius: 6px; padding: .55rem .75rem; line-height: 1.5; }
+.ev-fix a { color: var(--accent); }
+.ev-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .25rem 1.1rem; font-size: .78rem; }
+.ev-kv .k { color: var(--muted); }
+.ev-kv .v { font-family: var(--mono); font-size: .74rem; overflow-wrap: anywhere; }
+.ev-occ { width: 100%; border-collapse: collapse; font-size: .74rem; }
+.ev-occ td { padding: .22rem .5rem .22rem 0; border-bottom: 1px solid var(--hair); vertical-align: top; }
+.ev-occ td:first-child { white-space: nowrap; color: var(--muted); font-family: var(--mono); width: 1%; }
+.ev-occ td:last-child { font-family: var(--mono); overflow-wrap: anywhere; }
+.ev-actions { display: flex; gap: .5rem; margin-top: .9rem; }
+@media(max-width:600px){
+  .ev-hd { grid-template-columns: 18px minmax(0, 1fr); }
+  .ev-meta { grid-column: 2; flex-wrap: wrap; white-space: normal; }
+  .ev-detail { padding-left: 1rem; }
+}
 .btn-danger-ghost  { background: transparent; border: 1px solid #ef444433; color: var(--red); padding: .35rem .7rem; border-radius: 8px; font-size: .8rem; cursor: pointer; }
 .btn-danger-ghost:hover { background: #ef444411; }
 .btn-success-ghost { background: transparent; border: 1px solid #22c55e33; color: var(--green); padding: .4rem .9rem; border-radius: 8px; font-size: .8rem; cursor: pointer; }
@@ -735,6 +782,7 @@ code { font-size: .8rem; color: #94a3b8; }
 <nav class="tab-nav">
   <button class="tab-btn active" data-tab="dashboard"    onclick="switchTab('dashboard')"><i class="bi bi-activity"></i>Overview</button>
   <button class="tab-btn"        data-tab="pollers"      onclick="switchTab('pollers')"><i class="bi bi-cpu"></i>Pollers <span class="tab-badge" id="tab-badge-pollers">0</span></button>
+  <button class="tab-btn"        data-tab="events"       onclick="switchTab('events')"><i class="bi bi-journal-text"></i>Events <span class="tab-badge" id="tab-badge-events" style="display:none">0</span></button>
   <button class="tab-btn"        data-tab="devices"      onclick="switchTab('devices')"><i class="bi bi-table"></i>Devices <span class="tab-badge" id="tab-badge-devices">0</span></button>
   <button class="tab-btn"        data-tab="topology"     onclick="switchTab('topology')"><i class="bi bi-diagram-3"></i>Topology</button>
   <button class="tab-btn"        data-tab="builder"      onclick="switchTab('builder')"><i class="bi bi-bounding-box-circles"></i>Builder</button>
@@ -1841,6 +1889,49 @@ code { font-size: .8rem; color: #94a3b8; }
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════
+     EVENTS — history of warnings and errors (logged messages and problems)
+════════════════════════════════════════════════════════════════════════ -->
+<div class="page" id="page-events">
+  <div class="ev-tiles" id="ev-tiles"></div>
+  <div class="card">
+    <div class="card-hd">
+      <span><i class="bi bi-journal-text"></i> Warnings &amp; errors <span class="hd-sub" id="ev-sub"></span></span>
+      <div class="ov-tools">
+        <a class="btn-ghost" id="ev-csv" href="/api/events.csv" download><i class="bi bi-download"></i> CSV</a>
+        <button class="btn-ghost" onclick="clearEvents()"><i class="bi bi-trash3"></i> Clear…</button>
+      </div>
+    </div>
+    <div class="ev-filters">
+      <span class="seg" id="ev-level">
+        <button class="seg-btn" data-v="" onclick="setEventFilter('level', '')">All</button>
+        <button class="seg-btn" data-v="error" onclick="setEventFilter('level', 'error')"><i class="bi bi-x-octagon-fill" style="color:#ff7b72"></i> Errors</button>
+        <button class="seg-btn" data-v="warning" onclick="setEventFilter('level', 'warning')"><i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow)"></i> Warnings</button>
+      </span>
+      <select class="search-input ev-select" id="ev-show" onchange="setEventFilter('show', this.value)" aria-label="Show">
+        <option value="">Problems and log messages</option>
+        <option value="active">Open problems</option>
+        <option value="resolved">Resolved problems</option>
+        <option value="condition">All problems</option>
+        <option value="log">Log messages</option>
+      </select>
+      <select class="search-input ev-select" id="ev-source" onchange="setEventFilter('source', this.value)" aria-label="Service">
+        <option value="">All services</option>
+      </select>
+      <span class="seg" id="ev-range">
+        <button class="seg-btn" data-v="1h" onclick="setEventFilter('range', '1h')">1 h</button>
+        <button class="seg-btn" data-v="24h" onclick="setEventFilter('range', '24h')">24 h</button>
+        <button class="seg-btn" data-v="7d" onclick="setEventFilter('range', '7d')">7 days</button>
+        <button class="seg-btn" data-v="30d" onclick="setEventFilter('range', '30d')">30 days</button>
+        <button class="seg-btn" data-v="all" onclick="setEventFilter('range', 'all')">All</button>
+      </span>
+      <input class="search-input ev-search" id="ev-q" placeholder="Search text, router, job, file…" oninput="eventSearchSoon()" aria-label="Search">
+    </div>
+    <div id="ev-list"><div class="graph-empty">Loading…</div></div>
+    <div class="ov-more" id="ev-more"></div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
      DEVICES
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page" id="page-devices">
@@ -2439,7 +2530,15 @@ code { font-size: .8rem; color: #94a3b8; }
           <input class="form-input" id="set-core-group">
         </div>
       </div>
-      <div class="form-row form-row-2" style="margin-top:1rem">
+      <div class="form-row form-row-3" style="margin-top:1rem">
+        <div>
+          <label class="form-label">Keep Warnings &amp; Errors</label>
+          <div class="form-input-group">
+            <input class="form-input" type="number" id="set-events-days" min="1" max="3650">
+            <span class="input-suffix">days</span>
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">How long the Events tab keeps an entry after it was last seen (open problems stay)</div>
+        </div>
         <div>
           <label class="form-label">Login Attempts</label>
           <input class="form-input" type="number" id="set-login-attempts" min="1" max="100">
@@ -2607,6 +2706,7 @@ function switchTab(name) {
   if (name === 'lqos')         loadLqosConf();
   if (name === 'appsettings')  loadAppSettings();
   if (name === 'pollers')      { if (monitorData) renderPollers(monitorData); loadMonitor(); loadGraphs(); }
+  if (name === 'events')       loadEvents();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -3218,17 +3318,36 @@ function ovRenderSummary() {
   const files = s.files || {};
   document.getElementById('ov-activity-sub').textContent = files.shaped_devices
     ? `LibreQoS files written ${fmtAgo(Math.max(files.shaped_devices || 0, files.network_json || 0), now)}` : '';
+  const problems = (ov.problems || []).map(p => `<li>
+      <i class="bi ${p.level === 'error' ? 'bi-x-octagon-fill' : 'bi-exclamation-triangle-fill'}"
+         style="color:${p.level === 'error' ? '#ff7b72' : 'var(--yellow)'}" title="${p.level}"></i>
+      <a class="t" href="#events" onclick="evOpenFromOverview(${p.id});return false" title="${esc(p.message)}">${esc(p.title)}</a>
+      <span class="m">open ${fmtSpan(now - p.first_at)}</span></li>`).join('');
   document.getElementById('ov-activity').innerHTML = `
+    <div class="ov-label">Open problems <a href="#events" onclick="switchTab('events');return false"
+      style="text-transform:none;letter-spacing:0;color:var(--accent)">· history</a></div>
+    <ul class="ov-feed">${problems || '<li class="ov-empty"><i class="bi bi-check-circle" style="color:var(--green)"></i> None right now.</li>'}</ul>
     <div class="ov-label">Sync jobs</div><ul class="ov-feed">${syncs || '<li class="ov-empty">No sync has run yet.</li>'}</ul>
     <div class="ov-label">PPP events from the routers' webhook</div>
     <ul class="ov-feed">${events || '<li class="ov-empty">None received — set up the webhook on the Routers tab for instant adds and removals.</li>'}</ul>`;
 }
 async function ovLoadSummary() {
   try {
-    ov.summary = await apiJson('/api/overview');
+    const [summary, problems] = await Promise.all([
+      apiJson('/api/overview'), apiJson('/api/events?state=active&range=all&limit=5')]);
+    ov.summary = summary;
+    ov.problems = problems.ok ? problems.events : [];
     ovRenderSummary();
     ovRenderKpis();
   } catch (e) { /* keep the last view */ }
+}
+// An open problem clicked on the Overview: the Events tab, with that entry open
+function evOpenFromOverview(id) {
+  Object.assign(ev, { show: '', level: '', source: '', range: 'all', q: '' });
+  document.getElementById('ev-q').value = '';
+  ev.open.add(id);
+  ev.scrollTo = id;
+  switchTab('events');
 }
 
 // Called when the Overview tab is shown
@@ -6344,6 +6463,7 @@ async function loadAppSettings() {
   g('set-core-group',      s.gui?.expected_core_group          ?? 'API_WRITE');
   g('set-login-attempts',  s.gui?.login_max_attempts           ?? 5);
   g('set-login-lockout',   s.gui?.login_lockout_seconds        ?? 60);
+  g('set-events-days',     s.events?.keep_days                 ?? 30);
   g('set-burst-enabled',   s.burst?.enabled                    ?? false);
   g('set-burst-seconds',   s.burst?.seconds                    ?? 4);
   g('set-burst-max',       s.burst?.max_mb                     ?? 256);
@@ -6492,6 +6612,7 @@ async function saveAppSettings() {
     pause_above_pct:  num('set-burst-pause', 80),
     resume_below_pct: num('set-burst-resume', 60),
   });
+  Object.assign(sec('events'), { keep_days: Math.min(Math.max(int_('set-events-days', 30), 1), 3650) });
   Object.assign(sec('host_snmp'), {
     enabled:   chk('set-hsnmp-enabled'),
     address:   (el('set-hsnmp-address')?.value ?? '').trim() || '127.0.0.1',
@@ -6570,6 +6691,7 @@ async function loadMonitor() {
     renderStatusStrip(d);
     renderChecks(d.checks || []);
     renderBurstStatus(d.burst);
+    renderEventsBadge(d.events);
     const bad = d.jobs.filter(j => j.status !== 'ok').length;
     const badge = document.getElementById('tab-badge-pollers');
     badge.textContent = bad || d.jobs.length;
@@ -6848,6 +6970,229 @@ function setGraphRange(r) {
   renderGraphs();
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// EVENTS — history of warnings and errors: what each service logged, and
+// problems the GUI watches (routers, jobs, LibreQoS checks, this host)
+// ══════════════════════════════════════════════════════════════════════════
+const EV_FILTERS = ['level', 'show', 'source', 'range'];
+const ev = { level: '', show: '', source: '', range: '7d', q: '', rows: [], total: 0, open: new Set(), details: {},
+             seq: 0, searchTimer: null, scrollTo: null };
+try {
+  const saved = JSON.parse(localStorage.getItem('evFilters') || '{}');
+  EV_FILTERS.forEach(k => { if (typeof saved[k] === 'string') ev[k] = saved[k]; });
+} catch (e) {}
+
+function fmtStamp(t) { return t ? new Date(t * 1000).toLocaleString() : '—'; }
+function fmtSpan(s) {
+  s = Math.max(0, Math.round(s || 0));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.round(s % 3600 / 60)}m`;
+  return `${Math.floor(s / 86400)}d ${Math.round(s % 86400 / 3600)}h`;
+}
+function evQuery(extra = {}) {
+  const p = new URLSearchParams({ range: ev.range });
+  if (ev.level) p.set('level', ev.level);
+  if (ev.source) p.set('source', ev.source);
+  if (ev.show === 'active' || ev.show === 'resolved') p.set('state', ev.show);
+  if (ev.show === 'log' || ev.show === 'condition') p.set('kind', ev.show);
+  if (ev.q) p.set('q', ev.q);
+  Object.entries(extra).forEach(([k, v]) => p.set(k, v));
+  return p.toString();
+}
+function setEventFilter(key, value) {
+  ev[key] = value;
+  try { localStorage.setItem('evFilters', JSON.stringify(Object.fromEntries(EV_FILTERS.map(k => [k, ev[k]])))); } catch (e) {}
+  loadEvents();
+}
+function eventSearchSoon() {
+  clearTimeout(ev.searchTimer);
+  ev.searchTimer = setTimeout(() => { ev.q = document.getElementById('ev-q').value.trim(); loadEvents(); }, 350);
+}
+
+async function loadEvents(append = false) {
+  const seq = ++ev.seq;                      // only the newest request may draw
+  let d;
+  try {
+    d = await apiJson('/api/events?' + evQuery({ limit: 100, offset: append ? ev.rows.length : 0 }));
+  } catch (e) {
+    document.getElementById('ev-list').innerHTML = `<div class="graph-empty">${esc(e.message)}</div>`;
+    return;
+  }
+  if (!d.ok || seq !== ev.seq) return;
+  ev.rows = append ? ev.rows.concat(d.events) : d.events;
+  ev.total = d.total;
+  renderEventTiles(d.summary);
+  renderEventsBadge(d.summary);
+  const sel = document.getElementById('ev-source');
+  const sources = ['', ...d.sources];
+  if (sel.dataset.key !== sources.join('|')) {
+    sel.innerHTML = sources.map(s => `<option value="${esc(s)}">${s ? esc(s) : 'All services'}</option>`).join('');
+    sel.dataset.key = sources.join('|');
+  }
+  sel.value = sources.includes(ev.source) ? ev.source : '';
+  document.getElementById('ev-show').value = ev.show;
+  document.querySelectorAll('#ev-level .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.v === ev.level));
+  document.querySelectorAll('#ev-range .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.v === ev.range));
+  document.getElementById('ev-csv').href = '/api/events.csv?' + evQuery();
+  document.getElementById('ev-sub').textContent =
+    `${d.total.toLocaleString()} matching · kept ${d.keep_days} days after last seen`;
+  renderEventList();
+  ev.open.forEach(id => { if (ev.rows.some(r => r.id === id)) openEventDetail(id, true); });
+}
+
+function renderEventTiles(s) {
+  if (!s) return;
+  const tile = (n, label, sub, level, onclick) => `<button class="ov-kpi" onclick="${onclick}">
+      <div class="k"><i class="bi ${level === 'error' ? 'bi-x-octagon-fill' : 'bi-exclamation-triangle-fill'}"
+        style="color:${level === 'error' ? '#ff7b72' : 'var(--yellow)'}"></i>${label}</div>
+      <div class="v">${n.toLocaleString()}</div><div class="s">${sub}</div></button>`;
+  document.getElementById('ev-tiles').innerHTML =
+    tile(s.active.error, 'Open errors', 'problems still going on', 'error', "evShowOnly('active','error','all')") +
+    tile(s.active.warning, 'Open warnings', 'problems still going on', 'warning', "evShowOnly('active','warning','all')") +
+    tile(s.day.error, 'Errors, last 24 h', 'logged + problems seen', 'error', "evShowOnly('','error','24h')") +
+    tile(s.day.warning, 'Warnings, last 24 h', 'logged + problems seen', 'warning', "evShowOnly('','warning','24h')");
+}
+function evShowOnly(show, level, range) {
+  Object.assign(ev, { show, level, range });
+  setEventFilter('show', show);
+}
+function renderEventsBadge(s) {
+  const b = document.getElementById('tab-badge-events');
+  if (!b || !s) return;
+  const n = s.active.error + s.active.warning;
+  b.style.display = n ? '' : 'none';
+  b.textContent = n;
+  b.classList.toggle('err', s.active.error > 0);
+  b.title = `${s.active.error} open error(s), ${s.active.warning} open warning(s)`;
+}
+
+function evRow(e) {
+  const open = ev.open.has(e.id);
+  const now = Date.now() / 1000;
+  const state = e.state === 'active' ? `<span class="ev-pill active ${e.level}">open ${fmtSpan(now - e.first_at)}</span>`
+    : e.state === 'resolved' ? `<span class="ev-pill resolved">resolved after ${fmtSpan(e.resolved_at - e.first_at)}</span>` : '';
+  const what = e.kind === 'condition' ? e.category : (e.context && e.context.logger) || '';
+  return `<div class="ev-row ${open ? 'open' : ''}" data-id="${e.id}">
+      <button class="ev-hd" aria-expanded="${open}">
+        <i class="bi ${e.level === 'error' ? 'bi-x-octagon-fill' : 'bi-exclamation-triangle-fill'} ev-lvl ${e.level}" title="${e.level}"></i>
+        <span class="ev-title" title="${esc(e.title)}">${esc(e.title)}${what ? `<small>${esc(what)}</small>` : ''}</span>
+        <span class="ev-meta">${state}<span class="ev-pill src" title="service">${esc(e.source)}</span>${e.count > 1
+          ? `<span class="ev-count" title="${e.kind === 'log' ? 'times logged' : 'times it started'}">×${e.count.toLocaleString()}</span>` : ''}
+          <span title="last seen ${fmtStamp(e.last_at)}">${fmtAgo(e.last_at, now)}</span></span>
+      </button>
+      <div class="ev-detail" ${open ? '' : 'hidden'}>${open && ev.details[e.id] ? evDetailHtml(ev.details[e.id]) : 'Loading…'}</div>
+    </div>`;
+}
+function renderEventList() {
+  const list = document.getElementById('ev-list');
+  list.innerHTML = ev.rows.length ? ev.rows.map(evRow).join('')
+    : `<div class="graph-empty"><i class="bi bi-check-circle" style="color:var(--green)"></i> No warnings or errors match.</div>`;
+  const more = ev.total - ev.rows.length;
+  document.getElementById('ev-more').innerHTML = more > 0
+    ? `<button class="btn-ghost" onclick="loadEvents(true)">Show ${Math.min(more, 100)} more (${more.toLocaleString()} left)</button>` : '';
+  if (ev.scrollTo) {
+    const row = [...list.querySelectorAll('.ev-row')].find(r => +r.dataset.id === ev.scrollTo);
+    if (row) row.scrollIntoView({ block: 'center' });
+    ev.scrollTo = null;
+  }
+}
+
+function evDetailHtml(e) {
+  const now = Date.now() / 1000;
+  const kv = rows => `<div class="ev-kv">${rows.map(([k, v]) =>
+    `<span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span>`).join('')}</div>`;
+  const when = [['First seen', fmtStamp(e.first_at)], ['Last seen', fmtStamp(e.last_at)]];
+  if (e.kind === 'condition') {
+    when.push(e.resolved_at ? ['Resolved', `${fmtStamp(e.resolved_at)} · lasted ${fmtSpan(e.resolved_at - e.first_at)}`]
+                            : ['Open for', fmtSpan(now - e.first_at)]);
+    when.push(['Times it started', e.count]);
+    when.push(['Watched by', `the GUI's monitor (${e.category})`]);
+  } else {
+    when.push(['Times logged', e.count], ['Logged by', e.source]);
+  }
+  const ctx = Object.entries(e.context || {}).filter(([, v]) => v !== '' && v != null);
+  const isTrace = (e.detail || '').startsWith('Traceback');
+  const occ = e.occurrences || [];
+  return `
+    <h6>Message</h6><pre class="ev-pre">${esc(e.message || e.title)}</pre>
+    ${e.fix ? `<h6>How to fix</h6><div class="ev-fix"><i class="bi bi-wrench"></i> ${esc(e.fix)}${
+      e.link ? ` <a href="${esc(e.link)}" target="_blank" rel="noopener">Docs <i class="bi bi-box-arrow-up-right"></i></a>` : ''}</div>` : ''}
+    ${e.detail ? `<h6>${isTrace ? 'Traceback' : 'Details'}</h6><pre class="ev-pre">${esc(e.detail)}</pre>` : ''}
+    <h6>When</h6>${kv(when)}
+    ${ctx.length ? `<h6>${e.kind === 'log' ? 'Where it was logged' : 'What it is about'}</h6>${kv(ctx)}` : ''}
+    <h6>${e.kind === 'log' ? 'Occurrences' : 'History'} <span style="text-transform:none;letter-spacing:0">· ${
+      occ.length < e.count && e.kind === 'log' ? `the last ${occ.length} of ${e.count.toLocaleString()}` : `${occ.length} entr${occ.length === 1 ? 'y' : 'ies'}`}</span></h6>
+    <table class="ev-occ">${occ.map(o => `<tr><td>${fmtStamp(o.at)}</td><td>${esc(o.message)}</td></tr>`).join('')}</table>
+    <div class="ev-actions"><button class="btn-ghost" onclick="copyEvent(${e.id})"><i class="bi bi-clipboard"></i> Copy details</button></div>`;
+}
+async function openEventDetail(id, refresh = false) {
+  const row = [...document.querySelectorAll('#ev-list .ev-row')].find(r => +r.dataset.id === id);
+  try {
+    const d = await apiJson(`/api/events/${id}`);
+    if (!d.ok) throw new Error(d.error);
+    ev.details[id] = d.event;
+    if (row && ev.open.has(id)) row.querySelector('.ev-detail').innerHTML = evDetailHtml(d.event);
+  } catch (e) {
+    if (row && !refresh) row.querySelector('.ev-detail').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+  }
+}
+document.addEventListener('click', e => {
+  const hd = e.target.closest('#ev-list .ev-hd');
+  if (!hd) return;
+  const row = hd.parentElement, id = +row.dataset.id;
+  const open = !ev.open.has(id);
+  open ? ev.open.add(id) : ev.open.delete(id);
+  row.classList.toggle('open', open);
+  hd.setAttribute('aria-expanded', open);
+  const box = row.querySelector('.ev-detail');
+  box.hidden = !open;
+  if (open) {
+    box.innerHTML = ev.details[id] ? evDetailHtml(ev.details[id]) : 'Loading…';
+    openEventDetail(id);
+  }
+});
+
+function eventText(e) {
+  const lines = [`[${e.level.toUpperCase()}] ${e.title}`, `service: ${e.source}${e.category ? ` · ${e.category}` : ''}`,
+                 `first seen: ${fmtStamp(e.first_at)} · last seen: ${fmtStamp(e.last_at)}` +
+                 (e.resolved_at ? ` · resolved: ${fmtStamp(e.resolved_at)}` : '') + ` · count: ${e.count}`,
+                 '', e.message || ''];
+  if (e.fix) lines.push('', `How to fix: ${e.fix}${e.link ? ` (${e.link})` : ''}`);
+  if (e.detail) lines.push('', e.detail);
+  const ctx = Object.entries(e.context || {});
+  if (ctx.length) lines.push('', ...ctx.map(([k, v]) => `${k}: ${v}`));
+  if ((e.occurrences || []).length) lines.push('', 'Occurrences:', ...e.occurrences.map(o => `  ${fmtStamp(o.at)}  ${o.message}`));
+  return lines.join('\n');
+}
+async function copyEvent(id) {
+  const e = ev.details[id];
+  if (!e) return;
+  const text = eventText(e);
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {                                  // plain http: no clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  toast('Copied the details', true);
+}
+
+async function clearEvents() {
+  const all = confirm('Clear the history?\n\nOK: clear everything except problems that are still open.\n' +
+                      'Cancel: keep everything.');
+  if (!all) return;
+  const d = await apiJson('/api/events/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                 body: JSON.stringify({ keep_open: true }) });
+  toast(d.ok ? `Cleared ${d.deleted} entr${d.deleted === 1 ? 'y' : 'ies'}` : (d.error || 'Clear failed'), d.ok);
+  ev.open.clear();
+  ev.details = {};
+  loadEvents();
+}
 // ── Auth ──────────────────────────────────────────────────────────────────
 async function checkAuth() {
   const r = await fetch('/api/auth/check');
@@ -7654,6 +7999,7 @@ function initApp() {
   setInterval(loadMikrotikResource, 15000);
   setInterval(loadWanStats, 60000);
   setInterval(() => { if (ovActive()) ovLoadSummary(); }, 15000);
+  setInterval(() => { if (document.getElementById('page-events').classList.contains('active') && !document.hidden) loadEvents(); }, 30000);
   checkService();
   setInterval(checkService, 10000);
   startSSE();
