@@ -44,7 +44,7 @@ Includes a full **web-based GUI** for configuration, monitoring, device manageme
    - Priority order: PPPoE > Hotspot > IPoE/DHCP > Address List
 
 6. **Web GUI**
-   - Password-protected dashboard with live CPU, memory, and interface throughput graphs
+   - Password-protected Overview: live per-CPU-queue and per-subscriber traffic read from LibreQoS's own queues (tc), a queue map, and this host's CPU / memory / interfaces over SNMP (psutil as fallback)
    - Form-based settings editor — no raw JSON required
    - Netplan / network interface configuration
    - Management port (DHCP or static IP) configuration
@@ -128,7 +128,7 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 
 | Tab | Description |
 |-----|-------------|
-| **Dashboard** | Live CPU, memory, and interface throughput graphs; device count by source |
+| **Overview** | Live view of the shaper: download / upload now against the link, one row per LibreQoS CPU queue (traffic, circuits, drops, core load), a queue map of every busy subscriber (size = traffic, colour = share of plan), the busiest subscribers, this host (over SNMP or psutil), routers, subscriber counts and recent syncs / PPP events (see [CONFIG.md](CONFIG.md#overview)) |
 | **Settings** | Form-based `config.json` editor — routers, sources, topology strategy. Saving restarts `updatecsv` automatically |
 | **Services** | Start / restart / stop all integration and LibreQoS services; view live logs |
 | **Network** | Netplan configuration — Option A (Linux bridge) or Option B (Bifrost XDP); interface cards with speed and IP |

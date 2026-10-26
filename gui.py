@@ -29,7 +29,7 @@ from settings import (
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
     LQOS_CONF_PATH as _SETTINGS_LQOS_CONF,
     atomic_write_text, write_if_changed, libreqos_dir, libreqos_version, burst_settings,
-    topology_settings,
+    topology_settings, host_snmp_settings,
 )
 from device_database import (
     ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges,
@@ -37,6 +37,8 @@ from device_database import (
 )
 import app_update
 import cpu_planner
+import host_snmp
+import queue_stats
 import snmp
 import snmp_monitor
 import webhook
@@ -484,29 +486,83 @@ def _wan_enabled(cfg: dict) -> bool:
 
 _wan_manager = WANManager(_connect_for_wan)
 
+# This host's live metrics for the Overview: from its own snmpd when
+# settings.json host_snmp is enabled and answering, and from psutil for
+# whatever snmpd does not show (or everything while it does not answer).
+HOST_SNMP_RETRY = 30            # seconds before asking an snmpd that did not answer again
+_host = {"client": None, "key": None, "retry_at": 0.0, "status": None}
+# payload field → the snmp sample's field that says snmpd answered it
+_HOST_FIELDS = {"cpu_avg": "cpu_avg", "cpu_per": "cpu_per", "mem_used": "mem_used", "mem_total": "mem_used",
+                "mem_percent": "mem_used", "load": "load", "uptime_seconds": "uptime_seconds", "net": "net"}
+
+
+def _host_snmp_target(s):
+    """(address, port) of this host's snmpd (the preview points this at its fake agent)."""
+    return s["address"], s["port"]
+
+
+def _host_snmp_sample():
+    """(sample or None, status shown on the Overview) from this host's snmpd."""
+    s = host_snmp.settings(host_snmp_settings())
+    if not s["enabled"]:
+        _host.update(client=None, key=None, status=None)
+        return None, None
+    key = (*_host_snmp_target(s), s["community"])
+    if key != _host["key"]:
+        _host.update(client=host_snmp.HostSnmp(*key), key=key, retry_at=0.0)
+    if time.time() < _host["retry_at"]:
+        return None, _host["status"]
+    sample = _host["client"].sample(exclude=_BRIDGE_EXCLUDE)
+    if not sample["ok"]:
+        _host["retry_at"] = time.time() + HOST_SNMP_RETRY
+    _host["status"] = {"ok": sample["ok"], "error": sample["error"], "fields": sample["fields"],
+                       "target": f"{s['address']}:{s['port']}"}
+    return (sample if sample["ok"] else None), _host["status"]
+
+
+def _host_metrics():
+    """One live sample of this host: CPU (average and per core), memory, load, uptime, interface Mbps."""
+    got, status = _host_snmp_sample()
+    got = got or {}
+    local = {}
+    if HAS_PSUTIL:
+        cpu_per = psutil.cpu_percent(interval=None, percpu=True)
+        vm = psutil.virtual_memory()
+        local = {"cpu_per": cpu_per, "cpu_avg": round(sum(cpu_per) / len(cpu_per), 1) if cpu_per else 0.0,
+                 "mem_used": vm.used, "mem_total": vm.total, "mem_percent": vm.percent,
+                 "load": list(os.getloadavg()), "uptime_seconds": _uptime_seconds(),
+                 "net": {} if "net" in got else _net_throughput()}
+    elif not got:
+        return {"error": "psutil is not installed, and this host's snmpd "
+                         + ("does not answer" if status else "is not enabled (Settings → Host SNMP)"),
+                "snmp": status}
+    out, sources = {"snmp": status}, {}
+    for field, marker in _HOST_FIELDS.items():
+        if marker in got.get("fields", ()):
+            out[field], sources[field] = got[field], "snmp"
+        elif field in local:
+            out[field], sources[field] = local[field], "psutil"
+    out.setdefault("cpu_per", [])
+    out.setdefault("cpu_avg", 0.0)
+    used = set(sources.values())
+    out["source"] = "snmp" if used == {"snmp"} else "psutil" if used == {"psutil"} else "snmp + psutil"
+    out["sources"] = sources
+    if got.get("hostname"):
+        out["hostname"] = got["hostname"]
+    return out
+
+
 def _broadcast_loop():
     while True:
-        if HAS_PSUTIL:
-            cpu_per  = psutil.cpu_percent(interval=1, percpu=True)
-            cpu_avg  = sum(cpu_per) / len(cpu_per)
-            _live["cpu"] = cpu_avg
-            mem      = psutil.virtual_memory()
-            net      = _net_throughput()
-            bridge_iface = _get_bridge_iface_from_lqos()
-            sys_profile = _get_system_profile()
-            payload  = json.dumps({
-                "cpu_per":    cpu_per,
-                "cpu_avg":    round(cpu_avg, 1),
-                "mem_used":   mem.used,
-                "mem_total":  mem.total,
-                "mem_percent": mem.percent,
-                "net":        net,
-                "bridge_iface": bridge_iface,
-                "system":     sys_profile,
-                "uptime_seconds": _uptime_seconds(),
-            })
-        else:
-            payload = json.dumps({"error": "psutil not installed"})
+        started = time.time()
+        try:
+            metrics = _host_metrics()
+            if "error" not in metrics:
+                _live["cpu"] = metrics["cpu_avg"]
+                metrics.update(bridge_iface=_get_bridge_iface_from_lqos(), system=_get_system_profile())
+            payload = json.dumps(metrics)
+        except Exception as e:
+            payload = json.dumps({"error": f"host metrics: {e}"})
 
         data = f"data: {payload}\n\n"
         with _metric_lock:
@@ -520,7 +576,7 @@ def _broadcast_loop():
             for q in dead:
                 _metric_listeners.remove(q)
 
-        time.sleep(1)
+        time.sleep(max(0.2, 1.0 - (time.time() - started)))
 
 threading.Thread(target=_broadcast_loop, daemon=True).start()
 
@@ -1584,6 +1640,154 @@ def monitor_status():
         "burst": {k: _burst.get(k) for k in ("state", "util", "error", "classes", "raised", "seconds")},
         "wan_enabled": wan_on,
     })
+
+
+# ── Live LibreQoS queues (the Overview) ─────────────────────────────────────
+# tc is read only while someone has the Overview open: every QUEUE_STEP
+# seconds, or slower when tc takes long on a big queue tree.
+QUEUE_STEP = 2.0
+QUEUE_IDLE = 20                 # seconds after the last request before sampling stops
+
+
+def _lqos_conf_dict():
+    path = _find_lqos_conf()
+    try:
+        return _lqos_parse(path.read_text()) if path.exists() else {}
+    except Exception:
+        return {}
+
+
+def _queue_interfaces():
+    """(download interface, upload interface, on a stick) from lqos.conf."""
+    conf = _lqos_conf_dict()
+    ifaces, stick = _shaping_interfaces(conf)
+    if not ifaces:
+        return "", "", stick
+    if stick:
+        return ifaces[0], ifaces[0], True
+    bridge = conf.get("bridge") or {}
+    return bridge.get("to_network") or ifaces[-1], bridge.get("to_internet") or ifaces[0], False
+
+
+_queue_sampler = queue_stats.QueueSampler(libreqos_dir, _queue_interfaces)
+_queue_state = {"wanted_until": 0.0, "thread": None}
+_queue_lock = threading.Lock()
+
+
+def _queue_every():
+    return max(QUEUE_STEP, _queue_sampler.took * 4)
+
+
+def _queue_loop():
+    while True:
+        if time.time() < _queue_state["wanted_until"]:
+            try:
+                _queue_sampler.sample()
+            except Exception as e:
+                _queue_sampler.latest = {"available": False, "error": f"queue stats: {e}"}
+                app.logger.warning(f"queue stats: {e}")
+            time.sleep(_queue_every())
+        else:
+            time.sleep(0.5)
+
+
+@app.route("/api/queues/live")
+@require_auth
+def queues_live():
+    """The latest per-CPU-queue and per-circuit rates; asking keeps the sampler running."""
+    with _queue_lock:
+        _queue_state["wanted_until"] = time.time() + QUEUE_IDLE
+        if _queue_state["thread"] is None:
+            _queue_state["thread"] = threading.Thread(target=_queue_loop, daemon=True)
+            _queue_state["thread"].start()
+    q = _lqos_conf_dict().get("queues") or {}
+    link = {"down_mbps": _num_or_none(q.get("downlink_bandwidth_mbps")),
+            "up_mbps": _num_or_none(q.get("uplink_bandwidth_mbps"))}
+    return jsonify({"ok": True, "every": round(_queue_every(), 1), "link": link, **_queue_sampler.latest})
+
+
+def _num_or_none(v):
+    try:
+        return float(v) if float(v) > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+_shaped_count = {"key": None, "rows": 0}
+
+
+def _count_shaped(path):
+    """Rows (devices) in ShapedDevices.csv, cached until the file changes."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (st.st_mtime, st.st_size)
+    if key != _shaped_count["key"]:
+        with open(path, newline="") as f:
+            rows = sum(1 for line in f if line.strip() and not line.lstrip().startswith("#"))
+        _shaped_count.update(key=key, rows=max(0, rows - 1))       # minus the header
+    return _shaped_count["rows"]
+
+
+@app.route("/api/overview")
+@require_auth
+def overview_summary():
+    """The Overview's counts: devices by source and router, common plans, last syncs, recent PPP events."""
+    out = {"ok": True, "sources": {}, "static": 0, "routers": [], "plans": [], "plan_dl": 0, "plan_ul": 0,
+           "devices": 0, "events": [], "syncs": [], "files": {}}
+    if DB_PATH.exists():
+        con = _db_con()
+        try:
+            for source, static, n, dl, ul in con.execute(
+                    "SELECT source, is_static, COUNT(*), SUM(download_max_mbps), SUM(upload_max_mbps) "
+                    "FROM devices GROUP BY source, is_static"):
+                if static:
+                    out["static"] += n
+                else:
+                    out["sources"][source or "other"] = out["sources"].get(source or "other", 0) + n
+                out["devices"] += n
+                out["plan_dl"] += dl or 0
+                out["plan_ul"] += ul or 0
+            out["routers"] = [{"name": r or "(static)", "devices": n, "plan_dl": dl or 0}
+                              for r, n, dl in con.execute(
+                                  "SELECT router, COUNT(*), SUM(download_max_mbps) FROM devices "
+                                  "GROUP BY router ORDER BY COUNT(*) DESC")]
+            out["plans"] = [{"dl": dl, "ul": ul, "devices": n} for dl, ul, n in con.execute(
+                "SELECT download_max_mbps, upload_max_mbps, COUNT(*) FROM devices "
+                "GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 8")]
+            out["syncs"] = [dict(r) for r in con.execute(
+                "SELECT name, kind, service, status, last_run, took, last_error FROM jobs "
+                "WHERE kind IN ('build', 'apply', 'webhook') ORDER BY last_run DESC LIMIT 6")]
+            out["events"] = [dict(r) for r in con.execute(
+                "SELECT router, event, user, ip, received_at, processed_at FROM webhook_events "
+                "ORDER BY id DESC LIMIT 12")]
+        except sqlite3.OperationalError:
+            pass                      # a table the services have not created yet
+        finally:
+            con.close()
+    lq = Path(libreqos_dir())
+    for key, name in (("network_json", "network.json"), ("shaped_devices", "ShapedDevices.csv")):
+        p = lq / name
+        out["files"][key] = p.stat().st_mtime if p.exists() else None
+    out["shaped"] = _count_shaped(lq / "ShapedDevices.csv")
+    return jsonify(out)
+
+
+@app.route("/api/host-snmp/test", methods=["POST"])
+@require_auth
+def host_snmp_test():
+    """Ask this host's snmpd with the given (unsaved) settings: what it answers, and what it hides."""
+    s = host_snmp.settings(request.get_json(silent=True) or {})
+    client = host_snmp.HostSnmp(*_host_snmp_target(s), s["community"], timeout=2.0)
+    sample = client.sample(_BRIDGE_EXCLUDE)
+    shown = {"cpu": sample.get("cpu_counters") or "cpu_per" in sample, "cores": "cpu_per" in sample,
+             "memory": "mem_used" in sample, "load": "load" in sample,
+             "uptime": "uptime_seconds" in sample, "interfaces": bool(client.ifindex)}
+    return jsonify({"ok": True, "answered": sample["ok"], "error": sample["error"],
+                    "shown": shown, "missing": [k for k, v in shown.items() if not v] if sample["ok"] else [],
+                    "hostname": sample.get("hostname", ""),
+                    "interfaces": sorted(n for n in client.ifindex if n not in _BRIDGE_EXCLUDE)})
 
 # ---------------------------------------------------------------------------
 # Routes

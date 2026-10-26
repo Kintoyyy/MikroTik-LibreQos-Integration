@@ -89,31 +89,106 @@ body > footer { flex-shrink: 0; }
 .card-bd { padding: 1rem; }
 .card-hd i { color: var(--text); }
 
-/* ── Stat cards ── */
-.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.25rem; }
-@media(max-width:768px){ .stat-grid { grid-template-columns: repeat(2,1fr); } }
-.stat-card { background: linear-gradient(135deg, #161b22, var(--card)); border: 1px solid #2563eb2a; border-radius: 12px; padding: 1rem 1.25rem; }
-.stat-val { font-size: 1.875rem; font-weight: 700; color: var(--blue); line-height: 1; }
-.stat-lbl { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: .3rem; }
+/* ── Overview ── */
+:root { --s-down: #3987e5; --s-up: #d95926; --s-cpu: #199e70; --s-mem: #9085e9; --hair: #21262d; }
+.dot-yellow { background: var(--yellow); box-shadow: 0 0 6px #d2992277; }
+.ov-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+@media(max-width:1200px){ .ov-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media(max-width:600px){ .ov-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; } }
+.ov-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: .8rem .95rem; min-width: 0; }
+.ov-kpi .k { font-size: .74rem; color: var(--muted); display: flex; align-items: center; gap: .4rem; }
+.ov-kpi .v { font-size: 1.6rem; font-weight: 650; color: var(--strong); line-height: 1.15; margin-top: .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-kpi .v small { font-size: .8rem; font-weight: 500; color: var(--muted); margin-left: .25rem; }
+.ov-kpi .s { font-size: .72rem; color: var(--muted); margin-top: .25rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-kpi .meter { height: 3px; background: var(--hair); border-radius: 2px; overflow: hidden; margin-top: .45rem; }
+.ov-kpi .meter > span { display: block; height: 100%; width: 0; border-radius: 2px; transition: width .4s; }
+@media(max-width:600px){ .ov-kpi { padding: .65rem .7rem; } .ov-kpi .v { font-size: 1.3rem; } }
 
-/* ── Charts ── */
-.charts-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 1rem; }
-@media(max-width:900px){ .charts-grid { grid-template-columns: 1fr; } }
-.chart-wrap { position: relative; height: 190px; }
+.ov-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.ov-wide { grid-column: 1 / -1; }
+@media(max-width:1000px){ .ov-grid { grid-template-columns: minmax(0, 1fr); } }
+.ov-grid > .card { min-width: 0; }
+.ov-chart { width: 100%; }
+.ov-tools { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; justify-content: flex-end; }
+.ov-select { font-size: .75rem; padding: .25rem .6rem; max-width: 170px; }
+.ov-legend { display: inline-flex; gap: .8rem; font-size: .74rem; color: var(--muted); font-weight: 400; }
+.ov-legend span { display: inline-flex; align-items: center; gap: .35rem; }
+.ov-legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+.ov-note { font-size: .72rem; color: var(--muted); margin-top: .35rem; }
+.ov-sub { font-size: .74rem; color: var(--muted); font-weight: 400; text-align: right; }
+.ov-badge { font-size: .72rem; color: var(--muted); font-weight: 400; display: inline-flex; align-items: center; gap: .35rem; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-empty { color: var(--muted); font-size: .8rem; padding: .4rem 0; }
+.ov-label { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: .8rem 0 .35rem; }
+.ov-label:first-child { margin-top: 0; }
+.ov-label span { text-transform: none; letter-spacing: 0; }
 
-/* ── CPU bars ── */
-.cpu-bar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(28px, 1fr)); gap: 6px; margin-top: .75rem; width: 100%; }
-.cpu-bar-item { min-width: 0; text-align: center; }
-.cpu-bar-item .lbl { font-size: 9px; color: var(--muted); }
-.cpu-bar-item .prog { height: 5px; background: #30363d; border-radius: 3px; overflow: hidden; margin-top: 2px; }
-.cpu-bar-item .fill { height: 100%; background: var(--blue); transition: width .35s; border-radius: 3px; }
+.ov-q { display: grid; grid-template-columns: minmax(110px, 30%) minmax(0, 1fr) 118px; gap: .2rem .8rem; align-items: center; padding: .45rem 0; border-bottom: 1px solid var(--hair); }
+.ov-q:last-child { border-bottom: none; }
+.ov-q .nm { min-width: 0; font-size: .72rem; color: var(--muted); line-height: 1.35; }
+.ov-q .nm b { display: block; font-size: .82rem; color: var(--strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-q .nm span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-q .bar { height: 6px; background: var(--hair); border-radius: 3px; overflow: hidden; margin: 4px 0; }
+.ov-q .bar > span { display: block; height: 100%; border-radius: 3px; transition: width .5s; min-width: 2px; }
+.ov-q .num { font-family: var(--mono); font-size: .74rem; color: var(--text); display: flex; flex-direction: column; text-align: right; line-height: 1.5; }
+@media(max-width:600px){ .ov-q { grid-template-columns: minmax(0, 1fr) 104px; } .ov-q .bars { grid-column: 1 / -1; grid-row: 2; } }
 
-/* ── System info chips ── */
-.sys-info-grid { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: .75rem; }
-.sys-chip { background:#0d1117; border:1px solid var(--border); border-radius:10px; padding:.7rem .8rem; }
-.sys-chip .k { font-size:.68rem; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:.25rem; }
-.sys-chip .v { font-size:.84rem; color:var(--text); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-@media(max-width:700px){ .sys-info-grid { grid-template-columns: 1fr; } }
+.ov-crumbs { font-size: .74rem; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-crumbs b { color: var(--strong); font-weight: 600; }
+.ov-crumbs a { color: var(--accent); text-decoration: none; }
+.ov-crumbs i { font-size: .6rem; color: var(--muted) !important; }
+.ov-scale { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; font-size: .7rem; color: var(--muted); margin-top: .5rem; }
+.ov-scale-bar { display: inline-flex; align-items: center; gap: .4rem; }
+.ov-scale-bar i { width: 120px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, #104281, #2a78d6, #86b6ef); }
+.ov-scale-bar b { font-weight: 500; }
+
+.ov-table-wrap { overflow-x: auto; }
+.ov-table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.ov-table th { font-size: .7rem; font-weight: 600; color: var(--muted); text-align: left; padding: .5rem .8rem; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.ov-table td { padding: .42rem .8rem; border-bottom: 1px solid var(--hair); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ov-table tr:last-child td { border-bottom: none; }
+.ov-table .r { text-align: right; }
+.ov-table .ov-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; color: var(--strong); font-weight: 500; }
+.ov-table td.ov-empty { text-align: center; padding: 1rem; }
+.ov-util { display: inline-flex; align-items: center; gap: .45rem; color: var(--text); }
+.ov-util .mbar { width: 70px; }
+.ov-util .mbar > span { background: var(--s-down); }
+.ov-util .mbar.warn > span { background: var(--yellow); }
+
+.ov-cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 3px; }
+.ov-core { border-radius: 4px; padding: .2rem .25rem; font-family: var(--mono); font-size: .64rem; display: flex; justify-content: space-between; gap: .2rem; transition: background .4s; }
+.ov-core span { opacity: .75; }
+.ov-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem 1rem; font-size: .78rem; margin-top: .9rem; padding-top: .8rem; border-top: 1px solid var(--hair); }
+.ov-kv .k { color: var(--muted); }
+.ov-kv .v { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ov-routers { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .6rem; }
+.ov-router { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .6rem .7rem; min-width: 0; font-size: .74rem; }
+.ov-router.down { border-color: #f8514955; }
+.ov-router .hd { display: flex; align-items: center; gap: .4rem; margin-bottom: .35rem; }
+.ov-router .hd b { color: var(--strong); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.ov-router .via { font-size: .6rem; font-family: var(--mono); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 .3rem; }
+.ov-router .ov-r { display: flex; align-items: center; gap: .5rem; color: var(--muted); margin-top: .2rem; }
+.ov-router .ov-r > span:first-child { width: 34px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-router .ov-r .mbar { width: auto; flex: 1; }
+.ov-router .ov-r b { color: var(--text); font-weight: 500; margin-left: auto; white-space: nowrap; }
+.ov-router .ov-r b.mono { font-family: var(--mono); font-size: .68rem; }
+.ov-router .ov-r.muted > span:first-child { width: auto; }
+.ov-router .ov-r.if > span:first-child { width: auto; flex: 1; min-width: 0; }
+.ov-router .err { color: #ff7b72; font-size: .72rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ov-hbar { display: grid; grid-template-columns: minmax(70px, 34%) minmax(0, 1fr) max-content; gap: .6rem; align-items: center; font-size: .76rem; margin: .22rem 0; }
+.ov-hbar .l { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-hbar .b { height: 6px; background: var(--hair); border-radius: 3px; overflow: hidden; }
+.ov-hbar .b > span { display: block; height: 100%; background: var(--s-down); border-radius: 3px; min-width: 2px; }
+.ov-hbar .n { font-family: var(--mono); font-size: .72rem; color: var(--text); text-align: right; }
+.ov-hbar .n i { font-style: normal; color: var(--muted); }
+
+.ov-feed { list-style: none; margin: 0; padding: 0; }
+.ov-feed li { display: flex; align-items: center; gap: .5rem; font-size: .76rem; padding: .3rem 0; border-bottom: 1px solid var(--hair); min-width: 0; }
+.ov-feed li:last-child { border-bottom: none; }
+.ov-feed .t { color: var(--strong); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+.ov-feed .m { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-feed .e { color: #ff7b72; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: auto; max-width: 40%; }
 
 /* ── Compact MikroTik stats ── */
 .mt-compact-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(155px,1fr)); gap:.5rem; }
@@ -501,9 +576,6 @@ code { font-size: .8rem; color: #94a3b8; }
   /* Page */
   .page { padding: .85rem .75rem; }
 
-  /* Stats */
-  .stat-val { font-size: 1.4rem; }
-
   /* Form rows collapse to 1-col on tablet */
   .form-row-3, .form-row-4 { grid-template-columns: 1fr 1fr; }
 
@@ -546,11 +618,6 @@ code { font-size: .8rem; color: #94a3b8; }
 
   /* Strategy grid 2-col */
   .strategy-grid { grid-template-columns: repeat(2,1fr); }
-
-  /* Stats 2×2 */
-  .stat-grid { grid-template-columns: repeat(2,1fr); gap: .65rem; }
-  .stat-val { font-size: 1.25rem; }
-  .stat-lbl { font-size: .65rem; }
 
   /* Card header wrap */
   .card-hd { flex-wrap: wrap; gap: .4rem; }
@@ -654,112 +721,98 @@ code { font-size: .8rem; color: #94a3b8; }
      DASHBOARD
 ════════════════════════════════════════════════════════════════════════ -->
 <div class="page active" id="page-dashboard">
-  <div class="stat-grid">
-    <div class="stat-card"><div class="stat-val" id="stat-cpu">—</div><div class="stat-lbl">CPU Average</div></div>
-    <div class="stat-card"><div class="stat-val" id="stat-mem">—</div><div class="stat-lbl">Memory Used</div></div>
-    <div class="stat-card"><div class="stat-val" id="stat-devices">—</div><div class="stat-lbl">Total Devices</div></div>
-    <div class="stat-card"><div class="stat-val" id="stat-routers">—</div><div class="stat-lbl">Routers</div></div>
+  <div class="ov-kpis">
+    <div class="ov-kpi"><div class="k"><i class="bi bi-arrow-down-circle" style="color:var(--s-down)"></i>Download now</div>
+      <div class="v" id="kpi-down">—</div><div class="meter"><span id="kpi-down-m" style="background:var(--s-down)"></span></div>
+      <div class="s" id="kpi-down-s">&nbsp;</div></div>
+    <div class="ov-kpi"><div class="k"><i class="bi bi-arrow-up-circle" style="color:var(--s-up)"></i>Upload now</div>
+      <div class="v" id="kpi-up">—</div><div class="meter"><span id="kpi-up-m" style="background:var(--s-up)"></span></div>
+      <div class="s" id="kpi-up-s">&nbsp;</div></div>
+    <div class="ov-kpi"><div class="k"><i class="bi bi-people"></i>Active subscribers</div>
+      <div class="v" id="kpi-subs">—</div><div class="s" id="kpi-subs-s">&nbsp;</div></div>
+    <div class="ov-kpi"><div class="k"><i class="bi bi-cpu"></i>Host CPU</div>
+      <div class="v" id="kpi-cpu">—</div><div class="s" id="kpi-cpu-s">&nbsp;</div></div>
+    <div class="ov-kpi"><div class="k"><i class="bi bi-memory"></i>Memory</div>
+      <div class="v" id="kpi-mem">—</div><div class="s" id="kpi-mem-s">&nbsp;</div></div>
+    <div class="ov-kpi"><div class="k"><i class="bi bi-hdd-stack"></i>Routers</div>
+      <div class="v" id="kpi-routers">—</div><div class="s" id="kpi-routers-s">&nbsp;</div></div>
   </div>
 
-  <div class="card" style="margin-bottom:1rem">
-    <div class="card-hd"><span><i class="bi bi-pc-display-horizontal"></i> System Hardware</span></div>
-    <div class="card-bd">
-      <div class="sys-info-grid">
-        <div class="sys-chip">
-          <div class="k">Hostname</div>
-          <div class="v" id="sys-hostname">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">OS</div>
-          <div class="v" id="sys-os">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">Kernel / Arch</div>
-          <div class="v" id="sys-kernel-arch">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">CPU Model</div>
-          <div class="v" id="sys-cpu-model">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">CPU Cores / Threads</div>
-          <div class="v" id="sys-cpu-cores">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">CPU Clock</div>
-          <div class="v" id="sys-cpu-clock">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">RAM Total</div>
-          <div class="v" id="sys-ram-total">—</div>
-        </div>
-        <div class="sys-chip">
-          <div class="k">Uptime</div>
-          <div class="v" id="sys-uptime">—</div>
+  <div class="ov-grid">
+    <!-- Live traffic: LibreQoS's queues (tc), or one interface -->
+    <div class="card ov-wide">
+      <div class="card-hd">
+        <span><i class="bi bi-activity"></i> Live traffic</span>
+        <div class="ov-tools">
+          <span class="ov-legend" id="ov-traffic-legend"></span>
+          <select id="ov-traffic-src" class="search-input ov-select" onchange="ovSetTrafficSource(this.value)" aria-label="Traffic source">
+            <option value="">Auto</option>
+          </select>
         </div>
       </div>
+      <div class="card-bd">
+        <div id="ov-traffic" class="ov-chart" style="height:240px"></div>
+        <div class="ov-note" id="ov-traffic-note"></div>
+      </div>
     </div>
-  </div>
 
-  <div class="charts-grid">
+    <!-- One row per CPU queue: LibreQoS shapes each top-level node on one core -->
     <div class="card">
-      <div class="card-hd"><span><i class="bi bi-cpu-fill"></i> CPU Usage</span><span style="font-size:.75rem;color:var(--muted)" id="cpu-cores-label"></span></div>
+      <div class="card-hd"><span><i class="bi bi-cpu"></i> CPU queues</span><span class="ov-sub" id="ov-queues-sub"></span></div>
+      <div class="card-bd"><div id="ov-queues"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd">
+        <span><i class="bi bi-grid-1x2"></i> Live queue map</span>
+        <span class="ov-crumbs" id="ov-tree-crumbs"></span>
+      </div>
       <div class="card-bd">
-        <div class="chart-wrap"><canvas id="cpu-chart"></canvas></div>
-        <div class="cpu-bar-grid" id="cpu-bars"></div>
+        <div id="ov-treemap" class="ov-chart" style="height:330px"></div>
+        <div class="ov-scale"><span>Tile size: download now · colour: share of the plan in use</span>
+          <span class="ov-scale-bar"><b>0%</b><i></i><b>100%</b></span></div>
       </div>
     </div>
-    <div class="card">
-      <div class="card-hd"><span><i class="bi bi-memory" style="color:var(--cyan)"></i> Memory</span></div>
-      <div class="card-bd">
-        <div class="chart-wrap"><canvas id="mem-chart"></canvas></div>
-        <div style="display:flex;justify-content:space-between;margin-top:.75rem;font-size:.78rem;color:var(--muted)">
-          <span>Used <strong id="mem-used-label" style="color:var(--cyan)">—</strong></span>
-          <span>Free <strong id="mem-free-label" style="color:var(--green)">—</strong></span>
-          <span>Total <strong id="mem-total-label">—</strong></span>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-hd"><span><i class="bi bi-pie-chart-fill" style="color:var(--yellow)"></i> Devices by Source</span></div>
-      <div class="card-bd"><div class="chart-wrap"><canvas id="src-chart"></canvas></div></div>
-    </div>
-    <div class="card">
-      <div class="card-hd"><span><i class="bi bi-bar-chart-fill" style="color:var(--green)"></i> Top 10 by Bandwidth</span></div>
-      <div style="overflow-x:auto">
-        <table>
-          <thead><tr><th>Device</th><th>Source</th><th style="text-align:right">DL Mbps</th><th style="text-align:right">UL Mbps</th></tr></thead>
-          <tbody id="top-bw-body"></tbody>
+
+    <div class="card ov-wide">
+      <div class="card-hd"><span><i class="bi bi-person-lines-fill"></i> Busiest subscribers now</span><span class="ov-sub" id="ov-top-sub"></span></div>
+      <div class="ov-table-wrap">
+        <table class="ov-table">
+          <thead><tr><th>Subscriber</th><th>Parent node</th><th>CPU</th><th class="r">Download</th><th>Share of plan</th><th class="r">Upload</th><th class="r">Drops/s</th></tr></thead>
+          <tbody id="ov-top"><tr><td colspan="7" class="ov-empty">Waiting for the queue sampler…</td></tr></tbody>
         </table>
       </div>
     </div>
 
-    <!-- Bridge / interface throughput — full width -->
-    <div class="card" style="grid-column:1/-1">
-      <div class="card-hd">
-        <span><i class="bi bi-activity" style="color:#f472b6"></i> Interface Throughput</span>
-        <div style="display:flex;align-items:center;gap:.75rem">
-          <select id="bridge-iface-select" class="search-input" style="font-size:.75rem;padding:.25rem .6rem" onchange="onBridgeIfaceChange()" disabled>
-            <option value="">Loading…</option>
-          </select>
-          <span style="font-size:.72rem;color:var(--muted)">from to_internet</span>
-          <div style="display:flex;gap:.4rem;font-size:.72rem;color:var(--muted);align-items:center">
-            <span style="width:18px;height:3px;background:#3b82f6;border-radius:2px;display:inline-block"></span>RX
-            <span style="width:18px;height:3px;background:#22c55e;border-radius:2px;display:inline-block;margin-left:.4rem"></span>TX
-          </div>
-          <div style="font-size:.75rem">
-            RX <strong id="bridge-rx-val" style="color:#3b82f6">— Mbps</strong>
-            &nbsp; TX <strong id="bridge-tx-val" style="color:#22c55e">— Mbps</strong>
-          </div>
-        </div>
-      </div>
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-pc-display-horizontal"></i> This host</span><span class="ov-badge" id="ov-host-src"></span></div>
       <div class="card-bd">
-        <div style="position:relative;height:200px"><canvas id="bridge-chart"></canvas></div>
+        <div class="ov-tools" style="justify-content:flex-end;margin-bottom:.25rem"><span class="ov-legend">
+          <span><i style="background:var(--s-cpu)"></i>CPU</span><span><i style="background:var(--s-mem)"></i>Memory</span></span></div>
+        <div id="ov-host-chart" class="ov-chart" style="height:130px"></div>
+        <div class="ov-label">Cores <span id="ov-cores-note"></span></div>
+        <div class="ov-cores" id="ov-cores"></div>
+        <div class="ov-kv" id="ov-host-kv"></div>
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-hdd-stack"></i> Routers</span><span class="ov-sub" id="ov-routers-sub"></span></div>
+      <div class="card-bd"><div class="ov-routers" id="ov-routers"><div class="ov-empty">Waiting for the first poll…</div></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-people"></i> Subscribers</span><span class="ov-sub" id="ov-subs-sub"></span></div>
+      <div class="card-bd" id="ov-subs"><div class="ov-empty">Loading…</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd"><span><i class="bi bi-clock-history"></i> Activity</span><span class="ov-sub" id="ov-activity-sub"></span></div>
+      <div class="card-bd" id="ov-activity"><div class="ov-empty">Loading…</div></div>
+    </div>
+
     <!-- WAN Assignment stats — full width, hidden if disabled -->
-    <div class="card" id="dash-wan-stats-card" style="grid-column:1/-1;display:none">
+    <div class="card ov-wide" id="dash-wan-stats-card" style="display:none">
       <div class="card-hd">
         <span><i class="bi bi-arrow-left-right"></i> WAN Assignment</span>
         <button class="btn-ghost" style="font-size:.75rem" onclick="loadWanStats()"><i class="bi bi-arrow-clockwise"></i></button>
@@ -768,7 +821,6 @@ code { font-size: .8rem; color: #94a3b8; }
         <div id="dash-wan-stats-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.6rem"></div>
       </div>
     </div>
-
   </div>
 </div>
 
@@ -2270,6 +2322,48 @@ code { font-size: .8rem; color: #94a3b8; }
     </div>
   </div>
 
+  <!-- Host SNMP -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd">
+      <span><i class="bi bi-pc-display-horizontal"></i> Host Monitoring (SNMP) <span class="hd-sub">this host's CPU, memory and interfaces on the Overview</span></span>
+    </div>
+    <div class="card-bd">
+      <div style="margin-bottom:1rem">
+        <label class="toggle-wrap">
+          <div class="toggle"><input type="checkbox" id="set-hsnmp-enabled">
+            <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          </div>
+          <span style="font-size:.875rem">Read this host over SNMP (falls back to psutil for anything snmpd does not answer)</span>
+        </label>
+      </div>
+      <div class="form-row form-row-4">
+        <div>
+          <label class="form-label">snmpd Address</label>
+          <input class="form-input" id="set-hsnmp-address" placeholder="127.0.0.1">
+        </div>
+        <div>
+          <label class="form-label">Port</label>
+          <input class="form-input" type="number" id="set-hsnmp-port" min="1" max="65535" placeholder="161">
+        </div>
+        <div>
+          <label class="form-label">Community (v2c)</label>
+          <input class="form-input" id="set-hsnmp-community" placeholder="public" autocomplete="off">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn-ghost" onclick="testHostSnmp()"><i class="bi bi-plug"></i> Test</button>
+        </div>
+      </div>
+      <div id="hsnmp-result" style="font-size:.78rem;margin-top:.6rem"></div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem;line-height:1.55">
+        Ubuntu's snmpd shows only the system group by default. Install and open it to this host only:
+        <code>sudo apt install snmpd</code>, then in <code>/etc/snmp/snmpd.conf</code> replace the
+        <code>agentaddress</code> and <code>rocommunity</code> lines with
+        <code>agentaddress udp:127.0.0.1:161</code> and <code>rocommunity public 127.0.0.1</code>,
+        and run <code>sudo systemctl restart snmpd</code>. Applies within a few seconds; no restart needed.
+      </div>
+    </div>
+  </div>
+
   <!-- GUI / Permissions -->
   <div class="card" style="margin-bottom:1rem">
     <div class="card-hd"><span><i class="bi bi-shield-check"></i> GUI &amp; Permissions</span></div>
@@ -2415,7 +2509,6 @@ code { font-size: .8rem; color: #94a3b8; }
 <!-- ── Toasts ── -->
 <div class="toast-stack" id="toast-stack"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/lib/codemirror.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.16/mode/javascript/javascript.js"></script>
@@ -2443,6 +2536,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
+  if (name === 'dashboard')    ovShow();
   if (name === 'config')       renderConfig();
   if (name === 'network')      loadNetwork();
   if (name === 'services')     loadServices();
@@ -2482,164 +2576,511 @@ function fmtUptime(seconds) {
   return `${m}m`;
 }
 
-// ── Charts ────────────────────────────────────────────────────────────────
-const MAX_PTS = 60;
-function makeChart(id, color) {
-  return new Chart(document.getElementById(id), {
-    type: 'line',
-    data: { labels: Array(MAX_PTS).fill(''), datasets: [{
-      data: Array(MAX_PTS).fill(null),
-      borderColor: color, backgroundColor: color+'1a',
-      borderWidth: 2, pointRadius: 0, fill: true, tension: 0.4
-    }]},
-    options: {
-      animation: false, responsive: true, maintainAspectRatio: false,
-      scales: {
-        x: { display: false },
-        y: { min:0, max:100, grid:{color:'#2a334855'},
-             ticks:{color:'#64748b', callback: v => v+'%'} }
-      },
-      plugins: { legend: { display: false } }
+// ══════════════════════════════════════════════════════════════════════════
+// OVERVIEW — this host (SSE, 1 s), LibreQoS queues (tc, while the page is
+// open), routers (the monitor's poll), subscribers and activity (/api/overview)
+// ══════════════════════════════════════════════════════════════════════════
+const OV_COLORS = { down: '#3987e5', up: '#d95926', cpu: '#199e70', mem: '#9085e9' };
+// Sequential blue for the dark surface: near zero sits close to the surface, the top is brightest
+const OV_RAMP = ['#104281', '#184f95', '#1c5cab', '#256abf', '#2a78d6', '#3987e5', '#5598e7', '#6da7ec', '#86b6ef'];
+const OV_POINTS = 180;              // 3 minutes of 1-second host samples
+const OV_AXIS = {
+  axisLine: { lineStyle: { color: '#30363d' } }, axisTick: { show: false },
+  axisLabel: { color: '#8b949e', fontSize: 10 }, splitLine: { lineStyle: { color: '#21262d' } },
+};
+const ov = {
+  host: null,                       // latest SSE sample
+  ifHist: {},                       // interface → { t, rx, tx } (ms, Mbps)
+  hostHist: { t: [], cpu: [], mem: [] },
+  queues: null,                     // latest /api/queues/live
+  summary: null,                    // latest /api/overview
+  src: '',                          // traffic source: '' auto, 'queues', or an interface
+  treePath: [],                     // treemap drill-down, names from the top
+  charts: {},
+  qTimer: null,
+};
+try { ov.src = localStorage.getItem('ovTrafficSrc') || ''; } catch (e) {}
+
+function ovActive() {
+  return document.getElementById('page-dashboard').classList.contains('active') && !document.hidden;
+}
+function ovRampColor(f) {
+  return OV_RAMP[Math.max(0, Math.min(OV_RAMP.length - 1, Math.round((+f || 0) * (OV_RAMP.length - 1))))];
+}
+function ovInk(f) {                  // text colour that reads on ovRampColor(f)
+  return Math.round(Math.max(0, Math.min(1, +f || 0)) * (OV_RAMP.length - 1)) >= 6 ? '#0d1117' : '#e6edf3';
+}
+function ovAxisBps(v) {
+  if (v >= 1e9) return +(v / 1e9).toFixed(1) + 'G';
+  if (v >= 1e6) return Math.round(v / 1e6) + 'M';
+  if (v >= 1e3) return Math.round(v / 1e3) + 'k';
+  return String(Math.round(v));
+}
+function ovPush(h, cap, ...pairs) {   // ovPush(hist, n, 'cpu', 12, 'mem', 40)
+  for (let i = 0; i < pairs.length; i += 2) {
+    h[pairs[i]].push(pairs[i + 1]);
+    if (h[pairs[i]].length > cap) h[pairs[i]].shift();
+  }
+}
+function ovChart(id) {
+  let c = ov.charts[id];
+  const el = document.getElementById(id);
+  if (!el || !el.clientWidth) return null;          // hidden: draw once it is shown
+  if (!c) c = ov.charts[id] = echarts.init(el, null, { renderer: 'canvas' });
+  return c;
+}
+function ovResize() { Object.values(ov.charts).forEach(c => c.resize()); }
+window.addEventListener('resize', () => { if (ovActive()) ovResize(); });
+
+function ovLineOption(series, fmt, axisFmt, yMax) {
+  return {
+    animation: false,
+    grid: { left: 46, right: 128, top: 10, bottom: 22 },
+    tooltip: {
+      trigger: 'axis', backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#c9d1d9', fontSize: 12 },
+      axisPointer: { type: 'line', lineStyle: { color: '#8b949e', width: 1 } }, valueFormatter: fmt,
+    },
+    xAxis: { type: 'time', ...OV_AXIS, splitLine: { show: false },
+             axisLabel: { ...OV_AXIS.axisLabel, hideOverlap: true, formatter: '{HH}:{mm}:{ss}' } },
+    yAxis: { type: 'value', min: 0, max: yMax, ...OV_AXIS, axisLabel: { ...OV_AXIS.axisLabel, formatter: axisFmt } },
+    series: series.map(s => ({
+      type: 'line', name: s.name, data: s.data, showSymbol: false, symbolSize: 8, sampling: 'lttb',
+      lineStyle: { width: 2, color: s.color }, itemStyle: { color: s.color },
+      areaStyle: { color: s.color, opacity: .07 },
+      endLabel: { show: true, color: '#c9d1d9', fontSize: 11, formatter: p => `${s.name} ${fmt(p.value[1])}` },
+      labelLayout: { moveOverlap: 'shiftY' },      // end labels of close lines do not overprint
+      emphasis: { disabled: true },
+    })),
+  };
+}
+function ovLegend(items) {
+  return items.map(([name, color]) => `<span><i style="background:${color}"></i>${esc(name)}</span>`).join('');
+}
+
+// ── Host (SSE) ────────────────────────────────────────────────────────────
+function startSSE() {
+  const es = new EventSource('/api/metrics/stream');
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    ov.host = d;
+    if (!d.error) {
+      const now = Date.now();
+      ovPush(ov.hostHist, OV_POINTS, 't', now, 'cpu', d.cpu_avg, 'mem', d.mem_percent);
+      for (const [iface, r] of Object.entries(d.net || {})) {
+        const h = ov.ifHist[iface] = ov.ifHist[iface] || { t: [], rx: [], tx: [] };
+        ovPush(h, OV_POINTS, 't', now, 'rx', r.rx_mbps, 'tx', r.tx_mbps);
+      }
     }
+    if (!ovActive()) return;
+    ovRenderHost();
+    ovRenderKpis();
+    ovRenderQueues();
+    if (!ov.queues || !ov.queues.available || ov.src && ov.src !== 'queues') ovRenderTraffic();
+  };
+}
+
+function ovRenderHost() {
+  const d = ov.host;
+  const badge = document.getElementById('ov-host-src');
+  const kv = document.getElementById('ov-host-kv');
+  if (!d) return;
+  if (d.error) {
+    badge.innerHTML = '<span class="dot dot-red"></span> no data';
+    kv.innerHTML = `<div class="ov-empty" style="grid-column:1/-1"><i class="bi bi-exclamation-triangle"></i> ${esc(d.error)}</div>`;
+    return;
+  }
+  const s = d.snmp;
+  if (s && s.ok) {
+    const from = Object.entries(d.sources || {}).filter(([, v]) => v === 'psutil').map(([k]) => k);
+    badge.innerHTML = `<span class="dot dot-green"></span> SNMP ${esc(s.target)}${from.length ? ' + psutil' : ''}`;
+    badge.title = from.length ? `snmpd does not show ${from.join(', ')}: read with psutil instead` : 'All values from snmpd';
+  } else if (s) {
+    badge.innerHTML = `<span class="dot dot-yellow"></span> psutil (SNMP: ${esc(s.error || 'no answer')})`;
+    badge.title = `snmpd at ${s.target} did not answer; retried every 30 s. Settings → Host monitoring.`;
+  } else {
+    badge.innerHTML = '<span class="dot dot-grey"></span> psutil';
+    badge.title = 'Host SNMP is off (Settings → Host monitoring)';
+  }
+
+  const c = ovChart('ov-host-chart');
+  if (c) {
+    const h = ov.hostHist;
+    c.setOption(ovLineOption([
+      { name: 'CPU', color: OV_COLORS.cpu, data: h.t.map((t, i) => [t, h.cpu[i]]) },
+      { name: 'Memory', color: OV_COLORS.mem, data: h.t.map((t, i) => [t, h.mem[i]]) },
+    ], v => v == null ? '—' : `${(+v).toFixed(1)}%`, v => v + '%', 100), true);
+  }
+
+  const cores = d.cpu_per || [];
+  const slow = d.sources && d.sources.cpu_per === 'snmp';
+  document.getElementById('ov-cores-note').textContent =
+    cores.length ? `· ${cores.length}${slow ? ' · 1-minute average from snmpd' : ' · live'}` : '· not available';
+  document.getElementById('ov-cores').innerHTML = cores.map((v, i) => {
+    const f = Math.min(1, v / 100);
+    return `<div class="ov-core" style="background:${ovRampColor(f)};color:${ovInk(f)}" title="core ${i}: ${v.toFixed(1)}%">
+      <span>${i}</span><b>${Math.round(v)}%</b></div>`;
+  }).join('');
+
+  const p = d.system || {};
+  const rows = [
+    ['Hostname', d.hostname || p.hostname], ['OS', p.os],
+    ['Kernel / arch', [p.kernel, p.arch].filter(Boolean).join(' / ')], ['CPU', p.cpu_model],
+    ['Cores / threads', p.cpu_cores_logical ? `${p.cpu_cores_physical || '?'} / ${p.cpu_cores_logical}` : ''],
+    ['Clock', p.cpu_clock_ghz ? `${(+p.cpu_clock_ghz).toFixed(2)} GHz` : ''],
+    ['Memory', d.mem_total ? `${fmtBytes(d.mem_used)} of ${fmtBytes(d.mem_total)}${p.ram_type && p.ram_type !== 'Unknown' ? ' · ' + p.ram_type : ''}` : ''],
+    ['Load average', (d.load || []).length ? d.load.map(x => (+x).toFixed(2)).join(' · ') : ''],
+    ['Uptime', d.uptime_seconds ? fmtUptime(d.uptime_seconds) : ''],
+  ];
+  kv.innerHTML = rows.filter(([, v]) => v).map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v" title="${esc(v)}">${esc(v)}</span>`).join('');
+}
+
+// ── KPI tiles ─────────────────────────────────────────────────────────────
+function ovSetKpi(id, value, sub, meterPct) {
+  document.getElementById(id).innerHTML = value;
+  const s = document.getElementById(id + '-s');
+  if (s) s.innerHTML = sub || '&nbsp;';
+  const m = document.getElementById(id + '-m');
+  if (m) m.style.width = `${Math.max(0, Math.min(100, meterPct || 0))}%`;
+}
+function ovBig(text) {               // "1.23 Gbps" → "1.23<small>Gbps</small>"
+  const m = /^([\d.,]+)\s*(.*)$/.exec(text || '');
+  return m ? `${m[1]}<small>${esc(m[2])}</small>` : esc(text || '—');
+}
+function ovRenderKpis() {
+  const q = ov.queues && ov.queues.available ? ov.queues : null;
+  const t = ovTrafficData();
+  if (t && t.down.length) {
+    const down = t.down[t.down.length - 1][1], up = t.up[t.up.length - 1][1];
+    const link = q && q.link || (ov.queues && ov.queues.link) || {};
+    const of = (v, mbps) => mbps ? ` · ${Math.round(v / (mbps * 1e6) * 100)}% of ${fmtBps(mbps * 1e6)}` : '';
+    ovSetKpi('kpi-down', ovBig(fmtBps(down)), esc(t.kind === 'queues' ? 'shaped by LibreQoS' : `${t.iface} RX`) + of(down, link.down_mbps),
+             link.down_mbps ? down / (link.down_mbps * 1e6) * 100 : 0);
+    ovSetKpi('kpi-up', ovBig(fmtBps(up)), esc(t.kind === 'queues' ? 'shaped by LibreQoS' : `${t.iface} TX`) + of(up, link.up_mbps),
+             link.up_mbps ? up / (link.up_mbps * 1e6) * 100 : 0);
+  }
+  if (q) {
+    const tt = q.totals;
+    ovSetKpi('kpi-subs', `${tt.active.toLocaleString()}<small>of ${tt.circuits.toLocaleString()}</small>`,
+             tt.saturated ? `<i class="bi bi-exclamation-circle" style="color:var(--yellow)"></i> ${tt.saturated} at ≥ 90% of plan`
+                          : 'moving > 100 kbps now');
+  } else if (ov.summary) {
+    ovSetKpi('kpi-subs', `${(ov.summary.shaped ?? ov.summary.devices).toLocaleString()}<small>shaped</small>`,
+             'live counts need LibreQoS queues');
+  }
+  const h = ov.host;
+  if (h && !h.error) {
+    const cores = h.cpu_per || [];
+    const hot = cores.length ? cores.reduce((b, v, i) => v > cores[b] ? i : b, 0) : -1;
+    ovSetKpi('kpi-cpu', `${(+h.cpu_avg).toFixed(1)}<small>%</small>`,
+             hot >= 0 ? `busiest core ${hot}: ${Math.round(cores[hot])}%` : '');
+    ovSetKpi('kpi-mem', `${(+h.mem_percent).toFixed(0)}<small>%</small>`,
+             h.mem_total ? `${fmtBytes(h.mem_used)} of ${fmtBytes(h.mem_total)}` : '');
+  }
+  const routers = monitorData && monitorData.routers || [];
+  if (routers.length) {
+    const up = routers.filter(r => r.ok).length;
+    const ppp = routers.reduce((n, r) => n + (r.ppp || 0), 0);
+    ovSetKpi('kpi-routers', `${up}<small>of ${routers.length} up</small>`,
+             `${ppp.toLocaleString()} PPP sessions`);
+  }
+}
+
+// ── Live traffic ──────────────────────────────────────────────────────────
+function ovTrafficData() {
+  const q = ov.queues;
+  if ((ov.src === '' || ov.src === 'queues') && q && q.available) {
+    const h = q.history;
+    return {
+      kind: 'queues', names: ['Download', 'Upload'],
+      down: h.t.map((t, i) => [t * 1000, h.down[i]]), up: h.t.map((t, i) => [t * 1000, h.up[i]]),
+      note: `Traffic through LibreQoS's queues, from tc every ${q.every} s: download on ${q.interfaces[0]}, upload on ${q.interfaces[1]}.`,
+    };
+  }
+  const known = Object.keys(ov.ifHist);
+  const iface = ov.src && ov.src !== 'queues' ? ov.src : (ov.host && ov.host.bridge_iface) || known[0];
+  const h = ov.ifHist[iface];
+  if (!h) return null;
+  const via = ov.host && ov.host.sources && ov.host.sources.net === 'snmp' ? 'snmpd' : 'psutil';
+  const why = ov.src === 'queues' || ov.src === '' ? ` LibreQoS queues: ${q ? q.error : 'loading…'}` : '';
+  return {
+    kind: 'iface', iface, names: ['RX', 'TX'],
+    down: h.t.map((t, i) => [t, h.rx[i] * 1e6]), up: h.t.map((t, i) => [t, h.tx[i] * 1e6]),
+    note: `${iface}: received (RX) and sent (TX), every second from ${via}.${why}`,
+  };
+}
+function ovSetTrafficSource(v) {
+  ov.src = v;
+  try { localStorage.setItem('ovTrafficSrc', v); } catch (e) {}
+  ovRenderTraffic();
+  ovRenderKpis();
+}
+function ovRenderTraffic() {
+  const sel = document.getElementById('ov-traffic-src');
+  const opts = [['', 'Auto'], ['queues', 'LibreQoS queues'], ...Object.keys(ov.ifHist).sort().map(n => [n, n])];
+  const key = opts.map(o => o[0]).join('|');
+  if (sel.dataset.key !== key) {
+    sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join('');
+    sel.dataset.key = key;
+  }
+  sel.value = opts.some(o => o[0] === ov.src) ? ov.src : '';
+  const t = ovTrafficData();
+  document.getElementById('ov-traffic-note').textContent = t ? t.note : 'Waiting for the first sample…';
+  if (!t) return;
+  document.getElementById('ov-traffic-legend').innerHTML = ovLegend([[t.names[0], OV_COLORS.down], [t.names[1], OV_COLORS.up]]);
+  const c = ovChart('ov-traffic');
+  if (c) c.setOption(ovLineOption([
+    { name: t.names[0], color: OV_COLORS.down, data: t.down },
+    { name: t.names[1], color: OV_COLORS.up, data: t.up },
+  ], fmtBps, ovAxisBps), true);
+}
+
+// ── CPU queues ────────────────────────────────────────────────────────────
+function ovRenderQueues() {
+  const box = document.getElementById('ov-queues');
+  const sub = document.getElementById('ov-queues-sub');
+  const q = ov.queues;
+  const cores = ov.host && ov.host.cpu_per || [];
+  if (!q || !q.available) {
+    sub.textContent = '';
+    box.innerHTML = `<div class="ov-empty"><i class="bi bi-info-circle"></i> ${esc(q ? q.error : 'Loading…')}</div>`;
+    return;
+  }
+  const max = Math.max(1, ...q.queues.map(x => Math.max(x.down_bps, x.up_bps)));
+  const loads = q.queues.map(x => x.down_bps);
+  const lo = Math.min(...loads), hi = Math.max(...loads);
+  sub.textContent = `${q.queues.length} queues${lo > 0 ? ` · busiest ${(hi / lo).toFixed(1)}× the quietest` : ''}`;
+  box.innerHTML = q.queues.map(x => {
+    const load = cores[x.core];
+    const hot = load != null && load >= 85;
+    const coreTxt = load == null ? `core ${x.core}` :
+      `${hot ? '<i class="bi bi-exclamation-triangle-fill" style="color:var(--yellow)"></i> ' : ''}core ${x.core} · ${Math.round(load)}%`;
+    const drops = x.drops_ps >= 0.05 ? ` · <span style="color:var(--yellow)">${x.drops_ps.toFixed(1)} drops/s</span>` : '';
+    return `<div class="ov-q" title="${esc(x.name)}: ${x.circuits} circuits, ${x.active} moving traffic">
+      <div class="nm"><b>${esc(x.name)}</b><span>${coreTxt}</span><span>${x.active} / ${x.circuits} active${drops}</span></div>
+      <div class="bars">
+        <div class="bar"><span style="width:${x.down_bps / max * 100}%;background:var(--s-down)"></span></div>
+        <div class="bar"><span style="width:${x.up_bps / max * 100}%;background:var(--s-up)"></span></div>
+      </div>
+      <div class="num"><span>↓ ${fmtBps(x.down_bps)}</span><span>↑ ${fmtBps(x.up_bps)}</span></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Queue map (treemap) ───────────────────────────────────────────────────
+function ovTreeAt(path) {
+  let nodes = ov.queues.tree;
+  for (const name of path) {
+    const n = (nodes || []).find(x => x.name === name);
+    if (!n || !n.children) return null;
+    nodes = n.children;
+  }
+  return nodes;
+}
+function ovTreeData(nodes, depth = 0) {
+  return nodes.map(n => {
+    if (n.kind === 'circuit') {
+      const f = Math.min(1, n.util || 0);
+      return { name: n.name, value: n.value, kind: n.kind, util: n.util, plan: n.plan,
+               itemStyle: { color: ovRampColor(f) }, label: { color: ovInk(f) } };
+    }
+    if (n.kind === 'others') return { name: n.name, value: n.value, kind: n.kind, itemStyle: { color: '#30363d' } };
+    return { name: n.name, value: n.value, kind: n.kind, itemStyle: { color: '#21262d' },
+             children: ovTreeData(n.children || [], depth + 1) };
   });
 }
-const cpuChart    = makeChart('cpu-chart','#3b82f6');
-const memChart    = makeChart('mem-chart','#06b6d4');
-const bridgeChart = new Chart(document.getElementById('bridge-chart'), {
-  type: 'line',
-  data: {
-    labels: Array(MAX_PTS).fill(''),
-    datasets: [
-      { label:'RX', data: Array(MAX_PTS).fill(null), borderColor:'#3b82f6', backgroundColor:'#3b82f611',
-        borderWidth:2, pointRadius:0, fill:true, tension:0.4 },
-      { label:'TX', data: Array(MAX_PTS).fill(null), borderColor:'#22c55e', backgroundColor:'#22c55e11',
-        borderWidth:2, pointRadius:0, fill:true, tension:0.4 },
-    ]
-  },
-  options: {
-    animation: false, responsive: true, maintainAspectRatio: false,
-    scales: {
-      x: { display: false },
-      y: { min: 0, grid: { color:'#2a334855' },
-           ticks: { color:'#64748b', callback: v => v >= 1000 ? (v/1000).toFixed(1)+'G' : v+'M' } }
+function ovTreeGo(i) { ov.treePath = ov.treePath.slice(0, i); ovRenderTree(); }
+function ovRenderTree() {
+  const crumbs = document.getElementById('ov-tree-crumbs');
+  const c = ovChart('ov-treemap');
+  if (!c) return;
+  if (!c.ovClick) {                 // open a CPU queue or node; the crumbs go back up
+    c.ovClick = true;
+    c.on('click', p => {
+      if (!p.data || !p.data.children || !p.data.children.length) return;
+      ov.treePath = ov.treePath.concat((p.treePathInfo || []).slice(1).map(x => x.name));
+      ovRenderTree();
+    });
+  }
+  const q = ov.queues;
+  if (!q || !q.available) { c.clear(); crumbs.innerHTML = ''; return; }
+  let nodes = ovTreeAt(ov.treePath);
+  if (!nodes) { ov.treePath = []; nodes = q.tree; }
+  crumbs.innerHTML = ['All queues', ...ov.treePath].map((n, i, all) => i === all.length - 1
+    ? `<b>${esc(n)}</b>` : `<a href="#" onclick="ovTreeGo(${i});return false">${esc(n)}</a>`).join(' <i class="bi bi-chevron-right"></i> ');
+  if (!nodes.length) {
+    c.clear();
+    c.setOption({ title: { text: 'No traffic right now', left: 'center', top: 'middle',
+                           textStyle: { color: '#8b949e', fontSize: 13, fontWeight: 400 } } });
+    return;
+  }
+  c.setOption({
+    tooltip: {
+      backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: '#c9d1d9', fontSize: 12 },
+      formatter: p => {
+        const d = p.data || {};
+        if (d.kind === 'circuit') {
+          return `<b>${esc(p.name)}</b><br>${fmtBps(p.value)} down${d.plan ? ` · ${Math.round(d.util * 100)}% of ${d.plan} Mbps` : ''}`;
+        }
+        return `<b>${esc(p.name)}</b><br>${fmtBps(p.value)} down${d.children ? ` · ${d.children.length} inside — click to open` : ''}`;
+      },
     },
-    plugins: { legend: { display: false } }
-  }
-});
-function pushPt(chart, v) {
-  chart.data.datasets[0].data.push(v);
-  if (chart.data.datasets[0].data.length > MAX_PTS) chart.data.datasets[0].data.shift();
-  chart.update('none');
-}
-const srcChart = new Chart(document.getElementById('src-chart'), {
-  type: 'doughnut',
-  data: {
-    labels: ['PPPoE','Hotspot','DHCP / IPoE','Address List'],
-    datasets: [{ data:[0,0,0,0], backgroundColor:['#3b82f6','#22c55e','#f59e0b','#8b5cf6'], borderWidth:0 }]
-  },
-  options: { responsive:true, maintainAspectRatio:false,
-    plugins: { legend:{ position:'right', labels:{color:'#94a3b8',boxWidth:12,font:{size:11}} } }
-  }
-});
-
-// ── CPU bars ──────────────────────────────────────────────────────────────
-let barEls = [];
-function buildBars(n) {
-  const wrap = document.getElementById('cpu-bars');
-  wrap.innerHTML = '';
-  const cols = Math.max(1, Math.ceil(n / 3));
-  wrap.style.gridTemplateColumns = `repeat(${cols}, minmax(24px, 1fr))`;
-  barEls = [];
-  for (let i=0;i<n;i++) {
-    const d = document.createElement('div');
-    d.className = 'cpu-bar-item';
-    d.innerHTML = `<div class="lbl">C${i}</div><div class="prog"><div class="fill" style="width:0%"></div></div>`;
-    wrap.appendChild(d);
-    barEls.push(d.querySelector('.fill'));
-  }
-  document.getElementById('cpu-cores-label').textContent = n + ' cores';
+    series: [{
+      type: 'treemap', data: ovTreeData(nodes), left: 0, right: 0, top: 0, bottom: 0,
+      roam: false, nodeClick: false, breadcrumb: { show: false }, animationDurationUpdate: 400,
+      visibleMin: 80,
+      itemStyle: { borderColor: '#161b22', borderWidth: 1, gapWidth: 2 },
+      upperLabel: { show: true, height: 18, color: '#c9d1d9', fontSize: 11,
+                    formatter: p => `${p.name}  ${fmtBps(p.value)}` },
+      label: { show: true, fontSize: 11, overflow: 'truncate', lineHeight: 14,
+               formatter: p => p.data.kind === 'circuit' ? `${p.name}\n${fmtBps(p.value)}` : p.name },
+      // levels[0] is the invisible root: no label strip for it
+      levels: [{ upperLabel: { show: false }, itemStyle: { gapWidth: 3 } }, { itemStyle: { gapWidth: 2 } },
+               { itemStyle: { gapWidth: 1 } }],
+    }],
+  }, true);
 }
 
-// ── Bridge / interface throughput ─────────────────────────────────────────
-let bridgeIface  = '';          // selected interface
-let bridgeIfaceList = [];       // known interfaces from SSE
-let bridgeIfaceLocked = false;
-
-function onBridgeIfaceChange() {
-  if (bridgeIfaceLocked) return;
-  bridgeIface = document.getElementById('bridge-iface-select').value;
-  // reset chart data when switching
-  bridgeChart.data.datasets.forEach(ds => ds.data = Array(MAX_PTS).fill(null));
-  bridgeChart.update('none');
-}
-
-function _updateBridgeSelect(netData, preferredIface='') {
-  const ifaces = Object.keys(netData).sort();
-  if (preferredIface && !ifaces.includes(preferredIface)) ifaces.unshift(preferredIface);
-  if (JSON.stringify(ifaces) === JSON.stringify(bridgeIfaceList)) return;
-  bridgeIfaceList = ifaces;
-  const sel  = document.getElementById('bridge-iface-select');
-  const target = preferredIface || bridgeIface || sel.value || ifaces[0] || '';
-  sel.innerHTML = ifaces.map(n => `<option value="${n}" ${n===target?'selected':''}>${n}</option>`).join('');
-  bridgeIface = target;
-  sel.value   = bridgeIface;
-  bridgeIfaceLocked = !!preferredIface;
-  sel.disabled = bridgeIfaceLocked;
-}
-
-function fmtMbps(v) {
-  return v >= 1000 ? (v/1000).toFixed(2)+' Gbps' : v.toFixed(1)+' Mbps';
-}
-
-// ── SSE ───────────────────────────────────────────────────────────────────
-function startSSE() {
-const es = new EventSource('/api/metrics/stream');
-es.onmessage = e => {
-  const d = JSON.parse(e.data);
-  if (d.error) return;
-
-  if (d.system) {
-    document.getElementById('sys-hostname').textContent = d.system.hostname || 'Unknown';
-    document.getElementById('sys-os').textContent = d.system.os || 'Unknown';
-    const kernel = d.system.kernel || 'Unknown';
-    const arch = d.system.arch || 'Unknown';
-    document.getElementById('sys-kernel-arch').textContent = `${kernel} / ${arch}`;
-    document.getElementById('sys-cpu-model').textContent = d.system.cpu_model || 'Unknown';
-    const p = Number(d.system.cpu_cores_physical || 0);
-    const l = Number(d.system.cpu_cores_logical || 0);
-    document.getElementById('sys-cpu-cores').textContent = p > 0 || l > 0 ? `${p || '?'} / ${l || '?'}` : 'Unknown';
-    const ghz = Number(d.system.cpu_clock_ghz || 0);
-    document.getElementById('sys-cpu-clock').textContent = ghz > 0 ? `${ghz.toFixed(2)} GHz` : 'Unknown';
-    const ramTotal = Number(d.system.ram_total || 0);
-    document.getElementById('sys-ram-total').textContent = ramTotal > 0 ? fmtBytes(ramTotal) : 'Unknown';
+// ── Busiest subscribers ───────────────────────────────────────────────────
+function ovRenderTop() {
+  const body = document.getElementById('ov-top');
+  const q = ov.queues;
+  if (!q || !q.available) {
+    body.innerHTML = `<tr><td colspan="7" class="ov-empty">${esc(q ? q.error : 'Loading…')}</td></tr>`;
+    document.getElementById('ov-top-sub').textContent = '';
+    return;
   }
-  document.getElementById('sys-uptime').textContent = fmtUptime(d.uptime_seconds || 0);
+  const names = Object.fromEntries(q.queues.map(x => [x.major, x.name]));
+  document.getElementById('ov-top-sub').textContent = q.mapping ? `named from ${q.mapping}` : 'class ids only: LibreQoS state files not found';
+  const rows = q.top.slice(0, 15);
+  body.innerHTML = rows.length ? rows.map(c => {
+    const pct = Math.round((c.util || 0) * 100);
+    const plan = c.plan_down
+      ? `<span class="ov-util"><span class="mbar ${pct >= 90 ? 'warn' : ''}"><span style="width:${Math.min(100, pct)}%"></span></span>
+         ${pct >= 90 ? '<i class="bi bi-exclamation-circle" style="color:var(--yellow)"></i>' : ''}${pct}% of ${c.plan_down} Mbps</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    return `<tr>
+      <td class="ov-name" title="${esc(c.id)}">${esc(c.name)}</td>
+      <td style="color:var(--muted)">${esc(c.parent || '—')}</td>
+      <td>${esc(names[c.queue] || '')}</td>
+      <td class="r">${fmtBps(c.down_bps)}</td><td>${plan}</td>
+      <td class="r">${fmtBps(c.up_bps)}</td>
+      <td class="r">${c.drops_ps >= 0.05 ? c.drops_ps.toFixed(1) : '<span style="color:var(--muted)">0</span>'}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" class="ov-empty">No subscriber is moving traffic right now.</td></tr>';
+}
 
-  pushPt(cpuChart, d.cpu_avg);
-  document.getElementById('stat-cpu').textContent = d.cpu_avg.toFixed(1)+'%';
-  if (barEls.length !== d.cpu_per.length) buildBars(d.cpu_per.length);
-  d.cpu_per.forEach((v,i) => { if(barEls[i]) barEls[i].style.width = v+'%'; });
-  pushPt(memChart, d.mem_percent);
-  document.getElementById('stat-mem').textContent = fmtBytes(d.mem_used);
-  document.getElementById('mem-used-label').textContent  = fmtBytes(d.mem_used);
-  document.getElementById('mem-free-label').textContent  = fmtBytes(d.mem_total - d.mem_used);
-  document.getElementById('mem-total-label').textContent = fmtBytes(d.mem_total);
+// Polls only while the Overview is shown: the server samples tc only while asked.
+async function ovPollQueues() {
+  if (ov.qBusy) return;             // a request is out; it schedules the next one
+  clearTimeout(ov.qTimer);
+  if (!ovActive()) return;          // ovShow / visibilitychange start it again
+  ov.qBusy = true;
+  let wait = 2000;
+  try {
+    const d = await apiJson('/api/queues/live');
+    ov.queues = d;
+    wait = Math.max(2000, (d.every || 2) * 1000);
+    ovRenderQueues();
+    ovRenderTraffic();
+    ovRenderTree();
+    ovRenderTop();
+    ovRenderKpis();
+  } catch (e) { /* offline: keep the last view */ }
+  ov.qBusy = false;
+  ov.qTimer = setTimeout(ovPollQueues, wait);
+}
 
-  // Bridge throughput
-  if (d.net && Object.keys(d.net).length) {
-    _updateBridgeSelect(d.net, d.bridge_iface || '');
-    const stats = d.net[bridgeIface];
-    if (stats) {
-      bridgeChart.data.datasets[0].data.push(stats.rx_mbps);
-      bridgeChart.data.datasets[1].data.push(stats.tx_mbps);
-      bridgeChart.data.datasets.forEach(ds => { if (ds.data.length > MAX_PTS) ds.data.shift(); });
-      bridgeChart.update('none');
-      document.getElementById('bridge-rx-val').textContent = fmtMbps(stats.rx_mbps);
-      document.getElementById('bridge-tx-val').textContent = fmtMbps(stats.tx_mbps);
-    }
-  }
-};
-} // end startSSE
+// ── Routers ───────────────────────────────────────────────────────────────
+function ovRenderRouters() {
+  const box = document.getElementById('ov-routers');
+  const routers = monitorData && monitorData.routers || [];
+  if (!monitorData) return;
+  if (!routers.length) { box.innerHTML = '<div class="ov-empty">No routers configured — Routers tab.</div>'; return; }
+  const up = routers.filter(r => r.ok).length;
+  document.getElementById('ov-routers-sub').textContent = `${up} of ${routers.length} up`;
+  box.innerHTML = routers.map(r => {
+    const bar = (label, v) => v == null ? '' :
+      `<div class="ov-r"><span>${label}</span>${mbar(v)}<b>${Math.round(v)}%</b></div>`;
+    const ifaces = Object.entries(r.ifaces || {}).filter(([, c]) => c.rx_bps != null)
+      .sort((a, b) => (b[1].rx_bps + b[1].tx_bps) - (a[1].rx_bps + a[1].tx_bps));
+    const busiest = ifaces.length ? `<div class="ov-r if" title="busiest graphed interface, last minute: ${esc(ifaces[0][0])}">
+      <span>${esc(ifaces[0][0])}</span>
+      <b class="mono">RX ${ovAxisBps(ifaces[0][1].rx_bps)} · TX ${ovAxisBps(ifaces[0][1].tx_bps)}</b></div>` : '';
+    const extra = [r.temp != null ? `${(+r.temp).toFixed(0)} °C` : '', r.uptime ? `up ${esc(r.uptime)}` : '']
+      .filter(Boolean).join(' · ');
+    return `<div class="ov-router ${r.ok === false ? 'down' : ''}">
+      <div class="hd"><span class="dot ${r.ok ? 'dot-green' : r.ok === false ? 'dot-red' : 'dot-grey'}"></span>
+        <b title="${esc(r.address || '')}">${esc(r.name)}</b>
+        <span class="via">${esc((r.via || (r.ok == null ? '' : 'api')).toUpperCase())}</span></div>
+      ${r.ok === false ? `<div class="err" title="${esc(r.error || '')}">${esc(r.error || 'unreachable')}</div>` : `
+      ${bar('CPU', r.cpu)}${bar('RAM', r.mem)}
+      ${r.ppp != null ? `<div class="ov-r"><span>PPP</span><b>${Number(r.ppp).toLocaleString()} sessions</b></div>` : ''}
+      ${busiest}
+      ${extra ? `<div class="ov-r muted"><span>${extra}</span></div>` : ''}`}
+    </div>`;
+  }).join('');
+}
+
+// ── Subscribers & activity (/api/overview) ────────────────────────────────
+function ovBars(rows, total) {
+  const max = Math.max(1, ...rows.map(r => r[1]));
+  return rows.map(([label, n, extra]) => `<div class="ov-hbar"><span class="l" title="${esc(label)}">${esc(label)}</span>
+    <span class="b"><span style="width:${n / max * 100}%"></span></span>
+    <span class="n">${n.toLocaleString()}${total ? ` <i>${Math.round(n / total * 100)}%</i>` : ''}${extra || ''}</span></div>`).join('');
+}
+const OV_SOURCES = { pppoe: 'PPPoE', hotspot: 'Hotspot', dhcp: 'DHCP / IPoE', address_list: 'Address list' };
+function ovRenderSummary() {
+  const s = ov.summary;
+  if (!s) return;
+  const sources = Object.entries(s.sources).sort((a, b) => b[1] - a[1]).map(([k, n]) => [OV_SOURCES[k] || k, n]);
+  if (s.static) sources.push(['Static (manual)', s.static]);
+  document.getElementById('ov-subs-sub').textContent =
+    `${s.devices.toLocaleString()} devices${s.shaped != null ? ` · ${s.shaped.toLocaleString()} in ShapedDevices.csv` : ''}`;
+  document.getElementById('ov-subs').innerHTML = s.devices ? `
+    <div class="ov-label">By source</div>${ovBars(sources, s.devices)}
+    <div class="ov-label">By router</div>${ovBars(s.routers.slice(0, 8).map(r => [r.name, r.devices]), s.devices)}
+    <div class="ov-label">Most common plans <span>· Σ plans ↓ ${fmtBps(s.plan_dl * 1e6)} · ↑ ${fmtBps(s.plan_ul * 1e6)}</span></div>
+    ${ovBars(s.plans.map(p => [`${p.dl} / ${p.ul} Mbps`, p.devices]), s.devices)}`
+    : '<div class="ov-empty">No devices yet — the sync service adds them after its first router scan.</div>';
+
+  const now = Date.now() / 1000;
+  const syncs = s.syncs.map(j => `<li><span class="dot ${j.status === 'ok' ? 'dot-green' : j.status === 'running' ? 'dot-yellow' : 'dot-red'}"></span>
+      <span class="t">${esc(j.name)}</span><span class="m">${j.last_run ? fmtAgo(j.last_run, now) : 'never'} · ${fmtDur(j.took)}</span>
+      ${j.status !== 'ok' && j.last_error ? `<span class="e" title="${esc(j.last_error)}">${esc(j.last_error)}</span>` : ''}</li>`).join('');
+  const events = s.events.map(e => `<li><i class="bi ${e.event === 'up' ? 'bi-arrow-up-circle-fill' : 'bi-arrow-down-circle'}"
+        style="color:${e.event === 'up' ? 'var(--green)' : 'var(--muted)'}" title="PPP ${esc(e.event)}"></i>
+      <span class="t">${esc(e.user || '?')}</span><span class="m">${esc(e.event)} on ${esc(e.router)}${e.ip ? ' · ' + esc(e.ip) : ''} · ${fmtAgo(e.received_at, now)}</span>
+      ${e.processed_at ? '' : '<span class="m" style="color:var(--yellow)">waiting</span>'}</li>`).join('');
+  const files = s.files || {};
+  document.getElementById('ov-activity-sub').textContent = files.shaped_devices
+    ? `LibreQoS files written ${fmtAgo(Math.max(files.shaped_devices || 0, files.network_json || 0), now)}` : '';
+  document.getElementById('ov-activity').innerHTML = `
+    <div class="ov-label">Sync jobs</div><ul class="ov-feed">${syncs || '<li class="ov-empty">No sync has run yet.</li>'}</ul>
+    <div class="ov-label">PPP events from the routers' webhook</div>
+    <ul class="ov-feed">${events || '<li class="ov-empty">None received — set up the webhook on the Routers tab for instant adds and removals.</li>'}</ul>`;
+}
+async function ovLoadSummary() {
+  try {
+    ov.summary = await apiJson('/api/overview');
+    ovRenderSummary();
+    ovRenderKpis();
+  } catch (e) { /* keep the last view */ }
+}
+
+// Called when the Overview tab is shown
+function ovShow() {
+  requestAnimationFrame(() => {
+    ovResize();
+    ovRenderHost();
+    ovRenderTraffic();
+    ovRenderTree();
+    ovRenderRouters();
+    ovRenderKpis();
+  });
+  ovLoadSummary();
+  ovPollQueues();
+}
+document.addEventListener('visibilitychange', () => { if (ovActive()) ovPollQueues(); });
 
 // ── Service ───────────────────────────────────────────────────────────────
 async function checkService() {
@@ -2715,23 +3156,6 @@ async function loadDevices() {
   allDevices = d.rows;
   document.getElementById('devices-count').textContent = d.count;
   document.getElementById('tab-badge-devices').textContent = d.count;
-  document.getElementById('stat-devices').textContent  = d.count;
-  const counts = {pppoe:0,hotspot:0,dhcp:0,address_list:0};
-  allDevices.forEach(r => { if(counts[r.source]!==undefined) counts[r.source]++; });
-  srcChart.data.datasets[0].data = [counts.pppoe,counts.hotspot,counts.dhcp,counts.address_list];
-  srcChart.update();
-  const top = [...allDevices].sort((a,b)=>b.download_max_mbps-a.download_max_mbps).slice(0,10);
-  const topWanLookup = {};
-  topoWanStats.forEach(w => {
-    topWanLookup[`${w.core_name||''}|${w.wan_name||''}`] = { dl: w.dl_limit||0, ul: w.ul_limit||0 };
-  });
-  document.getElementById('top-bw-body').innerHTML = top.map(r=>`
-    <tr>
-      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis">${esc(r.code)}</td>
-      <td><span class="src-badge badge-${esc(r.source)}">${esc(r.source)}</span></td>
-      <td style="text-align:right">${_fmtPctOfWan(r, topWanLookup, 'dl')}</td>
-      <td style="text-align:right">${_fmtPctOfWan(r, topWanLookup, 'ul')}</td>
-    </tr>`).join('');
   filterDevices();
 }
 let shownDevices = [];   // rows currently rendered; row buttons refer to them by index
@@ -2897,7 +3321,6 @@ async function loadConfig() {
   configData = d.content;
   _routerNamesAtLoad = new WeakMap((configData.bras || []).map(r => [r, r.name]));
   document.getElementById('config-path').textContent = d.path;
-  document.getElementById('stat-routers').textContent = (d.content.bras||[]).length;
   configCM.setValue(JSON.stringify(d.content, null, 4));
 }
 
@@ -3561,7 +3984,6 @@ async function saveConfig() {
   });
   const d = await r.json();
   if (!d.ok) { toast(d.error, false); return; }
-  document.getElementById('stat-routers').textContent = (configData.bras||[]).length;
   toast('Settings saved — restarting updatecsv…', true);
   const rs = await fetch('/api/services/updatecsv/restart', {method:'POST'});
   const ds = await rs.json();
@@ -5761,7 +6183,36 @@ async function loadAppSettings() {
   g('set-burst-max',       s.burst?.max_mb                     ?? 256);
   g('set-burst-pause',     s.burst?.pause_above_pct            ?? 80);
   g('set-burst-resume',    s.burst?.resume_below_pct           ?? 60);
+  g('set-hsnmp-enabled',   s.host_snmp?.enabled                ?? true);
+  g('set-hsnmp-address',   s.host_snmp?.address                ?? '127.0.0.1');
+  g('set-hsnmp-port',      s.host_snmp?.port                   ?? 161);
+  g('set-hsnmp-community', s.host_snmp?.community              ?? 'public');
   renderBurstStatus(monitorData && monitorData.burst);
+}
+
+async function testHostSnmp() {
+  const el = document.getElementById('hsnmp-result');
+  const v = id => document.getElementById(id).value.trim();
+  el.innerHTML = '<span style="color:var(--muted)"><i class="bi bi-hourglass-split"></i> Asking snmpd…</span>';
+  try {
+    const d = await apiJson('/api/host-snmp/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: v('set-hsnmp-address'), port: v('set-hsnmp-port'), community: v('set-hsnmp-community') }),
+    });
+    if (!d.answered) {
+      el.innerHTML = `<span style="color:#ff7b72"><i class="bi bi-x-octagon-fill"></i> ${esc(d.error || 'no answer')}</span>
+        <span style="color:var(--muted)"> — is snmpd installed and running, and the community right?</span>`;
+      return;
+    }
+    const labels = { cpu: 'CPU', cores: 'per-core load', memory: 'memory', load: 'load average', uptime: 'uptime', interfaces: 'interfaces' };
+    const got = Object.keys(labels).filter(k => d.shown[k]).map(k => labels[k]);
+    el.innerHTML = `<span style="color:var(--green)"><i class="bi bi-check-circle-fill"></i> ${esc(d.hostname || 'snmpd')} answers:</span> ${esc(got.join(', ') || 'nothing useful')}`
+      + (d.interfaces.length ? `<span style="color:var(--muted)"> · interfaces ${esc(d.interfaces.join(', '))}</span>` : '')
+      + (d.missing.length ? `<br><span style="color:var(--yellow)"><i class="bi bi-exclamation-triangle"></i> Not shown: ${esc(d.missing.map(k => labels[k]).join(', '))}
+          — its view hides them (see the snmpd.conf lines below); psutil fills them in.</span>` : '');
+  } catch (e) {
+    el.innerHTML = `<span style="color:#ff7b72">${esc(e.message)}</span>`;
+  }
 }
 
 async function saveAppSettings() {
@@ -5832,6 +6283,12 @@ async function saveAppSettings() {
     max_mb:           Math.max(num('set-burst-max', 256), 1),
     pause_above_pct:  num('set-burst-pause', 80),
     resume_below_pct: num('set-burst-resume', 60),
+  });
+  Object.assign(sec('host_snmp'), {
+    enabled:   chk('set-hsnmp-enabled'),
+    address:   (el('set-hsnmp-address')?.value ?? '').trim() || '127.0.0.1',
+    port:      Math.min(Math.max(int_('set-hsnmp-port', 161), 1), 65535),
+    community: (el('set-hsnmp-community')?.value ?? '').trim() || 'public',
   });
   if (s.burst.resume_below_pct >= s.burst.pause_above_pct) {
     toast('Burst: "resume below" must be lower than "pause above"', false);
@@ -5909,6 +6366,7 @@ async function loadMonitor() {
     badge.classList.toggle('err', bad > 0);
     badge.title = bad ? `${bad} job(s) failing or late` : `${d.jobs.length} jobs`;
     if (document.getElementById('page-pollers').classList.contains('active')) renderPollers(d);
+    if (ovActive()) { ovRenderRouters(); ovRenderKpis(); }
   } catch (e) { /* offline: keep the last view */ }
 }
 
@@ -6930,9 +7388,11 @@ function initApp() {
   }, 15000);
   setInterval(loadMikrotikResource, 15000);
   setInterval(loadWanStats, 60000);
+  setInterval(() => { if (ovActive()) ovLoadSummary(); }, 15000);
   checkService();
   setInterval(checkService, 10000);
   startSSE();
+  if (ovActive()) ovShow();
 }
 
 checkAuth();

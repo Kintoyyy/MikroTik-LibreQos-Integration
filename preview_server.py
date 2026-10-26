@@ -5,8 +5,11 @@ Dummy preview server: the real LQ-Sync GUI against fake data.
 Runs gui.py's Flask app with a sandbox state directory (.preview/), a fake
 lqos.conf and sysfs (two 8-queue NICs, 8 CPUs of which 2 are E-cores, so
 LibreQoS would use 6 queues), about 1500 seeded subscribers on five fake
-BRAS routers and simulated systemd services. No MikroTik, LibreQoS or root
-is needed, and nothing outside .preview/ is written.
+BRAS routers and simulated systemd services. The Overview's live queues come
+from a simulated LibreQoS (tc output and queuingStructure.json laid out from
+the generated network.json), and this host's SNMP from a fake snmpd. No
+MikroTik, LibreQoS or root is needed, and nothing outside .preview/ is
+written.
 
     python3 preview_server.py [--reset] [--port 5050] [--devices 1500]
 
@@ -648,6 +651,259 @@ class FakeCounters:
         return {f: int(v) for f, v in zip(self.FIELDS, values)}
 
 
+# ── Fake LibreQoS queues (tc) and this host's snmpd ─────────────────────────
+
+PREVIEW_QUEUES = 6        # what LibreQoS would use here: 8 queues per NIC, 8 CPUs minus 2 E-cores
+LINK_BPS = 10e9           # the seeded lqos.conf's downlink_bandwidth_mbps
+
+
+class FakeShaper:
+    """
+    LibreQoS's queues as tc shows them, laid out from the sandbox's
+    network.json and ShapedDevices.csv the way LibreQoS.py does it (top-level
+    nodes round-robin onto CPU queues, an HTB class per node and circuit with
+    a cake leaf), with traffic that follows each plan. Also writes the
+    queuingStructure.json LibreQoS keeps, which names the classes.
+    """
+    def __init__(self, libreqos, down_if="ens16", up_if="ens17", queues=PREVIEW_QUEUES):
+        self.dir, self.down_if, self.up_if, self.queues = libreqos, down_if, up_if, queues
+        self.lock = threading.Lock()
+        self.key = None
+        self.circuits = []            # [{id, name, parent, dl, ul, major, minor, parent_minor, qdisc, p}]
+        self.nodes = {}               # (major, minor) → (parent minor, name, rate Mbps)
+        self.bytes = collections.defaultdict(float)      # (direction, circuit id) → bytes sent
+        self.dropped = collections.defaultdict(float)
+        self.rates = {}               # circuit id → (down bps, up bps) at the last advance
+        self.at = None
+
+    def _files(self):
+        return os.path.join(self.dir, "network.json"), os.path.join(self.dir, "ShapedDevices.csv")
+
+    def _layout(self):
+        import csv
+        net_path, csv_path = self._files()
+        try:
+            with open(net_path) as f:
+                network = json.load(f)
+        except (OSError, ValueError):
+            network = {}
+        circuits = {}
+        try:
+            with open(csv_path, newline="") as f:
+                for row in csv.DictReader(f):
+                    cid = row.get("Circuit ID") or ""
+                    if cid and cid not in circuits:
+                        circuits[cid] = {"id": cid, "name": row.get("Circuit Name") or cid,
+                                         "parent": row.get("Parent Node") or "",
+                                         "dl": float(row.get("Download Max Mbps") or 0),
+                                         "ul": float(row.get("Upload Max Mbps") or 0)}
+        except OSError:
+            pass
+
+        known, stack = set(), [network]
+        while stack:
+            for name, node in stack.pop().items():
+                known.add(name)
+                stack.append(node.get("children") or {})
+        top, by_parent = dict(network), collections.defaultdict(list)
+        for i, c in enumerate(sorted(circuits.values(), key=lambda c: c["id"])):
+            if c["parent"] not in known:              # LibreQoS's generated parent nodes
+                c["parent"] = f"Generated_PN_{i % self.queues + 1}"
+                top.setdefault(c["parent"], {"downloadBandwidthMbps": 3000, "uploadBandwidthMbps": 3000})
+            by_parent[c["parent"]].append(c)
+
+        self.circuits, self.nodes, minors = [], {}, {}
+
+        def place(name, node, major, parent_minor):
+            minor = minors[major] = minors.get(major, 2) + 1
+            cid = f"0x{major:x}:0x{minor:x}"
+            self.nodes[(major, minor)] = (parent_minor, name, node.get("downloadBandwidthMbps") or 10000)
+            entry = {"classid": cid, "up_classid": cid, "classMajor": hex(major), "classMinor": hex(minor),
+                     "cpuNum": hex(major - 1), "parentClassID": f"0x{major:x}:0x{parent_minor:x}",
+                     "downloadBandwidthMbps": node.get("downloadBandwidthMbps"),
+                     "uploadBandwidthMbps": node.get("uploadBandwidthMbps"), "children": {}, "circuits": []}
+            for child in sorted(node.get("children") or {}):
+                entry["children"][child] = place(child, node["children"][child], major, minor)
+            for c in by_parent.get(name, []):
+                cm = minors[major] = minors[major] + 1
+                c.update(major=major, minor=cm, parent_minor=minor, qdisc=0x8000 + len(self.circuits),
+                         p=zlib.crc32(c["id"].encode()) % 1000 / 1000)
+                self.circuits.append(c)
+                entry["circuits"].append({"circuitID": c["id"], "circuitName": c["name"], "ParentNode": name,
+                                          "classid": f"0x{major:x}:0x{cm:x}", "up_classid": f"0x{major:x}:0x{cm:x}",
+                                          "maxDownload": c["dl"], "maxUpload": c["ul"]})
+            return entry
+
+        structure = {name: place(name, top[name], i % self.queues + 1, 1) for i, name in enumerate(sorted(top))}
+        tmp = os.path.join(self.dir, "queuingStructure.json.tmp")
+        with open(tmp, "w") as f:
+            json.dump({"Network": structure}, f)
+        os.replace(tmp, os.path.join(self.dir, "queuingStructure.json"))
+
+    @staticmethod
+    def activity(c, t):
+        """Share of its plan circuit c uses at time t: most are light or idle, a few run flat out."""
+        p = c["p"]
+        if p < 0.04:
+            return 0.93 + 0.07 * math.sin(t / 5 + p * 50)
+        wave = (0.5 + 0.5 * math.sin(t / (40 + 80 * p) + p * 20)) * (0.5 + 0.5 * math.sin(t / (6 + 9 * p) + p * 7))
+        return min(1.0, wave ** 2 * _busy(t) * (0.04 if p > 0.6 else 1.0))
+
+    def advance(self, t=None):
+        """Bring the byte counters up to time t (the files are re-read when the sync rewrote them)."""
+        t = t or time.time()
+        with self.lock:
+            key = []
+            for path in self._files():
+                try:
+                    key.append(os.stat(path).st_mtime)
+                except OSError:
+                    key.append(None)
+            if key != self.key:
+                self._layout()
+                self.key = key
+            dt = 0.0 if self.at is None else max(0.0, t - self.at)
+            self.at = t
+            # The link is 10 Gbps: light users are scaled down to fit; the few flat-out ones are left alone.
+            acts = [self.activity(c, t) for c in self.circuits]
+            heavy = sum(c["dl"] * 1e6 * a for c, a in zip(self.circuits, acts) if c["p"] < 0.04)
+            light = sum(c["dl"] * 1e6 * a for c, a in zip(self.circuits, acts) if c["p"] >= 0.04)
+            room = LINK_BPS * (0.45 + 0.35 * _busy(t)) - heavy
+            scale = min(1.0, max(0.0, room) / light) if light else 1.0
+            for c, a in zip(self.circuits, acts):
+                a = a if c["p"] < 0.04 else a * scale
+                down, up = c["dl"] * 1e6 * a, c["ul"] * 1e6 * a * 0.35
+                self.rates[c["id"]] = (down, up)
+                self.bytes[("down", c["id"])] += down / 8 * dt
+                self.bytes[("up", c["id"])] += up / 8 * dt
+                if a > 0.9:
+                    self.dropped[c["id"]] += (a - 0.9) * 120 * dt
+            return t
+
+    def queue_bps(self):
+        """Download bits/s per CPU queue (index = queue) at the last advance."""
+        out = [0.0] * self.queues
+        with self.lock:
+            for c in self.circuits:
+                out[c["major"] - 1] += self.rates.get(c["id"], (0, 0))[0]
+        return out
+
+    def totals(self):
+        """Bytes sent so far: (download, upload)."""
+        with self.lock:
+            return (sum(self.bytes[("down", c["id"])] for c in self.circuits),
+                    sum(self.bytes[("up", c["id"])] for c in self.circuits))
+
+    def tc(self, args):
+        """Stand-in for run_tc: `-s class show dev X` and `-s qdisc show dev X`."""
+        dev = args[-1]
+        if dev not in (self.down_if, self.up_if):
+            raise RuntimeError(f'tc {" ".join(args)}: Cannot find device "{dev}"')
+        self.advance()
+        direction = "down" if dev == self.down_if else "up"
+        with self.lock:
+            sent = collections.defaultdict(float)
+            for c in self.circuits:
+                b = self.bytes[(direction, c["id"])]
+                sent[(c["major"], c["minor"])] += b
+                node = (c["major"], c["parent_minor"])
+                while node in self.nodes:
+                    sent[node] += b
+                    node = (node[0], self.nodes[node][0])
+                sent[(c["major"], 1)] += b
+            stats = lambda b, d=0: (f" Sent {int(b)} bytes {int(b // 1100)} pkt (dropped {int(d)}, overlimits 0 requeues 0) \n"
+                                    " backlog 0b 0p requeues 0\n")
+            out = []
+            if args[1] == "class":
+                for q in range(1, self.queues + 1):
+                    out.append(f"class htb {q:x}:1 root rate 10Gbit ceil 10Gbit burst 1600b cburst 1600b \n"
+                               + stats(sent[(q, 1)]))
+                    out.append(f"class htb {q:x}:2 parent {q:x}:1 prio 3 rate 10Mbit ceil 10Gbit burst 1600b cburst 1600b \n"
+                               + stats(0))
+                for (major, minor), (parent, _, rate) in sorted(self.nodes.items()):
+                    out.append(f"class htb {major:x}:{minor:x} parent {major:x}:{parent:x} prio 3 rate {int(rate)}Mbit "
+                               f"ceil {int(rate)}Mbit burst 1600b cburst 1600b \n" + stats(sent[(major, minor)]))
+                for c in self.circuits:
+                    rate = c["dl"] if direction == "down" else c["ul"]
+                    out.append(f"class htb {c['major']:x}:{c['minor']:x} parent {c['major']:x}:{c['parent_minor']:x} "
+                               f"leaf {c['qdisc']:x}: prio 0 rate {max(1, int(rate * .8))}Mbit ceil {int(rate * 1.15)}Mbit "
+                               "burst 1600b cburst 1600b \n" + stats(sent[(c["major"], c["minor"])]))
+            else:
+                out.append("qdisc mq 7fff: root \n" + stats(sent[(1, 1)]))
+                for q in range(1, self.queues + 1):
+                    out.append(f"qdisc htb {q:x}: parent 7fff:{q:x} r2q 10 default 0x2 direct_packets_stat 0 "
+                               "direct_qlen 1000\n" + stats(sent[(q, 1)]))
+                for c in self.circuits:
+                    out.append(f"qdisc cake {c['qdisc']:x}: parent {c['major']:x}:{c['minor']:x} bandwidth unlimited "
+                               "diffserv4 triple-isolate nonat nowash no-ack-filter split-gso rtt 100ms raw overhead 0 \n"
+                               + stats(sent[(c["major"], c["minor"])], self.dropped[c["id"]] if direction == "down" else 0))
+            return "".join(out)
+
+
+class FakeHost:
+    """
+    The MIB this host's snmpd (net-snmp) would answer with: UCD raw CPU
+    ticks and memory, HOST-RESOURCES per-core load and uptime, IF-MIB
+    counters of the shaping interfaces. The cores LibreQoS shapes on follow
+    their queue's traffic.
+    """
+    CORES = 8
+    IFACES = [(1, "lo"), (2, "ens16"), (3, "ens17"), (4, "ens18")]
+
+    def __init__(self, shaper):
+        self.shaper = shaper
+        self.ticks = dict.fromkeys(("user", "nice", "system", "idle", "wait", "interrupt", "softirq", "steal"), 0.0)
+        self.at = time.time()
+        self.boot = self.at - (9 * 86400 + 5 * 3600)
+        self.lock = threading.Lock()
+
+    def loads(self, t):
+        queues = self.shaper.queue_bps()
+        out = []
+        for core in range(self.CORES):
+            idle = 0.03 + 0.02 * math.sin(t / 13 + core)
+            bps = queues[core] if core < len(queues) else 0.0
+            out.append(min(0.98, idle + bps / 3e9 * 0.85))       # a core shapes about 3 Gbps
+        return out
+
+    def mib(self):
+        import snmp
+        with self.lock:
+            t = self.shaper.advance()
+            loads = self.loads(t)
+            dt, self.at = max(0.0, t - self.at), t
+            for load in loads:
+                busy, rest = load * 100 * dt, (1 - load) * 100 * dt
+                for k, share in (("user", .12), ("system", .13), ("softirq", .72), ("interrupt", .03)):
+                    self.ticks[k] += busy * share
+                self.ticks["idle"] += rest * .98
+                self.ticks["wait"] += rest * .02
+            down, up = self.shaper.totals()
+        ucd = "1.3.6.1.4.1.2021"
+        raw = {"user": 50, "nice": 51, "system": 52, "idle": 53, "wait": 54, "interrupt": 56, "softirq": 61, "steal": 64}
+        mib = {
+            "1.3.6.1.2.1.1.1.0": "Linux lqos-preview 6.8.0-45-generic #45-Ubuntu SMP x86_64",
+            "1.3.6.1.2.1.1.5.0": "lqos-preview",
+            "1.3.6.1.2.1.25.1.1.0": snmp.TimeTicks(int((t - self.boot) * 100) % 2 ** 32),
+            f"{ucd}.4.5.0": 16 * 1024 * 1024, f"{ucd}.4.6.0": 9_300_000,
+            f"{ucd}.4.14.0": 420_000, f"{ucd}.4.15.0": 3_100_000 + int(200_000 * _busy(t)),
+        }
+        for k, n in raw.items():
+            mib[f"{ucd}.11.{n}.0"] = snmp.Counter32(int(self.ticks[k]) % 2 ** 32)
+        total = sum(loads)
+        for i, minutes in enumerate((1, 5, 15), start=1):
+            mib[f"{ucd}.10.1.5.{i}"] = int(total * (1 + 0.05 * i) * 100)
+        for core, load in enumerate(loads):
+            mib[f"1.3.6.1.2.1.25.3.3.1.2.{196608 + core}"] = int(load * 100)
+        counters = {"ens16": (up, down), "ens17": (down, up), "ens18": (t * 2e4, t * 6e4), "lo": (t * 1e3, t * 1e3)}
+        for index, name in self.IFACES:
+            rx, tx = counters[name]
+            mib[f"1.3.6.1.2.1.31.1.1.1.1.{index}"] = name
+            mib[f"1.3.6.1.2.1.31.1.1.1.6.{index}"] = snmp.Counter64(int(rx))
+            mib[f"1.3.6.1.2.1.31.1.1.1.10.{index}"] = snmp.Counter64(int(tx))
+        return mib
+
+
 def fake_subscribers(db_path, router):
     try:
         import sqlite3
@@ -748,8 +1004,16 @@ def fake_router_api(name):
     }, on_run=run)
 
 
-def install_fakes(gui, ring, systemd, netplan, counters):
+def install_fakes(gui, ring, systemd, netplan, counters, shaper):
     from flask import jsonify, request
+
+    # LibreQoS's queues: tc output from the fake shaper. This host's snmpd: a
+    # fake agent, used when host SNMP points at the default 127.0.0.1:161.
+    gui._queue_sampler.runner = shaper.tc
+    host_agent = FakeSnmpAgent(FakeHost(shaper).mib)
+    gui._host_snmp_target = lambda s: (("127.0.0.1", host_agent.port)
+                                       if s["address"] in ("127.0.0.1", "localhost") and s["port"] == 161
+                                       else (s["address"], s["port"]))
 
     def raise_preview(*_a, **_k):
         raise RuntimeError("preview: routers and root actions are simulated")
@@ -906,7 +1170,7 @@ def main():
     systemd = FakeSystemd(gui.MANAGED_SERVICES + ["lqosd", "lqos_scheduler"], lambda: rebuild("restart"),
                           gui_restarted)
     counters = FakeCounters()
-    install_fakes(gui, ring, systemd, netplan, counters)
+    install_fakes(gui, ring, systemd, netplan, counters, FakeShaper(str(gui.libreqos_dir())))
     rebuild("startup")
     try:
         seed_rrd_history(gui, updatecsv.read_config_json().routers, str(gui.DB_PATH), counters)

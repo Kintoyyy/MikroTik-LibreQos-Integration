@@ -453,8 +453,47 @@ Every tunable value lives in `settings.json` and can be edited in **App Settings
 | `webhook.min_interval_seconds` | 10 | PPP webhook: webhook-triggered syncs run at most this often (each may run the LibreQoS update) |
 | `webhook.full_scan_over` | 50 | PPP webhook: more users than this from one router in one batch → rescan that router in full |
 | `webhook.keep_days` | 7 | PPP webhook: days of received calls kept for the GUI |
+| `host_snmp.enabled` | true | Overview: read this host's CPU, memory, load, uptime and interface traffic from its own snmpd (see [Overview](#overview)); psutil fills in whatever snmpd does not answer |
+| `host_snmp.address` / `port` / `community` | 127.0.0.1 / 161 / public | Where this host's snmpd listens (SNMP v2c) |
 
 `updatecsv` also checks `/etc/lqos.conf` (Python 3.11+) and logs a warning when `[topology] compile_mode = "flat"` would ignore the parent hierarchy, or when device IPs fall outside `allow_subnets` or inside `ignore_subnets`. With `auto_cpu` it also warns about the settings listed under [Auto CPU](#auto-cpu-auto_cpu).
+
+---
+
+## Overview
+
+The GUI's first tab shows the shaper live:
+
+- **Live queues, from LibreQoS's own tc tree.** While the Overview is open, the GUI reads `tc -s class show` and
+  `tc -s qdisc show` on the shaping interfaces from lqos.conf every 2 s (slower when tc takes long on a very large tree; it stops
+  20 s after the page is closed). LibreQoS builds one HTB tree per CPU queue (download on `to_network`, upload on `to_internet`,
+  or both on the single interface on a stick), so the root class of each tree is that core's traffic. The classes are named from
+  LibreQoS's `queuingStructure.json` and `statsByCircuit.json` (looked up in the LibreQoS directory, its `state/` folders and
+  `/var/lib/libreqos`). Without them each subscriber shows as its class id.
+  - **CPU queues:** download / upload per queue, circuits and how many are moving traffic, cake drops per second, and the load of
+    the core it runs on. A core near 100% is the first thing to look at when subscribers complain.
+  - **Queue map:** every subscriber moving traffic, grouped by CPU queue and network node; size is download now, colour is the share of
+    their plan in use. Click a queue or node to open it.
+  - **Busiest subscribers:** the top 15 now, with share of plan (⚠ at 90% or more) and drops.
+- **This host.** CPU (average and per core), memory, load, uptime and interface traffic, from this host's snmpd when
+  `host_snmp.enabled` (the default) and it answers. psutil fills in anything snmpd does not show, or everything while it does not
+  answer (it is asked again every 30 s). The badge on the card says which was used. CPU % comes from UCD-SNMP-MIB's raw tick
+  counters, which include softirq time, where LibreQoS's shaping runs. Per-core load is HOST-RESOURCES `hrProcessorLoad`,
+  which snmpd averages over a minute. snmpd refreshes some counters only every few seconds, so its values move in steps.
+
+  Ubuntu's snmpd shows only the system group by default. Open it to this host only:
+
+  ```shell
+  sudo apt install snmpd
+  # /etc/snmp/snmpd.conf: replace the agentaddress and rocommunity lines with
+  #   agentaddress udp:127.0.0.1:161
+  #   rocommunity public 127.0.0.1
+  sudo systemctl restart snmpd
+  ```
+
+  **Settings → Host Monitoring (SNMP) → Test** shows what snmpd answers and what its view still hides.
+- **Routers, subscribers, activity:** each router's last poll (CPU, RAM, PPP sessions, busiest graphed interface, SNMP or API),
+  devices by source, router and plan, the last sync jobs and the PPP webhook's latest events.
 
 ---
 
@@ -650,7 +689,7 @@ python3 preview_server.py            # http://localhost:5050, password: admin
 python3 preview_server.py --reset    # start again from the seeded demo
 ```
 
-It keeps everything in `.preview/` (git-ignored): a demo `config.json` with five BRAS and two regions, about 1500 subscribers, an `lqos.conf`, and a fake sysfs with two 8-queue NICs on 8 CPUs, 2 of them E-cores, so LibreQoS would use 6 queues. Services are simulated. Restarting `updatecsv` (for example Save in the Builder) runs one sync cycle in-process and writes `network.json` and `ShapedDevices.csv` to `.preview/libreqos/`. The app update button is disabled there. Options: `--port`, `--host`, `--devices`, `--seed`, `--cpus`, `--interval` and `--churn` (subscribers leaving and joining per router per cycle).
+It keeps everything in `.preview/` (git-ignored): a demo `config.json` with five BRAS and two regions, about 1500 subscribers, an `lqos.conf`, and a fake sysfs with two 8-queue NICs on 8 CPUs, 2 of them E-cores, so LibreQoS would use 6 queues. Services are simulated. Restarting `updatecsv` (for example Save in the Builder) runs one sync cycle in-process and writes `network.json` and `ShapedDevices.csv` to `.preview/libreqos/`. The Overview's queues come from a simulated LibreQoS, laid out from those files as LibreQoS.py would, with its `queuingStructure.json` and tc output. Its host data comes from a fake snmpd used in place of `127.0.0.1:161`. The app update button is disabled there. Options: `--port`, `--host`, `--devices`, `--seed`, `--cpus`, `--interval` and `--churn` (subscribers leaving and joining per router per cycle).
 
 ---
 

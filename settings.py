@@ -113,6 +113,15 @@ _DEFAULTS = {
         # Days of received events kept for the GUI.
         "keep_days": 7,
     },
+    "host_snmp": {
+        # The Overview's host CPU, memory, load, uptime and interface traffic
+        # from this host's own snmpd (net-snmp); psutil fills in whatever it
+        # does not answer, or everything while it is unreachable.
+        "enabled": True,
+        "address": "127.0.0.1",
+        "port": 161,
+        "community": "public",
+    },
     "burst": {
         # PowerBoost-style burst for all traffic: an idle subscriber may send
         # `seconds` worth of its plan at full speed before LibreQoS holds it to
@@ -264,6 +273,11 @@ def webhook_settings():
         "full_scan_over": max(int(w.get("full_scan_over", 50)), 1),
         "keep_seconds": max(float(w.get("keep_days", 7)), 0.1) * 86400,
     }
+
+
+def host_snmp_settings():
+    """The [host_snmp] settings, re-read from settings.json on every call (no restart needed)."""
+    return dict(_load()["host_snmp"])
 
 
 def libreqos_version():
