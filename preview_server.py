@@ -965,6 +965,81 @@ def seed_rrd_history(gui, routers, db_path, counters, hours=6):
                                capture_output=True, text=True, timeout=30)
 
 
+def seed_host_rrd(gui, link_bps, hours=6):
+    """Back-fill this host's interface graph: ens16 sends the download, ens17 receives it, ens18 is management."""
+    if not gui.RRDTOOL:
+        return
+    now = int(time.time()) // 60 * 60
+    start = now - hours * 3600
+    down = lambda t: link_bps / 8 * (0.45 + 0.35 * _busy(t))          # bytes/s
+    rates = {"ens16": lambda t: (down(t) * .16, down(t)), "ens17": lambda t: (down(t), down(t) * .16),
+             "ens18": lambda t: (2.5e3, 7.5e3)}
+    for iface, rate in rates.items():
+        path = gui._rrd_path(gui._rrd_host_iface(iface))
+        if path.exists():
+            continue
+        gui._rrd_create(path, "hostif", start=start - 60)
+        rx = tx = 0.0
+        rows = []
+        for t in range(start, now, 60):
+            r, s = rate(t)
+            rx, tx = rx + r * 60, tx + s * 60
+            rows.append(f"{t}:{int(rx)}:{int(tx)}")
+        for i in range(0, len(rows), 120):
+            subprocess.run([gui.RRDTOOL, "update", str(path)] + rows[i:i + 120],
+                           capture_output=True, text=True, timeout=30)
+
+
+SEED_SNMPD_CONF = """\
+# The preview's stand-in for /etc/snmp/snmpd.conf (Ubuntu 24.04's default, shortened)
+sysLocation    Sitting on the Dock of the Bay
+agentaddress  127.0.0.1,[::1]
+view   systemonly  included   .1.3.6.1.2.1.1
+view   systemonly  included   .1.3.6.1.2.1.25.1
+rocommunity  public default -V systemonly
+includeDir {dropin_dir}
+"""
+
+
+def fake_snmpd_setup(gui, agent, sandbox):
+    """
+    Settings → Host Monitoring → Set up automatically, against a sandboxed
+    /etc/snmp: apt-get "installs" snmpd, and restarting it makes the fake
+    host agent answer the community the setup wrote.
+    """
+    from pathlib import Path
+    etc = Path(sandbox) / "etc" / "snmp"
+    paths = {"main": etc / "snmpd.conf", "dropin_dir": etc / "snmpd.conf.d", "dropin": etc / "snmpd.conf.d" / "lqsync.conf"}
+    etc.mkdir(parents=True, exist_ok=True)
+    _write_new(str(paths["main"]), SEED_SNMPD_CONF.format(dropin_dir=paths["dropin_dir"]))
+    installed = {"snmpd": paths["dropin"].exists()}
+
+    def community():
+        for line in (paths["dropin"].read_text().splitlines() if paths["dropin"].exists() else []):
+            if line.startswith("rocommunity "):
+                return line.split()[1]
+        return "public"
+
+    def run(cmd, timeout=60):
+        if "install" in cmd and "snmpd" in cmd:
+            time.sleep(1.5)
+            installed["snmpd"] = True
+            return 0, "Setting up snmpd (5.9.4+dfsg-1.1ubuntu3) ..."
+        if cmd[0] == "mkdir":
+            os.makedirs(cmd[-1], exist_ok=True)
+        if cmd[:2] == ["systemctl", "restart"]:
+            agent.community = community()
+        return 0, ""
+
+    agent.community = community()
+    gui.SNMPD_PATHS = paths
+    gui._snmpd_run = run
+    gui._snmpd_read = lambda p: Path(p).read_text() if Path(p).exists() else None
+    gui._snmpd_write = lambda p, text: Path(p).write_text(text)
+    gui._snmpd_which = lambda name: (("/usr/sbin/snmpd" if installed["snmpd"] else None) if name == "snmpd"
+                                     else "/usr/bin/apt-get" if name == "apt-get" else gui._which(name))
+
+
 def fake_router_api(name):
     """
     A simulated router for the webhook installer: three PPP profiles (one
@@ -1020,6 +1095,8 @@ def install_fakes(gui, ring, systemd, netplan, counters, shaper, cores=8):
     gui._host_snmp_target = lambda s: (("127.0.0.1", host_agent.port)
                                        if s["address"] in ("127.0.0.1", "localhost") and s["port"] == 161
                                        else (s["address"], s["port"]))
+    fake_snmpd_setup(gui, host_agent, os.path.dirname(str(gui.SETTINGS_PATH)))
+    seed_host_rrd(gui, shaper.link_bps)
 
     def raise_preview(*_a, **_k):
         raise RuntimeError("preview: routers and root actions are simulated")

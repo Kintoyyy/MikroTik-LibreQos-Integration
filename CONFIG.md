@@ -195,6 +195,16 @@ The GUI polls every BRAS once a minute and keeps the history in RRD files (`rrd/
 | Router *name* PPP sessions | Active PPP sessions | `/ppp/active` with `count-only`, so a large BRAS does not send every session |
 | Router *name* *interface* | rx / tx Mbps, with rx / tx errors and drops per minute marked as ticks | The interface's `rx-byte`, `tx-byte`, `rx-error`, `tx-error`, `rx-drop` and `tx-drop` counters, stored as rates |
 
+The Pollers page groups the graphs: **LQ-Sync & this host** first, then one group per router. Each group header shows that
+router's status, CPU, RAM, PPP sessions and whether it is polled over SNMP or the API. Click a header to open or close it; a
+closed group loads no images, and the page remembers which are open. With more than three routers, only the host group starts
+open. **Expand all** and **Collapse all** sit next to the time ranges.
+
+The host group includes **This host's interfaces, stacked**. Every interface of the LibreQoS host (loopback and container
+or VM interfaces left out, at most 12) is sampled once a minute: from snmpd while the Overview reads this host over SNMP,
+else from psutil. Received traffic is stacked above zero and sent traffic below it, one colour per interface. Each
+interface's legend line shows in / out now and the maximum, in Mbps.
+
 The Pollers router cards and the Overview router tiles show the latest values: the PPP count, and each interface's current rx/tx rate with any errors or drops in the last minute. "rx" and "tx" are from the router's side of that interface: on the uplink, rx is your subscribers' download.
 
 #### Over SNMP instead of the API
@@ -489,17 +499,17 @@ The GUI's first tab shows the shaper live:
   counters, which include softirq time, where LibreQoS's shaping runs. Per-core load is HOST-RESOURCES `hrProcessorLoad`,
   which snmpd averages over a minute. snmpd refreshes some counters only every few seconds, so its values move in steps.
 
-  Ubuntu's snmpd shows only the system group by default. Open it to this host only:
+  **Settings → Host Monitoring (SNMP) → Set up automatically** does the setup in one click:
+  1. It installs snmpd when it is missing (`apt-get install snmpd`).
+  2. It writes `/etc/snmp/snmpd.conf.d/lqsync.conf`, which gives LQ-Sync its own read-only community (`lqsync-…`), answered
+     to 127.0.0.1 only. A community of its own is needed because Ubuntu's `snmpd.conf` already answers `public` with the
+     system group only, and the first matching line wins.
+  3. It makes sure `snmpd.conf` reads that directory. Ubuntu's does; otherwise an `includeDir` line is appended, after a
+     backup to `snmpd.conf.lqsync-bak`.
+  4. It enables and restarts snmpd, checks that it answers, and saves the community in `settings.json`.
 
-  ```shell
-  sudo apt install snmpd
-  # /etc/snmp/snmpd.conf: replace the agentaddress and rocommunity lines with
-  #   agentaddress udp:127.0.0.1:161
-  #   rocommunity public 127.0.0.1
-  sudo systemctl restart snmpd
-  ```
-
-  **Settings → Host Monitoring (SNMP) → Test** shows what snmpd answers and what its view still hides.
+  The rest of `snmpd.conf` is left alone, so other SNMP monitoring keeps working. To undo it, delete `lqsync.conf` and
+  restart snmpd. **Test** shows what snmpd answers and what its view still hides.
 - **Routers, subscribers, activity:** each router's last poll (CPU, RAM, PPP sessions, busiest graphed interface, SNMP or API),
   devices by source, router and plan, the last sync jobs and the PPP webhook's latest events.
 

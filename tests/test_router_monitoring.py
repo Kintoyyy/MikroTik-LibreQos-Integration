@@ -1,6 +1,7 @@
 """BRAS monitoring: active PPP sessions and graphed interfaces (counters, rates, RRDs, graphs)."""
 import subprocess
 import unittest
+from unittest import mock
 
 import gui
 from preview_server import FakeRouterOS
@@ -114,6 +115,52 @@ class RrdTest(unittest.TestCase):
         args = " ".join(defs[f"{key}-if-sfp-sfpplus1"]["args"])
         self.assertIn("CDEF:v0=v0r,8,*,1000000,/", args)
         self.assertIn("TICK:v2#ef444488:1: rx errors /min", args)
+
+    def test_host_interfaces_stacked_graph_and_groups(self):
+        for name, (rx, tx) in {"ens16": (10**12, 10**11), "ens17": (10**11, 10**12)}.items():
+            gui._rrd_update(gui._rrd_host_iface(name), "hostif", [rx, tx])
+        info = subprocess.run([gui.RRDTOOL, "info", str(gui._rrd_path(gui._rrd_host_iface("ens16")))],
+                              capture_output=True, text=True).stdout
+        self.assertIn('ds[tx_bytes].type = "DERIVE"', info)
+
+        defs = gui._graph_defs({"bras": [self.ROUTER]})
+        d = defs["host-ifaces"]
+        args = d["args"]
+        # received stacks above zero, sent (negated) below it, one colour per interface
+        self.assertIn("AREA:i0#3987e5cc:ens16       ", args)
+        self.assertIn("AREA:i1#d95926cc:ens17       :STACK", args)
+        self.assertIn("CDEF:o1n=o1,-1,*", args)
+        self.assertEqual(args[-3:], ["AREA:o0n#3987e588", "AREA:o1n#d9592688:STACK", "HRULE:0#8b949e"])
+        r = subprocess.run([gui.RRDTOOL, "graph", "-", "--imgformat", "PNG", "--start", "end-3h", "--end", "now",
+                            "--title", d["title"], "--vertical-label", d["vlabel"]] + gui._GRAPH_STYLE + args,
+                           capture_output=True)
+        self.assertEqual(r.returncode, 0, r.stderr.decode())
+        self.assertTrue(r.stdout.startswith(b"\x89PNG"))
+
+        # this host's graphs first, then each router's together
+        key = gui._router_key("bras", self.ROUTER["name"])
+        groups = [defs[g]["group"][0] for g in defs]
+        self.assertEqual(groups[:groups.index(key)], ["host"] * groups.index(key))
+        self.assertEqual({g for g in defs if defs[g]["group"][0] == key},
+                         {key, f"{key}-ppp", f"{key}-if-sfp-sfpplus1", f"{key}-if-ether_2"})
+        client = gui.app.test_client()
+        with client.session_transaction() as s:
+            s["authed"] = True
+        with mock.patch.object(gui, "_load_config", lambda: {"bras": [self.ROUTER]}):
+            listing = client.get("/api/graphs").get_json()
+        self.assertEqual([(g["id"], g["kind"]) for g in listing["groups"]], [("host", "host"), (key, "bras")])
+        self.assertIn("host-ifaces", [g["id"] for g in listing["groups"][0]["graphs"]])
+        self.assertEqual(len(listing["groups"][1]["graphs"]), 4)
+
+    def test_host_interface_counters_prefer_snmpd(self):
+        client = mock.Mock(if_prev={"ens16": (5, 6, 0.0), "lo": (1, 1, 0.0), "veth12": (2, 2, 0.0)})
+        with mock.patch.dict(gui._host, {"client": client, "status": {"ok": True}}):
+            self.assertEqual(gui._host_interface_counters(), {"ens16": (5, 6)})
+        with mock.patch.dict(gui._host, {"client": client, "status": None}):       # SNMP on, no answer yet: wait
+            self.assertEqual(gui._host_interface_counters(), {})
+        if gui.HAS_PSUTIL:                       # snmpd not answering: psutil's counters
+            with mock.patch.dict(gui._host, {"client": client, "status": {"ok": False}}):
+                self.assertNotIn("lo", gui._host_interface_counters())
 
 
 if __name__ == "__main__":

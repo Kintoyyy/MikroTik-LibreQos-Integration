@@ -232,6 +232,11 @@ body > footer { flex-shrink: 0; }
 .btn-primary:hover  { background: #2563eb; }
 .btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--muted); padding: .4rem .8rem; border-radius: 8px; font-size: .8rem; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: .35rem; }
 .btn-ghost:hover   { border-color: var(--blue); color: var(--text); }
+.btn-primary:disabled { opacity: .6; cursor: wait; }
+.hsnmp-log { margin-top: .6rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: .55rem .75rem;
+             font-family: var(--mono); font-size: .74rem; line-height: 1.6; color: var(--text); max-height: 220px; overflow: auto; }
+.hsnmp-log .ok { color: var(--green); }
+.hsnmp-log .bad { color: #ff7b72; }
 .btn-danger-ghost  { background: transparent; border: 1px solid #ef444433; color: var(--red); padding: .35rem .7rem; border-radius: 8px; font-size: .8rem; cursor: pointer; }
 .btn-danger-ghost:hover { background: #ef444411; }
 .btn-success-ghost { background: transparent; border: 1px solid #22c55e33; color: var(--green); padding: .4rem .9rem; border-radius: 8px; font-size: .8rem; cursor: pointer; }
@@ -432,6 +437,18 @@ code { font-size: .8rem; color: #94a3b8; }
 .seg-btn.active { background: var(--blue); border-color: #388bfd; color: #fff; }
 .graphs-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding: 1rem; }
 @media(max-width:1100px){ .graphs-grid { grid-template-columns: 1fr; } }
+/* Graph groups: this host first, then one per router */
+.graph-group + .graph-group { border-top: 1px solid var(--border); }
+.graph-group-hd { width: 100%; display: flex; align-items: center; gap: .55rem; background: none; border: 0; color: var(--text);
+                  padding: .7rem 1rem; font-size: .84rem; text-align: left; cursor: pointer; flex-wrap: wrap; }
+.graph-group-hd:hover { background: var(--raised); }
+.graph-group-hd > i { color: var(--muted); font-size: .75rem; width: 12px; }
+.graph-group-hd b { color: var(--strong); font-weight: 600; }
+.graph-group-hd .kind { font-size: .62rem; font-family: var(--mono); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 .3rem; text-transform: uppercase; }
+.graph-group-hd .facts { color: var(--muted); font-size: .76rem; font-family: var(--mono); }
+.graph-group-hd .n { margin-left: auto; color: var(--muted); font-size: .74rem; }
+.graph-group .graphs-grid { padding-top: 0; }
+.graph-group:not(.open) .graphs-grid { display: none; }
 .graph-cell { min-height: 210px; display: flex; align-items: flex-start; justify-content: center; }
 .graph-cell .graph-empty { align-self: center; }
 .graph-cell img { max-width: 100%; height: auto; display: block; border-radius: 4px; }
@@ -891,14 +908,20 @@ code { font-size: .8rem; color: #94a3b8; }
   <div class="card" style="margin-top:1rem">
     <div class="card-hd">
       <span><i class="bi bi-graph-up"></i> Graphs</span>
-      <div class="seg" id="graph-range">
-        <button class="seg-btn" data-range="3h"   onclick="setGraphRange('3h')">3 hours</button>
-        <button class="seg-btn" data-range="30h"  onclick="setGraphRange('30h')">30 hours</button>
-        <button class="seg-btn" data-range="10d"  onclick="setGraphRange('10d')">10 days</button>
-        <button class="seg-btn" data-range="360d" onclick="setGraphRange('360d')">360 days</button>
+      <div class="ov-tools">
+        <span class="seg">
+          <button class="seg-btn" onclick="setAllGraphGroups(true)" title="Open every group">Expand all</button>
+          <button class="seg-btn" onclick="setAllGraphGroups(false)" title="Close every group">Collapse all</button>
+        </span>
+        <div class="seg" id="graph-range">
+          <button class="seg-btn" data-range="3h"   onclick="setGraphRange('3h')">3 hours</button>
+          <button class="seg-btn" data-range="30h"  onclick="setGraphRange('30h')">30 hours</button>
+          <button class="seg-btn" data-range="10d"  onclick="setGraphRange('10d')">10 days</button>
+          <button class="seg-btn" data-range="360d" onclick="setGraphRange('360d')">360 days</button>
+        </div>
       </div>
     </div>
-    <div class="graphs-grid" id="graphs-grid"></div>
+    <div id="graph-groups"></div>
   </div>
 
   <div class="card" style="margin-top:1rem">
@@ -2386,17 +2409,18 @@ code { font-size: .8rem; color: #94a3b8; }
           <label class="form-label">Community (v2c)</label>
           <input class="form-input" id="set-hsnmp-community" placeholder="public" autocomplete="off">
         </div>
-        <div style="display:flex;align-items:flex-end">
+        <div style="display:flex;align-items:flex-end;gap:.5rem;flex-wrap:wrap">
           <button class="btn-ghost" onclick="testHostSnmp()"><i class="bi bi-plug"></i> Test</button>
+          <button class="btn-primary" id="hsnmp-setup-btn" onclick="setupHostSnmp()"><i class="bi bi-magic"></i> Set up automatically</button>
         </div>
       </div>
       <div id="hsnmp-result" style="font-size:.78rem;margin-top:.6rem"></div>
+      <div id="hsnmp-setup-log" class="hsnmp-log" style="display:none"></div>
       <div style="font-size:.72rem;color:var(--muted);margin-top:.6rem;line-height:1.55">
-        Ubuntu's snmpd shows only the system group by default. Install and open it to this host only:
-        <code>sudo apt install snmpd</code>, then in <code>/etc/snmp/snmpd.conf</code> replace the
-        <code>agentaddress</code> and <code>rocommunity</code> lines with
-        <code>agentaddress udp:127.0.0.1:161</code> and <code>rocommunity public 127.0.0.1</code>,
-        and run <code>sudo systemctl restart snmpd</code>. Applies within a few seconds; no restart needed.
+        <b>Set up automatically</b> installs snmpd if it is missing and gives LQ-Sync its own read-only community,
+        answered to this host only, in <code>/etc/snmp/snmpd.conf.d/lqsync.conf</code>. The rest of
+        <code>snmpd.conf</code> is left alone, so other SNMP monitoring keeps working. It then restarts snmpd, checks
+        that it answers, and saves the settings above. Remove that file and restart snmpd to undo it.
       </div>
     </div>
   </div>
@@ -2734,7 +2758,7 @@ function ovRenderHost() {
     badge.title = from.length ? `snmpd does not show ${from.join(', ')}: read with psutil instead` : 'All values from snmpd';
   } else if (s) {
     badge.innerHTML = `<span class="dot dot-yellow"></span> psutil (SNMP: ${esc(s.error || 'no answer')})`;
-    badge.title = `snmpd at ${s.target} did not answer; retried every 30 s. Settings → Host monitoring.`;
+    badge.title = `snmpd at ${s.target} did not answer; retried every 30 s. Settings → Host Monitoring → Set up automatically.`;
   } else {
     badge.innerHTML = '<span class="dot dot-grey"></span> psutil';
     badge.title = 'Host SNMP is off (Settings → Host monitoring)';
@@ -6332,6 +6356,48 @@ async function loadAppSettings() {
   renderBurstStatus(monitorData && monitorData.burst);
 }
 
+// One click: install snmpd if needed, give LQ-Sync its own community, restart, check, save.
+async function setupHostSnmp() {
+  if (!confirm('Install / configure snmpd on this host?\n\nIt installs snmpd if it is missing (apt-get), adds ' +
+               '/etc/snmp/snmpd.conf.d/lqsync.conf with a read-only community for 127.0.0.1 only, and restarts snmpd.')) return;
+  const btn = document.getElementById('hsnmp-setup-btn');
+  const box = document.getElementById('hsnmp-setup-log');
+  btn.disabled = true;
+  box.style.display = '';
+  box.innerHTML = 'Starting…';
+  let d;
+  try {
+    d = await apiJson('/api/host-snmp/setup', { method: 'POST' });
+    while (d.running) {
+      box.innerHTML = d.log.map(l => esc(l.text)).join('<br>') || 'Starting…';
+      box.scrollTop = box.scrollHeight;
+      await _sleep(1000);
+      d = await apiJson('/api/host-snmp/setup');
+    }
+  } catch (e) {
+    box.innerHTML += `<br><span class="bad">${esc(e.message)}</span>`;
+    btn.disabled = false;
+    return;
+  }
+  const res = d.result || {};
+  box.innerHTML = d.log.map(l => esc(l.text)).join('<br>') + '<br>' + (res.ok
+    ? `<span class="ok"><i class="bi bi-check-circle-fill"></i> Done: the Overview now reads this host over SNMP.</span>`
+    : `<span class="bad"><i class="bi bi-x-octagon-fill"></i> ${esc(res.error || 'failed')}</span>`);
+  box.scrollTop = box.scrollHeight;
+  btn.disabled = false;
+  if (res.ok) {
+    const s = await apiJson('/api/settings');    // show the saved community; keep the rest of the form as edited
+    if (s.ok) {
+      appSettings.host_snmp = (s.content || {}).host_snmp;
+      document.getElementById('set-hsnmp-enabled').checked = true;
+      document.getElementById('set-hsnmp-address').value = '127.0.0.1';
+      document.getElementById('set-hsnmp-port').value = 161;
+      document.getElementById('set-hsnmp-community').value = res.community;
+    }
+    testHostSnmp();
+  }
+}
+
 async function testHostSnmp() {
   const el = document.getElementById('hsnmp-result');
   const v = id => document.getElementById(id).value.trim();
@@ -6455,7 +6521,9 @@ async function saveAppSettings() {
 // POLLERS / MONITORING
 // ══════════════════════════════════════════════════════════════════════════
 let monitorData = null;
-let graphList   = [];
+let graphGroups = [];         // /api/graphs groups: {id, title, kind, graphs}
+let graphOpen   = {};         // group id → open
+try { graphOpen = JSON.parse(localStorage.getItem('graphOpen') || '{}') || {}; } catch (e) {}
 let graphRrd    = true;
 let graphRange  = '3h';
 try { graphRange = localStorage.getItem('graphRange') || '3h'; } catch (e) {}
@@ -6507,7 +6575,7 @@ async function loadMonitor() {
     badge.textContent = bad || d.jobs.length;
     badge.classList.toggle('err', bad > 0);
     badge.title = bad ? `${bad} job(s) failing or late` : `${d.jobs.length} jobs`;
-    if (document.getElementById('page-pollers').classList.contains('active')) renderPollers(d);
+    if (document.getElementById('page-pollers').classList.contains('active')) { renderPollers(d); updateGraphFacts(); }
     if (ovActive()) { ovRenderRouters(); ovRenderKpis(); }
   } catch (e) { /* offline: keep the last view */ }
 }
@@ -6691,33 +6759,88 @@ async function loadGraphs() {
     const r = await fetch('/api/graphs');
     const d = await r.json();
     if (!d.ok) return;
-    graphList = d.graphs || [];
-    graphRrd  = d.rrdtool;
+    graphGroups = d.groups || [];
+    graphRrd    = d.rrdtool;
     renderGraphs();
   } catch (e) { /* keep the last view */ }
 }
 
+// Graphs come in groups: LQ-Sync & this host, then one per router. A group's
+// images load only while it is open; which are open is remembered per browser.
+const GRAPH_EMPTY = '<div class="graph-empty">No data yet — graphs start within a minute</div>';
+function graphGroupOpen(g) {
+  if (g.id in graphOpen) return graphOpen[g.id];
+  return g.kind === 'host' || graphGroups.length <= 4;      // a few routers: all open; many: only this host
+}
+function graphGroupFacts(g) {
+  if (!monitorData) return '';
+  if (g.kind === 'host') {
+    const h = monitorData.host || {};
+    return [h.cpu != null ? `CPU ${fmtPct(h.cpu)}` : '', h.mem != null ? `mem ${fmtPct(h.mem)}` : ''].filter(Boolean).join(' · ');
+  }
+  const r = (monitorData.routers || []).find(x => x.name === g.title && x.kind === g.kind);
+  if (!r) return '';
+  if (r.ok === false) return `<span class="dot dot-red"></span> ${esc(r.error || 'unreachable')}`;
+  return `<span class="dot ${r.ok ? 'dot-green' : 'dot-grey'}"></span> ` + [
+    r.cpu != null ? `CPU ${fmtPct(r.cpu)}` : '', r.mem != null ? `RAM ${fmtPct(r.mem)}` : '',
+    r.ppp != null ? `PPP ${Number(r.ppp).toLocaleString()}` : '', r.via ? r.via.toUpperCase() : ''].filter(Boolean).join(' · ');
+}
+function graphCells(g) {
+  const t = Date.now();
+  return g.graphs.map(x => `<div class="graph-cell">${x.ready
+    ? `<img data-graph="${esc(x.id)}" alt="${esc(x.title)}" src="/api/graphs/${encodeURIComponent(x.id)}.png?range=${graphRange}&t=${t}">`
+    : GRAPH_EMPTY}</div>`).join('');
+}
+function bindGraphErrors(el) {
+  el.querySelectorAll('img').forEach(img => { img.onerror = () => { img.parentElement.innerHTML = GRAPH_EMPTY; }; });
+}
 function renderGraphs() {
   document.querySelectorAll('#graph-range .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.range === graphRange));
-  const grid = document.getElementById('graphs-grid');
+  const box = document.getElementById('graph-groups');
   if (!graphRrd) {
-    grid.innerHTML = '<div class="graph-empty" style="grid-column:1/-1">rrdtool is not installed on this host — run <code>sudo apt install rrdtool</code>, then restart the gui service.</div>';
+    box.innerHTML = '<div class="graph-empty">rrdtool is not installed on this host — run <code>sudo apt install rrdtool</code>, then restart the gui service.</div>';
     return;
   }
-  const empty = '<div class="graph-empty">No data yet — graphs start within a minute</div>';
-  const t = Date.now();
-  grid.innerHTML = graphList.map(g => `<div class="graph-cell">${g.ready
-    ? `<img data-graph="${esc(g.id)}" alt="${esc(g.title)}" src="/api/graphs/${encodeURIComponent(g.id)}.png?range=${graphRange}&t=${t}">`
-    : empty}</div>`).join('');
-  grid.querySelectorAll('img').forEach(img => { img.onerror = () => { img.parentElement.innerHTML = empty; }; });
+  box.innerHTML = graphGroups.map(g => {
+    const open = graphGroupOpen(g);
+    return `<section class="graph-group ${open ? 'open' : ''}" data-group="${esc(g.id)}">
+      <button class="graph-group-hd" aria-expanded="${open}"><i class="bi bi-chevron-${open ? 'down' : 'right'}"></i>
+        <b>${esc(g.title)}</b>${g.kind === 'host' ? '' : `<span class="kind">${g.kind === 'bras' ? 'BRAS' : 'core'}</span>`}
+        <span class="facts">${graphGroupFacts(g)}</span>
+        <span class="n">${g.graphs.length} graph${g.graphs.length === 1 ? '' : 's'}</span></button>
+      <div class="graphs-grid">${open ? graphCells(g) : ''}</div>
+    </section>`;
+  }).join('');
+  bindGraphErrors(box);
 }
-
-function refreshGraphImages() {
-  const t = Date.now();
-  document.querySelectorAll('#graphs-grid img[data-graph]').forEach(img => {
-    img.src = `/api/graphs/${encodeURIComponent(img.dataset.graph)}.png?range=${graphRange}&t=${t}`;
+function updateGraphFacts() {
+  document.querySelectorAll('#graph-groups .graph-group').forEach(el => {
+    const g = graphGroups.find(x => x.id === el.dataset.group);
+    if (g) el.querySelector('.facts').innerHTML = graphGroupFacts(g);
   });
 }
+function toggleGraphGroup(id, open) {
+  const g = graphGroups.find(x => x.id === id);
+  if (!g) return;
+  open = open ?? !graphGroupOpen(g);
+  graphOpen[id] = open;
+  try { localStorage.setItem('graphOpen', JSON.stringify(graphOpen)); } catch (e) {}
+  const el = [...document.querySelectorAll('#graph-groups .graph-group')].find(x => x.dataset.group === id);
+  if (!el) return;
+  el.classList.toggle('open', open);
+  el.querySelector('.graph-group-hd > i').className = `bi bi-chevron-${open ? 'down' : 'right'}`;
+  el.querySelector('.graph-group-hd').setAttribute('aria-expanded', open);
+  const grid = el.querySelector('.graphs-grid');
+  if (open && !grid.children.length) {          // first open: load its images now
+    grid.innerHTML = graphCells(g);
+    bindGraphErrors(grid);
+  }
+}
+function setAllGraphGroups(open) { graphGroups.forEach(g => toggleGraphGroup(g.id, open)); }
+document.addEventListener('click', e => {
+  const hd = e.target.closest('#graph-groups .graph-group-hd');
+  if (hd) toggleGraphGroup(hd.parentElement.dataset.group);
+});
 
 function setGraphRange(r) {
   graphRange = r;

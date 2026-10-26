@@ -40,6 +40,7 @@ import cpu_planner
 import host_snmp
 import queue_stats
 import snmp
+import snmpd_setup
 import snmp_monitor
 import webhook
 from cpu_planner import dedupe_router_names, topology_errors
@@ -610,11 +611,15 @@ RRD_SCHEMAS = {
     "ppp":     ["ppp"],                                     # one file per BRAS: active PPP sessions
     # One file per graphed BRAS interface: its byte, error and drop counters
     "iface":   ["rx_bytes", "tx_bytes", "rx_errors", "tx_errors", "rx_drops", "tx_drops"],
+    "hostif":  ["rx_bytes", "tx_bytes"],                    # one file per interface of this host
 }
-# Schemas fed with the router's ever-growing counters: rrdtool stores them as
-# per-second rates (DERIVE, minimum 0, so a counter reset leaves a gap
-# instead of a negative spike).
-RRD_COUNTERS = {"iface"}
+# Schemas fed with ever-growing counters: rrdtool stores them as per-second
+# rates (DERIVE, minimum 0, so a counter reset leaves a gap instead of a
+# negative spike).
+RRD_COUNTERS = {"iface", "hostif"}
+# This host's interfaces left out of its graphs: loopback and container / VM plumbing
+HOST_IF_SKIP = ("veth", "docker", "virbr", "vnet", "tap", "tun", "br-")
+MAX_HOST_INTERFACES = 12
 # /interface counters per "iface" data source
 IFACE_COUNTERS = {"rx_bytes": "rx-byte", "tx_bytes": "tx-byte", "rx_errors": "rx-error",
                   "tx_errors": "tx-error", "rx_drops": "rx-drop", "tx_drops": "tx-drop"}
@@ -635,6 +640,28 @@ def _rrd_ppp(router_key):
 
 def _rrd_iface(router_key, iface):
     return f"{router_key}-if-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", iface)
+
+
+def _rrd_host_iface(iface):
+    return "host-if-" + re.sub(r"[^A-Za-z0-9_.-]+", "_", iface)
+
+
+def _host_interface_counters():
+    """
+    {interface: (rx bytes, tx bytes)} of this host, for its traffic graph:
+    from snmpd while the Overview reads this host over SNMP, else psutil.
+    """
+    client, status = _host["client"], _host["status"]
+    if client and status and status.get("ok") and client.if_prev:
+        counters = {name: (v[0], v[1]) for name, v in client.if_prev.items()}
+    elif client and status is None:
+        return {}                       # host SNMP is on but has not answered yet: do not mix in psutil's names
+    elif HAS_PSUTIL:
+        counters = {name: (c.bytes_recv, c.bytes_sent) for name, c in psutil.net_io_counters(pernic=True).items()}
+    else:
+        return {}
+    names = sorted(n for n in counters if n not in _BRIDGE_EXCLUDE and not n.startswith(HOST_IF_SKIP))
+    return {n: counters[n] for n in names[:MAX_HOST_INTERFACES]}
 
 
 def _rrd_create(path, schema, start="now-120"):
@@ -767,6 +794,8 @@ def _sample_stats(conn, prev):
     _rrd_update("polling", "polling", [took["poller"], took["build"], took["apply"], took["wan"],
                                        error_delta if have_prev else None])
     _rrd_update("devices", "devices", devices)
+    for iface, (rx, tx) in _host_interface_counters().items():
+        _rrd_update(_rrd_host_iface(iface), "hostif", [int(rx), int(tx)])
 
     checks = _libreqos_checks(conn)
     with _mon_lock:
@@ -1416,15 +1445,45 @@ def _graph_interface_names(key, router, info):
     return sorted(p.stem[len(prefix):] for p in RRD_DIR.glob(f"{prefix}*.rrd"))
 
 
+# One colour per host interface in the stacked graph (the Overview's categorical order)
+HOST_IF_COLORS = ["3987e5", "d95926", "199e70", "c98500", "d55181", "008300", "9085e9", "e66767"]
+HOST_GROUP = ("host", "LQ-Sync & this host", "host")
+
+
+def _host_ifaces_args(names):
+    """
+    rrdtool arguments for this host's interfaces stacked: received above
+    zero, sent below it, one colour per interface, and per interface one
+    legend line with in / out now and max in Mbps.
+    """
+    mbps, rows, below = "8,*,1000000,/", [], []
+    for i, name in enumerate(names):
+        path = str(_rrd_path(_rrd_host_iface(name))).replace(":", "\\:")
+        color = HOST_IF_COLORS[i % len(HOST_IF_COLORS)]
+        # i/o: gaps drawn as 0 so the stack stays whole; iv/ov keep them, so "now" is the last real sample
+        rows += [f"DEF:i{i}r={path}:rx_bytes:AVERAGE", f"DEF:o{i}r={path}:tx_bytes:AVERAGE",
+                 f"DEF:i{i}xr={path}:rx_bytes:MAX", f"DEF:o{i}xr={path}:tx_bytes:MAX",
+                 f"CDEF:i{i}v=i{i}r,{mbps}", f"CDEF:o{i}v=o{i}r,{mbps}",
+                 f"CDEF:i{i}=i{i}v,UN,0,i{i}v,IF", f"CDEF:o{i}=o{i}v,UN,0,o{i}v,IF",
+                 f"CDEF:i{i}x=i{i}xr,{mbps}", f"CDEF:o{i}x=o{i}xr,{mbps}", f"CDEF:o{i}n=o{i},-1,*",
+                 f"VDEF:i{i}l=i{i}v,LAST", f"VDEF:i{i}m=i{i}x,MAXIMUM",
+                 f"VDEF:o{i}l=o{i}v,LAST", f"VDEF:o{i}m=o{i}x,MAXIMUM",
+                 f"AREA:i{i}#{color}cc:{name.replace(':', chr(92) + ':'):<12}" + (":STACK" if i else ""),
+                 f"GPRINT:i{i}l:in now %7.1lf", f"GPRINT:i{i}m:max %7.1lf",
+                 f"GPRINT:o{i}l:   out now %7.1lf", f"GPRINT:o{i}m:max %7.1lf Mbps\\l"]
+        below.append(f"AREA:o{i}n#{color}88" + (":STACK" if i else ""))
+    return rows + below + ["HRULE:0#8b949e"]
+
+
 def _graph_defs(cfg):
-    """{graph id: {title, vlabel, rrd, args}} for every graph the current config has."""
+    """{graph id: {title, vlabel, rrd, args, group}} for every graph the current config has, in page order."""
     defs = {}
 
-    def graph(gid, title, vlabel, rrd, series):
+    def graph(gid, title, vlabel, rrd, series, group=HOST_GROUP):
         args = []
         for i, (ds, label, color, draw, unit, stack, *rpn) in enumerate(series):
             args += _series(rrd, ds, f"v{i}", label, color, draw, unit, stack, *rpn)
-        defs[gid] = {"title": title, "vlabel": vlabel, "rrd": rrd, "args": args}
+        defs[gid] = {"title": title, "vlabel": vlabel, "rrd": rrd, "args": args, "group": group}
 
     graph("app-cpu", "LQ-Sync CPU by job", "% of one core", "app", [
         ("cpu_poller", "router scans",       "3b82f6", "AREA", "%", False),
@@ -1445,6 +1504,11 @@ def _graph_defs(cfg):
         ("disk",  "disk %",       "f59e0b", "LINE1", "%", False),
         ("load1", "load (1 min)", "8b5cf6", "LINE1", "",  False),
     ])
+    host_ifaces = sorted(p.stem[len("host-if-"):] for p in RRD_DIR.glob("host-if-*.rrd"))
+    if host_ifaces:
+        defs["host-ifaces"] = {"title": "This host's interfaces, stacked: received above 0, sent below",
+                               "vlabel": "Mbps", "rrd": _rrd_host_iface(host_ifaces[0]),
+                               "args": _host_ifaces_args(host_ifaces), "group": HOST_GROUP}
     graph("polling", "Polling time and errors", "s / errors", "polling", [
         ("scan_s",  "router scans",   "3b82f6", "LINE1", " s", False),
         ("build_s", "build topology", "8b5cf6", "LINE1", " s", False),
@@ -1464,18 +1528,19 @@ def _graph_defs(cfg):
     for kind, router in _router_targets(cfg):
         name = router.get("name") or router.get("address", "")
         key = _router_key(kind, name)
+        group = (key, name, kind)               # each router's graphs together on the page
         graph(key, f"{'Router' if kind == 'bras' else 'Core'} {name}", "% / C / V / ms", key, [
             ("cpu",    "CPU %",         "3b82f6", "LINE1", "%",   False),
             ("mem",    "memory %",      "22c55e", "LINE1", "%",   False),
             ("temp",   "temperature C", "ef4444", "LINE1", " C",  False),
             ("volt",   "voltage V",     "f59e0b", "LINE1", " V",  False),
             ("api_ms", "poll latency",  "8b5cf6", "LINE1", " ms", False),
-        ])
+        ], group)
         if kind != "bras":
             continue
         graph(_rrd_ppp(key), f"Router {name} PPP sessions", "sessions", _rrd_ppp(key), [
             ("ppp", "active PPP sessions", "3b82f6", "AREA", "", False),
-        ])
+        ], group)
         for iface in _graph_interface_names(key, router, polled.get(key)):
             rrd = _rrd_iface(key, iface)
             graph(rrd, f"Router {name} {iface}: traffic, errors, drops", "Mbps", rrd, [
@@ -1485,7 +1550,7 @@ def _graph_defs(cfg):
                 ("tx_errors", "tx errors /min", "f59e0b88", "TICK",  "", False, "60,*"),
                 ("rx_drops",  "rx drops /min",  "a371f766", "TICK",  "", False, "60,*"),
                 ("tx_drops",  "tx drops /min",  "8b949e66", "TICK",  "", False, "60,*"),
-            ])
+            ], group)
     return defs
 
 
@@ -1493,12 +1558,17 @@ def _graph_defs(cfg):
 @require_auth
 def graphs_list():
     defs = _graph_defs(_load_config())
+    groups = {}
+    for gid, d in defs.items():
+        key, title, kind = d["group"]
+        groups.setdefault(key, {"id": key, "title": title, "kind": kind, "graphs": []})["graphs"].append(
+            {"id": gid, "title": d["title"], "ready": _rrd_path(d["rrd"]).exists()})
     return jsonify({
         "ok": True,
         "rrdtool": bool(RRDTOOL),
         "ranges": GRAPH_RANGES,
-        "graphs": [{"id": gid, "title": d["title"], "ready": _rrd_path(d["rrd"]).exists()}
-                   for gid, d in defs.items()],
+        "groups": list(groups.values()),
+        "graphs": [g for group in groups.values() for g in group["graphs"]],
     })
 
 
@@ -1788,6 +1858,94 @@ def host_snmp_test():
                     "shown": shown, "missing": [k for k, v in shown.items() if not v] if sample["ok"] else [],
                     "hostname": sample.get("hostname", ""),
                     "interfaces": sorted(n for n in client.ifindex if n not in _BRIDGE_EXCLUDE)})
+
+
+# ── One-click snmpd setup (Settings → Host Monitoring) ──────────────────────
+SNMPD_PATHS = snmpd_setup.PATHS        # the preview points these at its sandbox
+_snmpd_job = {"running": False, "log": [], "result": None}
+_snmpd_lock = threading.Lock()
+
+
+def _snmpd_run(cmd, timeout=60):
+    """(returncode, output) of cmd run as root; the binary is found without relying on PATH."""
+    cmd = [_which(cmd[0]) or cmd[0]] + list(cmd[1:])
+    try:
+        r = subprocess.run(_as_root(cmd), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, f"{cmd[0]} timed out after {timeout} s"
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+
+def _snmpd_read(path):
+    """A root-only file's text (snmpd.conf is mode 600), or None when it is missing."""
+    if os.geteuid() == 0:
+        try:
+            return Path(path).read_text()
+        except FileNotFoundError:
+            return None
+    code, out = _snmpd_run(["cat", str(path)], 10)
+    return out if code == 0 else None
+
+
+def _snmpd_write(path, text):
+    """Write a root-owned file, mode 600 (it holds a community string)."""
+    if os.geteuid() == 0:
+        atomic_write_text(path, text, mode=0o600)
+        return
+    with tempfile.NamedTemporaryFile("w", delete=False) as tmp:
+        tmp.write(text)
+    try:
+        code, out = _snmpd_run(["install", "-m", "600", "-o", "root", "-g", "root", tmp.name, str(path)], 10)
+    finally:
+        os.unlink(tmp.name)
+    if code != 0:
+        raise RuntimeError(f"writing {path}: {out.strip()}")
+
+
+def _snmpd_which(name):
+    return _which(name)
+
+
+def _snmpd_probe(community):
+    s = host_snmp.settings({"address": "127.0.0.1", "port": 161})
+    return host_snmp.HostSnmp(*_host_snmp_target(s), community, timeout=1.0).sample(_BRIDGE_EXCLUDE)
+
+
+def _save_host_snmp(community):
+    """Turn host SNMP on with the community the setup created."""
+    content = json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}
+    content["host_snmp"] = {**(content.get("host_snmp") or {}), "enabled": True, "address": "127.0.0.1",
+                            "port": 161, "community": community}
+    atomic_write_text(SETTINGS_PATH, json.dumps(content, indent=4))
+
+
+def _snmpd_setup_job(community):
+    def log(text):
+        _snmpd_job["log"].append({"at": time.time(), "text": text})
+        app.logger.info(f"snmpd setup: {text}")
+    result = snmpd_setup.configure(community, _snmpd_run, _snmpd_read, _snmpd_write, _snmpd_which, _snmpd_probe,
+                                   log, SNMPD_PATHS)
+    if result["ok"]:
+        try:
+            _save_host_snmp(community)
+            log("Saved: host SNMP is on, with this community.")
+        except Exception as e:
+            result.update(ok=False, error=f"saving settings.json: {e}")
+    _snmpd_job.update(running=False, result=result)
+
+
+@app.route("/api/host-snmp/setup", methods=["GET", "POST"])
+@require_auth
+def host_snmp_setup():
+    """POST starts the setup (once at a time); GET shows its progress."""
+    if request.method == "POST":
+        with _snmpd_lock:
+            if not _snmpd_job["running"]:
+                current = str(host_snmp_settings().get("community") or "")
+                community = current if current.startswith("lqsync-") else snmpd_setup.new_community()
+                _snmpd_job.update(running=True, log=[], result=None)
+                threading.Thread(target=_snmpd_setup_job, args=(community,), daemon=True).start()
+    return jsonify({"ok": True, **_snmpd_job})
 
 # ---------------------------------------------------------------------------
 # Routes
