@@ -2091,27 +2091,51 @@ def _snmpd_setup_job(community):
 
 # ── Hardware check (Troubleshoot) against LibreQoS v2.0's requirements ──────
 _hw_run = hardware_check._run           # read-only commands (lspci, ethtool, …); the preview fakes them
+_hw_estimate = hardware_check.estimate_single_thread
 HW_PATHS = {"proc": "/proc", "etc": "/etc"}
+_hw_lock = threading.Lock()             # one CPU test at a time
 
 
 @app.route("/api/troubleshoot/hardware", methods=["POST"])
 @require_auth
 def troubleshoot_hardware():
-    """Check this host against LibreQoS's requirements. A single-thread score in the body is saved for next time."""
+    """
+    Check this host against LibreQoS's requirements. The single-thread score
+    is the one typed in ("score": 0 clears it), else an estimate from a short
+    CPU test, run the first time, when the CPU model changes, or on "detect".
+    Both are kept in settings.json.
+    """
     data = request.get_json(silent=True) or {}
     content = json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}
+    hw = dict(content.get("hardware") or {})
     if "score" in data:
         try:
-            score = max(0, min(int(data.get("score") or 0), 20000))
+            hw["single_thread_score"] = max(0, min(int(data.get("score") or 0), 20000))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "error": "the single-thread score must be a number"}), 400
-        content["hardware"] = {**(content.get("hardware") or {}), "single_thread_score": score}
-        atomic_write_text(SETTINGS_PATH, json.dumps(content, indent=4))
-    score = int((content.get("hardware") or {}).get("single_thread_score") or 0)
+    manual = int(hw.get("single_thread_score") or 0)
 
     conf = _lqos_conf_dict()
     sysfs = cpu_planner.SYSFS_ROOT or os.environ.get("LQSYNC_SYSFS") or "/sys"
     facts = hardware_check.gather(conf, sysfs=sysfs, run=_hw_run, **HW_PATHS)
+    model = facts["cpu"]["model"]
+    estimate, estimate_error = hw.get("estimate") or {}, ""
+    if data.get("detect") or (not manual and estimate.get("cpu_model") != model):
+        try:
+            with _hw_lock:
+                estimate = {**_hw_estimate(sysfs), "cpu_model": model}
+            hw["estimate"] = estimate
+        except Exception as e:
+            estimate_error = str(e) or type(e).__name__
+    if hw != (content.get("hardware") or {}):
+        content["hardware"] = hw
+        atomic_write_text(SETTINGS_PATH, json.dumps(content, indent=4))
+    if manual:
+        score, source = manual, "manual"
+    elif estimate.get("score") and estimate.get("cpu_model") == model:
+        score, source = estimate["score"], "estimated"
+    else:
+        score, source = 0, ""
     subscribers = max_plan = 0
     if DB_PATH.exists():
         con = _db_con()
@@ -2123,8 +2147,11 @@ def troubleshoot_hardware():
         finally:
             con.close()
     link = _num_or_none((conf.get("queues") or {}).get("downlink_bandwidth_mbps")) or 0
-    result = hardware_check.evaluate(facts, subscribers or 0, max_plan or 0, link, score or None)
-    return jsonify({"ok": True, "score": score, "cpu_model": facts["cpu"]["model"], **result})
+    rough = source == "estimated" and estimate.get("steady") is False
+    result = hardware_check.evaluate(facts, subscribers or 0, max_plan or 0, link, score or None, source, rough)
+    return jsonify({"ok": True, "score": score, "score_source": source, "manual_score": manual,
+                    "estimate": estimate if estimate.get("cpu_model") == model else {}, "estimate_error": estimate_error,
+                    "cpu_model": model, **result})
 
 
 # ── Events: the warning & error history ─────────────────────────────────────

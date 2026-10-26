@@ -1326,11 +1326,16 @@ code { font-size: .8rem; color: #94a3b8; }
       </p>
       <div class="form-row form-row-3" style="align-items:end">
         <div>
-          <label class="form-label">CPU single-thread score <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
-          <input class="form-input" type="number" id="hw-score" min="0" max="20000" placeholder="e.g. 3200">
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">
-            The CPU's single-thread rating on <a id="hw-score-link" href="https://www.cpubenchmark.net/singleThread.html"
-            target="_blank" rel="noopener" style="color:var(--accent)">cpubenchmark.net</a>, for the plan, node and capacity checks
+          <label class="form-label">CPU single-thread score</label>
+          <div style="display:flex;gap:.4rem">
+            <input class="form-input" type="number" id="hw-score" min="0" max="20000" placeholder="auto">
+            <button class="btn-ghost" id="hw-detect" onclick="runHardwareCheck(true)" title="Run the CPU test again (about 3 s)">
+              <i class="bi bi-speedometer"></i> Detect</button>
+          </div>
+          <div id="hw-score-note" style="font-size:.72rem;color:var(--muted);margin-top:.3rem;line-height:1.5">
+            Leave empty to detect it with a short CPU test on this host (about ±20%), or type the exact rating from
+            <a id="hw-score-link" href="https://www.cpubenchmark.net/singleThread.html" target="_blank" rel="noopener"
+            style="color:var(--accent)">cpubenchmark.net</a>
           </div>
         </div>
         <div style="display:flex;gap:.5rem;flex-wrap:wrap">
@@ -7026,16 +7031,19 @@ const HW_ICONS = { pass: 'bi-check-circle-fill', warn: 'bi-exclamation-triangle-
 const HW_WORDS = { pass: 'passed', warn: 'warning', fail: 'failed', info: 'info' };
 let hwLast = null;
 
-async function runHardwareCheck() {
-  const btn = document.getElementById('hw-run');
+// detect: run the CPU test again. An empty score box means "use the test's estimate".
+async function runHardwareCheck(detect = false) {
+  const buttons = ['hw-run', 'hw-detect'].map(id => document.getElementById(id));
   const box = document.getElementById('hw-result');
   const raw = document.getElementById('hw-score').value.trim();
-  btn.disabled = true;
-  box.innerHTML = '<div class="graph-empty"><i class="bi bi-hourglass-split"></i> Checking this host…</div>';
+  buttons.forEach(b => { b.disabled = true; });
+  box.innerHTML = `<div class="graph-empty"><i class="bi bi-hourglass-split"></i> ${
+    detect || (raw === '' && !(hwLast && hwLast.estimate && hwLast.estimate.score))
+      ? 'Checking this host and testing the CPU (about 3 s)…' : 'Checking this host…'}</div>`;
   try {
     const d = await apiJson('/api/troubleshoot/hardware', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(raw === '' ? {} : { score: Number(raw) }),
+      body: JSON.stringify({ score: raw === '' ? 0 : Number(raw), detect }),
     });
     if (!d.ok) throw new Error(d.error || 'check failed');
     hwLast = d;
@@ -7043,13 +7051,29 @@ async function runHardwareCheck() {
   } catch (e) {
     box.innerHTML = `<div class="graph-empty" style="color:#ff7b72">${esc(e.message)}</div>`;
   }
-  btn.disabled = false;
+  buttons.forEach(b => { b.disabled = false; });
+}
+
+function renderHardwareScore(d) {
+  const input = document.getElementById('hw-score');
+  const est = d.estimate || {};
+  input.value = d.manual_score || '';
+  input.placeholder = est.score ? `auto ≈ ${est.score.toLocaleString()}` : 'auto';
+  const search = 'https://www.google.com/search?q=' + encodeURIComponent(`${d.cpu_model} cpubenchmark single thread rating`);
+  const link = `<a href="${esc(search)}" target="_blank" rel="noopener" style="color:var(--accent)">cpubenchmark.net</a>`;
+  const tested = est.score ? `CPU test: ≈ ${est.score.toLocaleString()} on core ${est.cpu}` +
+    (est.load != null && est.load > 30 ? ` <span style="color:var(--yellow)">(that core was ${Math.round(est.load)}% busy: the estimate may be low)</span>` : '') +
+    (est.steady === false ? ` · <span style="color:var(--yellow)"><i class="bi bi-exclamation-triangle-fill"></i> rough: the CPU's speed moved ${
+      Math.round(est.spread * 100)}% during the test (boost / thermal limits) — Detect again when the box is quiet</span>`
+      : ' · about ±20%') + ` · ${fmtAgo(est.at)}` : '';
+  document.getElementById('hw-score-note').innerHTML = d.score_source === 'manual'
+    ? `Using the rating you typed. ${tested ? tested + '. ' : ''}Clear the box to use the CPU test instead.`
+    : est.score ? `${tested}. For an exact value, type the rating from ${link}.`
+    : `${d.estimate_error ? `<span style="color:#ff7b72">CPU test failed: ${esc(d.estimate_error)}</span>. ` : ''}Type the rating from ${link}.`;
 }
 
 function renderHardware(d) {
-  if (d.score) document.getElementById('hw-score').value = d.score;
-  document.getElementById('hw-score-link').href =
-    'https://www.google.com/search?q=' + encodeURIComponent(`${d.cpu_model} cpubenchmark single thread rating`);
+  renderHardwareScore(d);
   document.getElementById('hw-copy').style.display = '';
   const c = d.counts;
   const chip = (status, n) => n ? `<span class="hw-chip"><i class="bi ${HW_ICONS[status]} hw-ico ${status}"></i>${n} ${
@@ -7073,7 +7097,9 @@ async function copyHardwareReport() {
   const d = hwLast;
   if (!d) return;
   const lines = [`LibreQoS hardware check (${d.docs})`,
-                 `pass ${d.counts.pass} · warnings ${d.counts.warn} · failed ${d.counts.fail} · profile ${d.profile}`];
+                 `pass ${d.counts.pass} · warnings ${d.counts.warn} · failed ${d.counts.fail} · profile ${d.profile}`,
+                 `CPU: ${d.cpu_model} · single-thread score: ${d.score ? `${d.score} (${d.score_source === 'estimated'
+                   ? 'estimated by the CPU test, about ±20%' : 'typed in'})` : 'not known'}`];
   d.sections.forEach(s => {
     lines.push('', `== ${s.name} ==`);
     s.checks.forEach(ch => {

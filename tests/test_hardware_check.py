@@ -148,7 +148,64 @@ class EvaluateTest(unittest.TestCase):
         self.assertNotIn("Total capacity", c)
 
 
+class EstimateTest(unittest.TestCase):
+    def test_the_cpu_test_runs_in_its_own_process(self):
+        e = hw.estimate_single_thread(sysfs="/nonexistent", rounds=1, slice_seconds=0.01)
+        self.assertGreater(e["score"], 0)
+        self.assertEqual(e["score"] % 10, 0)                                          # rounded: it is an estimate
+        self.assertEqual(set(e["rates"]), {"compression", "sorting", "integer", "floating", "hashing"})
+        self.assertIn(e["cpu"], os.sched_getaffinity(0))
+        self.assertTrue(0 <= e["spread"] < 1 and isinstance(e["steady"], bool))
+
+    def test_estimated_scores_are_labelled(self):
+        host = Host()
+        self.addCleanup(shutil.rmtree, host.root)
+        c = checks(hw.evaluate(host.gather(), link_mbps=1000, score=3300, score_source="estimated"))
+        self.assertTrue(c["Single-thread score"]["found"].startswith("≈3,300 (estimated)"))
+        self.assertIn("±20%", c["Single-thread score"]["detail"])
+        self.assertIn("≈3,300", c["Total capacity"]["found"])
+        rough = checks(hw.evaluate(host.gather(), score=3300, score_source="estimated", score_rough=True))
+        self.assertTrue(rough["Single-thread score"]["found"].startswith("≈3,300 (estimated, rough)"))
+        self.assertIn("speed changed", rough["Single-thread score"]["detail"])
+
+
 class RouteTest(unittest.TestCase):
+    def test_estimate_runs_once_per_cpu_and_a_typed_score_wins(self):
+        import gui
+        host = Host()
+        self.addCleanup(shutil.rmtree, host.root)
+        saved = gui.SETTINGS_PATH.read_text() if gui.SETTINGS_PATH.exists() else None
+        self.addCleanup(lambda: gui.SETTINGS_PATH.write_text(saved) if saved is not None else gui.SETTINGS_PATH.unlink())
+        calls = []
+
+        def fake_estimate(sysfs):
+            calls.append(sysfs)
+            return {"score": 3300, "cpu": 0, "load": 4.0, "geomean": 145.8, "rates": {}, "seconds": 3.1,
+                    "python": "3.12.3", "at": 1.0}
+        c = gui.app.test_client()
+        with c.session_transaction() as s:
+            s["authed"] = True
+        post = lambda body: c.post("/api/troubleshoot/hardware", json=body, headers={"X-Requested-With": "fetch"}).get_json()
+        with mock.patch.object(gui.cpu_planner, "SYSFS_ROOT", host.sysfs), \
+                mock.patch.object(gui.cpu_planner, "CPU_COUNT", host.cores), \
+                mock.patch.object(gui, "_hw_run", fake_hw_run(host.sysfs)), \
+                mock.patch.object(gui, "_hw_estimate", fake_estimate), \
+                mock.patch.object(gui, "HW_PATHS", {"proc": host.proc, "etc": host.etc}), \
+                mock.patch.object(gui, "_lqos_conf_dict", lambda: CONF):
+            d = post({"score": 0})
+            self.assertEqual((d["score"], d["score_source"], len(calls)), (3300, "estimated", 1))
+            self.assertEqual(d["estimate"]["cpu_model"], "Intel(R) Xeon(R) E-2456")
+            self.assertEqual(post({"score": 0})["score"], 3300)
+            self.assertEqual(len(calls), 1)                                            # kept: same CPU
+            post({"score": 0, "detect": True})
+            self.assertEqual(len(calls), 2)                                            # Detect runs it again
+            d = post({"score": 2500})
+            self.assertEqual((d["score"], d["score_source"], d["estimate"]["score"]), (2500, "manual", 3300))
+            self.assertEqual(post({"score": 0})["score_source"], "estimated")          # cleared: the estimate again
+        hw_saved = json.loads(gui.SETTINGS_PATH.read_text())["hardware"]
+        self.assertEqual((hw_saved["single_thread_score"], hw_saved["estimate"]["score"]), (0, 3300))
+
+
     def test_route_saves_the_score(self):
         import gui
         host = Host()

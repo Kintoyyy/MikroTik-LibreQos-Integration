@@ -7,11 +7,18 @@ systemd-detect-virt — and evaluate() compares what it found with the
 requirements. The result is sections of checks, each pass / warn / fail /
 info, with what was found, what LibreQoS asks for, and what to do.
 """
+import hashlib
+import json
+import math
 import os
 import platform
+import random
 import re
 import shutil
 import subprocess
+import sys
+import time
+import zlib
 from pathlib import Path
 
 import cpu_planner
@@ -219,6 +226,110 @@ def gather(conf, sysfs="/sys", proc="/proc", etc="/etc", run=None):
     }
 
 
+# ── Single-thread score estimate ────────────────────────────────────────────
+# A ~3 s test of C-level work — compression, string sorting, 2048-bit modular
+# exponentiation (as in RSA), float math, hashing — so the Python version
+# hardly matters. It runs in its own process pinned to one idle performance
+# core, best of BENCH_ROUNDS. The geometric mean of the rates × BENCH_SCALE
+# approximates PassMark's single-thread rating (cpubenchmark.net), the
+# number LibreQoS's tables use. Calibrated on an Intel Core Ultra 5 135U:
+# PassMark single-thread ≈ 3,350 (an average over many machines); its runs
+# here give a geometric mean of 100–150 (a laptop's boost budget), typically
+# ~120 on CPython 3.12. Expect about ±20%; a rating typed in by hand wins.
+BENCH_SCALE = 3350 / 120
+BENCH_ROUNDS = 3
+BENCH_SLICE = 0.07         # seconds per timing slice; three slices per workload per round
+BENCH_STEADY = 0.15        # rounds further apart than this: the clock moved, the estimate is rough
+
+
+def _bench_workloads():
+    rng = random.Random(42)
+    words = [''.join(rng.choice('abcdefghijklmnopqrstuvwxyz') for _ in range(rng.randint(3, 12))) for _ in range(4000)]
+    text = ' '.join(rng.choice(words) for _ in range(40000)).encode()
+    strings = [''.join(rng.choice('abcdefghijklmnopqrstuvwxyz0123456789') for _ in range(16)) for _ in range(60000)]
+    floats = [rng.random() * 100 for _ in range(200000)]
+    blob = rng.randbytes(1 << 20) if hasattr(rng, "randbytes") else bytes(rng.getrandbits(8) for _ in range(1 << 20))
+    base, exp, mod = rng.getrandbits(2048) | 1, rng.getrandbits(2048), rng.getrandbits(2048) | (1 << 2047) | 1
+    return {
+        "compression": lambda: zlib.compress(text, 6),
+        "sorting": lambda: sorted(strings),
+        "integer": lambda: pow(base, exp, mod),
+        "floating": lambda: math.fsum(map(math.sin, floats)),
+        "hashing": lambda: hashlib.md5(blob).digest(),          # no CPU has MD5 instructions: plain integer work
+    }
+
+
+def _rate(fn, slice_seconds):
+    best = 0.0
+    for _ in range(3):
+        n, t0 = 0, time.perf_counter()
+        while True:
+            fn()
+            n += 1
+            dt = time.perf_counter() - t0
+            if dt >= slice_seconds:
+                break
+        best = max(best, n / dt)
+    return best
+
+
+def run_bench(cpu, rounds=BENCH_ROUNDS, slice_seconds=BENCH_SLICE):
+    """The test itself, in this process: pinned to cpu, best geometric mean of `rounds`."""
+    try:
+        os.sched_setaffinity(0, {cpu})
+    except (AttributeError, OSError):
+        pass
+    work = _bench_workloads()
+    for fn in work.values():                      # warm up: caches, and the core's boost clock
+        fn()
+    best, rates, rounds_seen = 0.0, {}, []
+    for _ in range(rounds):
+        r = {name: _rate(fn, slice_seconds) for name, fn in work.items()}
+        geo = math.exp(sum(math.log(v) for v in r.values()) / len(r))
+        rounds_seen.append(geo)
+        if geo > best:
+            best, rates = geo, r
+    return {"geomean": best, "rates": rates, "rounds": rounds_seen}
+
+
+def _idlest_cpu(exclude):
+    """(cpu, load %) of the least busy CPU this process may use, E-cores left out when possible."""
+    try:
+        allowed = sorted(os.sched_getaffinity(0))
+    except AttributeError:
+        allowed = list(range(os.cpu_count() or 1))
+    candidates = [c for c in allowed if c not in exclude] or allowed
+    try:
+        import psutil
+        loads = psutil.cpu_percent(interval=0.5, percpu=True)
+    except Exception:
+        loads = []
+    cpu = min(candidates, key=lambda c: loads[c] if c < len(loads) else 0.0)
+    return cpu, (loads[cpu] if cpu < len(loads) else None)
+
+
+def estimate_single_thread(sysfs="/sys", rounds=BENCH_ROUNDS, slice_seconds=BENCH_SLICE, timeout=60):
+    """
+    Estimate this CPU's single-thread score: {score, cpu, load, geomean, rates, seconds, python}.
+    Runs the test in a child process, so the GUI's threads neither slow it down nor are slowed by it.
+    """
+    ecores = set(cpu_planner._cpulist(_read(Path(sysfs) / "devices" / "cpu_atom" / "cpus")))
+    cpu, load = _idlest_cpu(ecores)
+    started = time.monotonic()
+    r = subprocess.run([sys.executable, os.path.abspath(__file__), "--bench", str(cpu), str(rounds), str(slice_seconds)],
+                       capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(f"the CPU test failed: {(r.stderr or r.stdout).strip()[-300:]}")
+    result = json.loads(r.stdout)
+    rounds_seen = result.get("rounds") or [result["geomean"]]
+    # How much the core's speed moved between rounds: boost budgets, thermal limits, a busy core
+    spread = (max(rounds_seen) - min(rounds_seen)) / max(rounds_seen) if max(rounds_seen) else 0.0
+    return {"score": int(round(result["geomean"] * BENCH_SCALE, -1)), "cpu": cpu, "load": load,
+            "geomean": round(result["geomean"], 2), "rates": {k: round(v, 2) for k, v in result["rates"].items()},
+            "spread": round(spread, 3), "steady": spread <= BENCH_STEADY,
+            "seconds": round(time.monotonic() - started, 1), "python": platform.python_version(), "at": time.time()}
+
+
 # ── Evaluating ──────────────────────────────────────────────────────────────
 
 def _check(status, title, found, needs="", fix="", detail=""):
@@ -288,7 +399,7 @@ def _fmt_gb(n):
     return f"{n / 1024 ** 3:.0f} GB" if n >= 1024 ** 3 else f"{n / 1024 ** 2:.0f} MB"
 
 
-def evaluate(facts, subscribers=0, max_plan_mbps=0, link_mbps=0, score=None):
+def evaluate(facts, subscribers=0, max_plan_mbps=0, link_mbps=0, score=None, score_source="manual", score_rough=False):
     """{sections: [{name, checks}], counts, profile} for the GUI."""
     q = facts["queues"]
     cpu = facts["cpu"]
@@ -344,25 +455,35 @@ def evaluate(facts, subscribers=0, max_plan_mbps=0, link_mbps=0, score=None):
                              "Set exclude_efficiency_cores = true in lqos.conf: a queue on a slow E-core limits its subscribers."))
     checks.append(_check("info", "Shaping queues", f"{q.get('queues')} (one per core LibreQoS shapes on)",
                          "", "", "; ".join(q.get("warnings") or [])))
+    estimated = score_source == "estimated"
+    shown = (f"≈{score:,} (estimated{', rough' if score_rough else ''})" if estimated
+             else f"{score:,}" if score else "")
+    how = ""
+    if estimated:
+        how = ("Estimated by a short CPU test on this host. The CPU's speed changed during it (boost or thermal limits, "
+               "or a busy core), so this is rough." if score_rough else
+               "Estimated by a short CPU test on this host (about ±20%).") + \
+              " For an exact value, type the rating from cpubenchmark.net."
     if score:
         limits = single_thread_limits(score)
         if limits is None:
-            checks.append(_check("fail", "Single-thread score", f"{score}", "1000 or more",
-                                 "Below LibreQoS's table: expect under 1 Gbps per top-level node and under 100 Mbps plans."))
+            checks.append(_check("fail", "Single-thread score", shown, "1000 or more",
+                                 "Below LibreQoS's table: expect under 1 Gbps per top-level node and under 100 Mbps plans.",
+                                 how))
         else:
             node_gbps, plan_mbps = limits
             status = "warn" if max_plan_mbps and max_plan_mbps > plan_mbps else "pass"
             checks.append(_check(
-                status, "Single-thread score", f"{score}: up to {node_gbps} Gbps per top-level node (one core), "
+                status, "Single-thread score", f"{shown}: up to {node_gbps} Gbps per top-level node (one core), "
                 f"plans up to {plan_mbps} Mbps", f"plans ≤ {plan_mbps} Mbps",
                 f"Your largest plan is {max_plan_mbps:.0f} Mbps, above what one core of this CPU shapes safely. "
                 f"A faster CPU (single-thread) or smaller top plans." if status == "warn" else "",
-                f"With Auto CPU, set Settings → Topology → CPU capacity to {node_gbps * 1000} Mbps so a node that "
-                f"would overload one core is split."))
+                " ".join(t for t in (how, f"With Auto CPU, set Settings → Topology → CPU capacity to "
+                                          f"{node_gbps * 1000} Mbps so a node that would overload one core is split.") if t)))
     else:
-        checks.append(_check("info", "Single-thread score", "not entered", "",
-                             "Enter the CPU's single-thread rating from cpubenchmark.net to check plan and node limits "
-                             "and total capacity."))
+        checks.append(_check("info", "Single-thread score", "not known", "",
+                             "Run the CPU test (Detect), or type the CPU's single-thread rating from cpubenchmark.net, "
+                             "to check plan and node limits and total capacity."))
     temp = cpu.get("temp_c")
     if temp is not None:
         checks.append(_check("warn" if temp >= 85 else "pass", "CPU temperature", f"{temp:.0f} °C", "under 85 °C",
@@ -482,7 +603,7 @@ def evaluate(facts, subscribers=0, max_plan_mbps=0, link_mbps=0, score=None):
             checks.append(_check("warn", "Total capacity", "below LibreQoS's table (score under 1000)", ""))
         else:
             status = "pass" if not link_gbps or cap >= link_gbps else "warn"
-            checks.append(_check(status, "Total capacity", f"about {cap:.0f} Gbps on {capacity_cores} core(s) at score {score}",
+            checks.append(_check(status, "Total capacity", f"about {cap:.0f} Gbps on {capacity_cores} core(s) at score {shown}",
                                  f"≥ the {link_gbps:g} Gbps link in lqos.conf" if link_gbps else "",
                                  "" if status == "pass" else "The link is faster than this CPU can shape: a CPU with more "
                                  "cores or a higher single-thread score.",
@@ -494,3 +615,8 @@ def evaluate(facts, subscribers=0, max_plan_mbps=0, link_mbps=0, score=None):
         for c in sec["checks"]:
             counts[c["status"]] += 1
     return {"sections": sections, "counts": counts, "profile": name, "docs": DOCS}
+
+
+if __name__ == "__main__" and len(sys.argv) == 5 and sys.argv[1] == "--bench":
+    # estimate_single_thread() runs the test here, in a process of its own
+    print(json.dumps(run_bench(int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]))))
