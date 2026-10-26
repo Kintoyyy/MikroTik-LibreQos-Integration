@@ -516,6 +516,27 @@ The GUI's first tab shows the shaper live:
 
 ---
 
+## Hardware check
+
+**Troubleshoot → Hardware Check** compares this host with
+[LibreQoS v2.0's system requirements](https://libreqos.readthedocs.io/en/latest/docs/v2.0/requirements.html). Each line is
+passed, warning, failed or info, and shows what was found, what LibreQoS asks for, and what to do:
+
+| Section | Checks |
+|---------|--------|
+| System | Ubuntu Server 24.04; bare metal or VM. A VM costs about 30% of the throughput; above 10 Gbps it needs NIC passthrough, and it needs Multiqueue equal to its vCPUs |
+| CPU | at least 2 cores; Hyper-Threading / SMT off (it can interfere with XDP); E-cores excluded (`exclude_efficiency_cores`); the queue count LibreQoS will use; CPU temperature under 85 °C |
+| Single-thread score | optional: the CPU's single-thread rating from cpubenchmark.net. It gives the most per top-level node and the largest safe plan from LibreQoS's table (1000 → 1 Gbps / 100 Mbps … 4000 → 5 Gbps / 3 Gbps). Your largest plan is checked against it, and it suggests a CPU capacity for Auto CPU |
+| Memory & disk | RAM for your subscriber count (8 GB → 1,000, 16 → 2,500, 32 → 5,000, 64 → 10,000, 128 → 20,000 with CAKE); a disk of 50 GB or more, with 10% free |
+| Network | for each shaping interface in lqos.conf: present; on the supported list (Intel X520 / X710 / XXV710 / XL710, Mellanox ConnectX-4 Lx / 6 / 7); native XDP; at least one queue per shaping core; link speed and state; not bonded. Also: both ports on one dedicated NIC, and a separate management interface |
+| Capacity & sizing | the sizing profile for your subscriber count and link (Small / Medium / Large / High-throughput) against this host's cores and RAM; with a score, the total capacity from LibreQoS's cores × score table against the link in lqos.conf |
+
+Capacity and sizing count real cores: with Hyper-Threading on, two queues share one core. The score is saved in
+`settings.json` (`hardware.single_thread_score`) for the next run. **Copy report** puts the result on the clipboard as text.
+The check only reads (sysfs, /proc, `lspci`, `ethtool -l`, `systemd-detect-virt`) and changes nothing.
+
+---
+
 ## Events (warning & error history)
 
 The **Events** tab keeps a history of what went wrong, in `devices.db`, for `events.keep_days` (30) days after each entry

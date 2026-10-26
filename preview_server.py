@@ -401,7 +401,67 @@ def seed_sandbox(sandbox, port, nic_queues=8, cpus=8, ecores=2, link_mbps=10000)
     os.makedirs(atom, exist_ok=True)
     with open(os.path.join(atom, "cpus"), "w") as f:
         f.write(f"{cpus - ecores}-{cpus - 1}\n" if 0 < ecores < cpus else "\n")
+    seed_fake_hardware(os.path.join(sandbox, "sys"))
     return netplan
+
+
+# The hardware the Troubleshoot hardware check sees: a dual-port Intel X710 for
+# shaping (i40e), an onboard Intel port for management, Hyper-Threading off.
+FAKE_NICS = {   # interface: (PCI address, vendor, device, driver, Mbps)
+    "ens16": ("0000:03:00.0", "0x8086", "0x1572", "i40e", 10000),
+    "ens17": ("0000:03:00.1", "0x8086", "0x1572", "i40e", 10000),
+    "ens18": ("0000:00:1f.6", "0x8086", "0x15bc", "e1000e", 1000),
+}
+FAKE_LSPCI = {"0x1572": ("Intel Corporation", "Ethernet Controller X710 for 10GbE SFP+"),
+              "0x15bc": ("Intel Corporation", "Ethernet Connection (7) I219-V")}
+
+
+def seed_fake_hardware(sysfs):
+    drivers = os.path.join(sysfs, "bus", "pci", "drivers")
+    for iface, (addr, vendor, device, driver, speed) in FAKE_NICS.items():
+        pci = os.path.join(sysfs, "devices", "pci0000:00", addr)
+        os.makedirs(pci, exist_ok=True)
+        os.makedirs(os.path.join(drivers, driver), exist_ok=True)
+        for name, value in (("vendor", vendor), ("device", device)):
+            with open(os.path.join(pci, name), "w") as f:
+                f.write(value + "\n")
+        if not os.path.islink(os.path.join(pci, "driver")):
+            os.symlink(os.path.join(drivers, driver), os.path.join(pci, "driver"))
+        net = os.path.join(sysfs, "class", "net", iface)
+        os.makedirs(net, exist_ok=True)
+        if not os.path.islink(os.path.join(net, "device")):
+            os.symlink(pci, os.path.join(net, "device"))
+        for name, value in (("speed", str(speed)), ("operstate", "up")):
+            with open(os.path.join(net, name), "w") as f:
+                f.write(value + "\n")
+    smt = os.path.join(sysfs, "devices", "system", "cpu", "smt")
+    os.makedirs(smt, exist_ok=True)
+    for name, value in (("active", "0"), ("control", "off")):
+        with open(os.path.join(smt, name), "w") as f:
+            f.write(value + "\n")
+
+
+def fake_hw_run(sysfs):
+    """lspci / ethtool / systemd-detect-virt as they would answer on the fake hardware."""
+    def run(cmd, timeout=10):
+        if cmd[0] == "systemd-detect-virt":
+            return 1, "none\n"
+        if cmd[0] == "lspci":
+            addr = cmd[2]
+            device = next((d for a, _, d, _, _ in FAKE_NICS.values() if a == addr), None)
+            if device in FAKE_LSPCI:
+                vendor, name = FAKE_LSPCI[device]
+                return 0, f'{addr[5:]} "Ethernet controller" "{vendor}" "{name}" -r02 "{vendor}" "{name}"\n'
+            return 1, ""
+        if cmd[0] == "ethtool" and cmd[1] == "-l":
+            try:
+                n = sum(1 for e in os.listdir(os.path.join(sysfs, "class", "net", cmd[2], "queues")) if e.startswith("tx-"))
+            except OSError:
+                n = 1
+            return 0, (f"Channel parameters for {cmd[2]}:\nPre-set maximums:\nRX:\t\tn/a\nTX:\t\tn/a\nOther:\t\t1\n"
+                       f"Combined:\t{n}\nCurrent hardware settings:\nRX:\t\tn/a\nTX:\t\tn/a\nOther:\t\t1\nCombined:\t{n}\n")
+        return 127, ""
+    return run
 
 
 # ── Fake subscribers ────────────────────────────────────────────────────────
@@ -1106,6 +1166,7 @@ def install_fakes(gui, ring, systemd, netplan, counters, shaper, cores=8):
                                        else (s["address"], s["port"]))
     fake_snmpd_setup(gui, host_agent, os.path.dirname(str(gui.SETTINGS_PATH)))
     seed_host_rrd(gui, shaper.link_bps)
+    gui._hw_run = fake_hw_run(os.environ["LQSYNC_SYSFS"])
 
     def raise_preview(*_a, **_k):
         raise RuntimeError("preview: routers and root actions are simulated")

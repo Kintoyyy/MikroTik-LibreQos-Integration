@@ -38,6 +38,7 @@ from device_database import (
 import app_update
 import cpu_planner
 import event_log
+import hardware_check
 import host_snmp
 import queue_stats
 import snmp
@@ -2086,6 +2087,44 @@ def _snmpd_setup_job(community):
         except Exception as e:
             result.update(ok=False, error=f"saving settings.json: {e}")
     _snmpd_job.update(running=False, result=result)
+
+
+# ── Hardware check (Troubleshoot) against LibreQoS v2.0's requirements ──────
+_hw_run = hardware_check._run           # read-only commands (lspci, ethtool, …); the preview fakes them
+HW_PATHS = {"proc": "/proc", "etc": "/etc"}
+
+
+@app.route("/api/troubleshoot/hardware", methods=["POST"])
+@require_auth
+def troubleshoot_hardware():
+    """Check this host against LibreQoS's requirements. A single-thread score in the body is saved for next time."""
+    data = request.get_json(silent=True) or {}
+    content = json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}
+    if "score" in data:
+        try:
+            score = max(0, min(int(data.get("score") or 0), 20000))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "the single-thread score must be a number"}), 400
+        content["hardware"] = {**(content.get("hardware") or {}), "single_thread_score": score}
+        atomic_write_text(SETTINGS_PATH, json.dumps(content, indent=4))
+    score = int((content.get("hardware") or {}).get("single_thread_score") or 0)
+
+    conf = _lqos_conf_dict()
+    sysfs = cpu_planner.SYSFS_ROOT or os.environ.get("LQSYNC_SYSFS") or "/sys"
+    facts = hardware_check.gather(conf, sysfs=sysfs, run=_hw_run, **HW_PATHS)
+    subscribers = max_plan = 0
+    if DB_PATH.exists():
+        con = _db_con()
+        try:
+            subscribers, max_plan = con.execute(
+                "SELECT COUNT(DISTINCT circuit_id), MAX(download_max_mbps) FROM devices").fetchone()
+        except sqlite3.Error:
+            pass
+        finally:
+            con.close()
+    link = _num_or_none((conf.get("queues") or {}).get("downlink_bandwidth_mbps")) or 0
+    result = hardware_check.evaluate(facts, subscribers or 0, max_plan or 0, link, score or None)
+    return jsonify({"ok": True, "score": score, "cpu_model": facts["cpu"]["model"], **result})
 
 
 # ── Events: the warning & error history ─────────────────────────────────────

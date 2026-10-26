@@ -239,6 +239,22 @@ a.btn-ghost { text-decoration: none; }
 .hsnmp-log .ok { color: var(--green); }
 .hsnmp-log .bad { color: #ff7b72; }
 
+/* ── Hardware check ── */
+.hw-summary { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 .25rem; align-items: center; font-size: .8rem; }
+.hw-chip { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid var(--border); border-radius: 12px; padding: .15rem .65rem; }
+.hw-sec { margin-top: 1rem; }
+.hw-sec h6 { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 .35rem; display: flex; gap: .4rem; align-items: center; }
+.hw-row { display: grid; grid-template-columns: 20px minmax(140px, 22%) minmax(0, 1fr); gap: .25rem .7rem; padding: .45rem 0; border-bottom: 1px solid var(--hair); font-size: .8rem; }
+.hw-row:last-child { border-bottom: none; }
+.hw-row .t { color: var(--strong); font-weight: 500; }
+.hw-row .f { color: var(--text); overflow-wrap: anywhere; }
+.hw-row .n { color: var(--muted); font-size: .74rem; margin-top: .15rem; }
+.hw-row .x { grid-column: 3; font-size: .76rem; line-height: 1.5; }
+.hw-row .x.fix { color: var(--text); }
+.hw-row .x.detail { color: var(--muted); }
+.hw-ico.pass { color: var(--green); } .hw-ico.warn { color: var(--yellow); } .hw-ico.fail { color: #ff7b72; } .hw-ico.info { color: var(--muted); }
+@media(max-width:600px){ .hw-row { grid-template-columns: 20px minmax(0, 1fr); } .hw-row .f, .hw-row .x { grid-column: 2; } }
+
 /* ── Events: warning & error history ── */
 .ev-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; margin-bottom: 1rem; }
 @media(max-width:800px){ .ev-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -1292,6 +1308,37 @@ code { font-size: .8rem; color: #94a3b8; }
           <button class="btn-danger-ghost" onclick="rollbackApp()"><i class="bi bi-arrow-counterclockwise"></i> Roll back</button>
         </div>
       </details>
+    </div>
+  </div>
+
+  <!-- Hardware check against LibreQoS v2.0's requirements -->
+  <div class="card" style="margin-bottom:1rem">
+    <div class="card-hd">
+      <span><i class="bi bi-motherboard"></i> Hardware Check <span class="hd-sub">against LibreQoS v2.0's system requirements</span></span>
+      <a class="btn-ghost" href="https://libreqos.readthedocs.io/en/latest/docs/v2.0/requirements.html" target="_blank" rel="noopener">
+        <i class="bi bi-book"></i> Requirements</a>
+    </div>
+    <div class="card-bd">
+      <p style="font-size:.8rem;color:var(--muted);margin:0 0 .8rem;line-height:1.55">
+        Checks this host against LibreQoS's requirements: Ubuntu 24.04, bare metal or VM, CPU cores, Hyper-Threading,
+        E-cores, RAM for your subscriber count, disk, the shaping NICs (supported model, native XDP, enough queues,
+        no bonding), a separate management port, and whether the CPU can shape your plans and your link.
+      </p>
+      <div class="form-row form-row-3" style="align-items:end">
+        <div>
+          <label class="form-label">CPU single-thread score <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+          <input class="form-input" type="number" id="hw-score" min="0" max="20000" placeholder="e.g. 3200">
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem">
+            The CPU's single-thread rating on <a id="hw-score-link" href="https://www.cpubenchmark.net/singleThread.html"
+            target="_blank" rel="noopener" style="color:var(--accent)">cpubenchmark.net</a>, for the plan, node and capacity checks
+          </div>
+        </div>
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+          <button class="btn-primary" id="hw-run" onclick="runHardwareCheck()"><i class="bi bi-clipboard2-pulse"></i> Run hardware check</button>
+          <button class="btn-ghost" id="hw-copy" onclick="copyHardwareReport()" style="display:none"><i class="bi bi-clipboard"></i> Copy report</button>
+        </div>
+      </div>
+      <div id="hw-result"></div>
     </div>
   </div>
 
@@ -6464,6 +6511,7 @@ async function loadAppSettings() {
   g('set-login-attempts',  s.gui?.login_max_attempts           ?? 5);
   g('set-login-lockout',   s.gui?.login_lockout_seconds        ?? 60);
   g('set-events-days',     s.events?.keep_days                 ?? 30);
+  g('hw-score',            s.hardware?.single_thread_score     || '');
   g('set-burst-enabled',   s.burst?.enabled                    ?? false);
   g('set-burst-seconds',   s.burst?.seconds                    ?? 4);
   g('set-burst-max',       s.burst?.max_mb                     ?? 256);
@@ -6968,6 +7016,84 @@ function setGraphRange(r) {
   graphRange = r;
   try { localStorage.setItem('graphRange', r); } catch (e) {}
   renderGraphs();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// HARDWARE CHECK (Troubleshoot) — this host against LibreQoS v2.0's requirements
+// ══════════════════════════════════════════════════════════════════════════
+const HW_ICONS = { pass: 'bi-check-circle-fill', warn: 'bi-exclamation-triangle-fill', fail: 'bi-x-octagon-fill',
+                   info: 'bi-info-circle' };
+const HW_WORDS = { pass: 'passed', warn: 'warning', fail: 'failed', info: 'info' };
+let hwLast = null;
+
+async function runHardwareCheck() {
+  const btn = document.getElementById('hw-run');
+  const box = document.getElementById('hw-result');
+  const raw = document.getElementById('hw-score').value.trim();
+  btn.disabled = true;
+  box.innerHTML = '<div class="graph-empty"><i class="bi bi-hourglass-split"></i> Checking this host…</div>';
+  try {
+    const d = await apiJson('/api/troubleshoot/hardware', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(raw === '' ? {} : { score: Number(raw) }),
+    });
+    if (!d.ok) throw new Error(d.error || 'check failed');
+    hwLast = d;
+    renderHardware(d);
+  } catch (e) {
+    box.innerHTML = `<div class="graph-empty" style="color:#ff7b72">${esc(e.message)}</div>`;
+  }
+  btn.disabled = false;
+}
+
+function renderHardware(d) {
+  if (d.score) document.getElementById('hw-score').value = d.score;
+  document.getElementById('hw-score-link').href =
+    'https://www.google.com/search?q=' + encodeURIComponent(`${d.cpu_model} cpubenchmark single thread rating`);
+  document.getElementById('hw-copy').style.display = '';
+  const c = d.counts;
+  const chip = (status, n) => n ? `<span class="hw-chip"><i class="bi ${HW_ICONS[status]} hw-ico ${status}"></i>${n} ${
+    status === 'pass' ? 'passed' : status === 'warn' ? `warning${n === 1 ? '' : 's'}` : status === 'fail' ? 'failed' : 'info'}</span>` : '';
+  const verdict = c.fail ? 'Below LibreQoS\'s requirements' : c.warn ? 'Meets the requirements, with warnings' : 'Meets LibreQoS\'s requirements';
+  document.getElementById('hw-result').innerHTML = `
+    <div class="hw-summary"><b style="color:var(--strong)">${verdict}</b>
+      ${chip('fail', c.fail)}${chip('warn', c.warn)}${chip('pass', c.pass)}
+      <span class="hw-chip">sizing profile: ${esc(d.profile)}</span></div>
+    ${d.sections.map(s => `<div class="hw-sec"><h6><i class="bi ${esc(s.icon)}"></i>${esc(s.name)}</h6>
+      ${s.checks.map(ch => `<div class="hw-row">
+        <i class="bi ${HW_ICONS[ch.status]} hw-ico ${ch.status}" title="${HW_WORDS[ch.status]}"></i>
+        <span class="t">${esc(ch.title)}</span>
+        <span class="f">${esc(ch.found)}${ch.needs ? `<div class="n">LibreQoS: ${esc(ch.needs)}</div>` : ''}</span>
+        ${ch.fix ? `<div class="x fix"><i class="bi bi-wrench"></i> ${esc(ch.fix)}</div>` : ''}
+        ${ch.detail ? `<div class="x detail">${esc(ch.detail)}</div>` : ''}
+      </div>`).join('')}</div>`).join('')}`;
+}
+
+async function copyHardwareReport() {
+  const d = hwLast;
+  if (!d) return;
+  const lines = [`LibreQoS hardware check (${d.docs})`,
+                 `pass ${d.counts.pass} · warnings ${d.counts.warn} · failed ${d.counts.fail} · profile ${d.profile}`];
+  d.sections.forEach(s => {
+    lines.push('', `== ${s.name} ==`);
+    s.checks.forEach(ch => {
+      lines.push(`[${ch.status.toUpperCase()}] ${ch.title}: ${ch.found}` + (ch.needs ? `  (LibreQoS: ${ch.needs})` : ''));
+      if (ch.fix) lines.push(`    fix: ${ch.fix}`);
+      if (ch.detail) lines.push(`    ${ch.detail}`);
+    });
+  });
+  const text = lines.join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {                                     // plain http: no clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+  toast('Copied the hardware report', true);
 }
 
 // ══════════════════════════════════════════════════════════════════════════

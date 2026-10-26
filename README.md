@@ -138,7 +138,7 @@ The GUI runs as a separate systemd service (`gui.service`) on port **5000**.
 | **Topology** | Sankey diagram showing bandwidth flow from parent nodes to devices; overview and detail modes |
 | **Builder** | Drag-and-drop editor for the site / AP / router hierarchy (`auto_cpu`), with a live preview of the per-core CPU plan, the generated `network.json` and its warnings |
 | **Devices** | Live device table with search and filter; manually add, edit, or delete devices |
-| **Troubleshooting** | MikroTik API diagnostics, lqusers reset, one-click LibreQoS installer, and **App Update** (see below) |
+| **Troubleshooting** | **Hardware Check** against LibreQoS v2.0's requirements (see [CONFIG.md](CONFIG.md#hardware-check)), MikroTik API diagnostics, lqusers reset, one-click LibreQoS installer, and **App Update** (see below) |
 
 ### Updating from GitHub
 
