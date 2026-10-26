@@ -244,19 +244,55 @@ class PlannerTest(Invariants, unittest.TestCase):
         self.assertEqual(json.dumps(a.network), json.dumps(b.network))
         self.assertEqual(a.parents, b.parents)
 
-    def test_shard_hysteresis(self):
-        routers = ["BIG", "S"]
-        devices = devs("BIG", 120) + devs("S", 100)
+    def test_shrunk_router_goes_back_to_one_cpu(self):
+        routers = ["BIG", "S1", "S2"]
+        devices = devs("BIG", 120) + devs("S1", 50) + devs("S2", 50)
         p = plan(devices, routers, None, Params(bins=2))
         self.assertEqual(len(p.shards.get("BIG", [])), 2)
-        # BIG shrinks to just under the fair share (9500 of 10000): it keeps 2 shards...
-        smaller = with_parents(devices, p.parents)[:95] + devs("S", 105)
+        # BIG shrinks well below one core's share: it becomes one router node again
+        smaller = with_parents(devices, p.parents)[:40] + devs("S1", 50) + devs("S2", 50)
         p2 = plan(smaller, routers, None, Params(bins=2), prior_from_network(p.network))
-        self.assertEqual(len(p2.shards.get("BIG", [])), 2)
-        # ...and merges back only well below it.
-        tiny = with_parents(devices, p.parents)[:40] + devs("S", 100)
-        p3 = plan(tiny, routers, None, Params(bins=2), prior_from_network(p.network))
-        self.assertNotIn("BIG", p3.shards)
+        self.check(p2, smaller, routers)
+        self.assertNotIn("BIG", p2.shards)
+        self.assertEqual({p2.parents[d.code] for d in smaller if d.router == "BIG"}, {"BIG"})
+
+    def test_two_big_routers_fill_every_cpu_evenly(self):
+        # A split site whose two routers each need several cores: the shards must
+        # fill all 16 CPUs evenly, never two shards of one router on one CPU.
+        import random
+        rng = random.Random(5)
+        plans = [10, 25, 50, 50, 100, 100, 200]
+        devices = [Device(f"A-{i:04d}", "AC 1", rng.choice(plans), 10) for i in range(860)] + \
+                  [Device(f"B-{i:04d}", "AC 2", rng.choice(plans), 10) for i in range(682)]
+        routers = ["AC 1", "AC 2"]
+        t = topo(node("s1", "san-poli", routers=routers))
+        p = plan(devices, routers, t, Params(bins=16))
+        self.check(p, devices, routers)
+        loads = [b["dl"] for b in p.bins]
+        self.assertLess(max(loads) / min(loads), 1.1)
+        for r in routers:
+            self.assertEqual(len({s["bin"] for s in p.shards[r]}), len(p.shards[r]))
+        self.assertLessEqual(len(p.shards["AC 1"]) + len(p.shards["AC 2"]), 16 + 1)
+        again = plan(with_parents(devices, p.parents), routers, t, Params(bins=16), prior_from_network(p.network))
+        self.assertEqual(again.device_changes, 0)
+        self.assertEqual(again.network, p.network)
+
+    def test_two_shards_on_one_cpu_are_rebalanced(self):
+        # An older plan left 5 shards on 4 CPUs (CPU3 held two): only the overflow moves.
+        devices = [Device(f"BIG-{i:04d}", "BIG", 100, 10) for i in range(400)]
+        parents, net = {}, {f"CPU{i}": {"children": {}} for i in range(4)}
+        for i, d in enumerate(devices):
+            shard = i // 80
+            name = "BIG" if shard == 0 else f"BIG #{shard + 1}"
+            parents[d.code] = name
+            net[f"CPU{min(shard, 3)}"]["children"][name] = {"children": {}}
+        devices = with_parents(devices, parents)
+        p = plan(devices, ["BIG"], None, Params(bins=4), prior_from_network(net))
+        self.check(p, devices, ["BIG"])
+        loads = [b["dl"] for b in p.bins]
+        self.assertLess(max(loads) / min(loads), 1.12)
+        self.assertEqual(len(p.shards["BIG"]), 4)
+        self.assertLess(p.device_changes, 120)                # of 400: the rest stayed put
 
     def test_zero_loads_spread(self):
         routers = [f"R{i}" for i in range(4)]

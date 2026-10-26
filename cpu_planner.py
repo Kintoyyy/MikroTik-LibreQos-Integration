@@ -41,6 +41,9 @@ MAX_NODES = 1000
 # Undo a promotion or a shard split only once the load falls below this
 # share of the limit, so a load hovering at the limit does not flap.
 STRUCT_HYSTERESIS = 0.8
+# A split router's device stays on its CPU while that CPU is at most this
+# much over the level every CPU should reach; beyond it, devices move.
+SHARD_SLACK = 1.05
 DEFAULT_CAPACITY_MBPS = 3000
 
 # The preview server points these at a fake sysfs / CPU count.
@@ -583,6 +586,18 @@ class _Names:
         return cand
 
 
+def _water_level(loads, extra):
+    """The level L where pouring `extra` into the emptiest bins fills them: Σ max(0, L - load) = extra."""
+    ordered = sorted(loads)
+    acc = 0.0
+    for k, x in enumerate(ordered, 1):
+        acc += x
+        level = (extra + acc) / k
+        if k == len(ordered) or level <= ordered[k]:
+            return level
+    return 0.0
+
+
 def _sum(devs):
     dl = ul = n = 0
     for d in devs:
@@ -604,6 +619,7 @@ class _Planner:
         self.routers = list(dict.fromkeys(router_names))
         self.topology = topology if isinstance(topology, dict) else {"nodes": []}
         self.bin_names = [f"CPU{i}" for i in range(self.N)]
+        self.bin_index = {name: i for i, name in enumerate(self.bin_names)}
         self.names = _Names(self.bin_names)
 
     def warn(self, level, text):
@@ -762,7 +778,7 @@ class _Planner:
         return False
 
     def expand(self):
-        self.items, self.promoted, self.shards = [], [], {}
+        self.items, self.promoted, self.shards, self.split_routers = [], [], {}, []
         self.status_node, self.status_router = {}, {}
         for n in self.roots:
             self.expand_node(n)
@@ -798,16 +814,14 @@ class _Planner:
         for r in n.routers:
             self.expand_router(r)
 
-    def _shard_count(self, load, kp, ndev):
-        need = math.ceil(load / self.limit) if load > 0 else 1
-        if kp >= 2:
-            if need >= kp:
-                k = need
-            else:
-                k = need if load < (kp - 1) * self.limit * STRUCT_HYSTERESIS else kp
-        else:
-            k = need if load > self.limit else 1
-        return max(1, min(k, self.N, ndev))
+    def _shard_names(self, r):
+        """Matches the router's node name and its shard names ("R #2", "R #3 (shard)", …)."""
+        return re.compile(re.escape(self.rnode[r]) + r"(?: #\d+)?(?: \(shard\)(?: \d+)?)?$")
+
+    def _was_split(self, r):
+        """Split over several CPUs last time: one of its devices sat in a "R #n" shard."""
+        base, pat = self.rnode[r], self._shard_names(r)
+        return any(d.parent and d.parent != base and pat.match(d.parent) for d in self.by_router[r])
 
     def expand_router(self, r):
         o = self.ropts[r]
@@ -821,65 +835,22 @@ class _Planner:
             self.items.append(_Item(f"router:{r}", "router", base, dl, ul, c, router=r,
                                     devices=devs, pin=o["pin"]))
             return
-        k = 1
-        if o["shard"] and self.limit < math.inf:
-            pat = re.compile(re.escape(base) + r' #(\d+)')
-            kp = 0
-            for d in devs:
-                if d.parent == base:
-                    kp = max(kp, 1)
-                else:
-                    m = pat.match(d.parent or '')
-                    if m:
-                        kp = max(kp, int(m.group(1)))
-            k = self._shard_count(dl, kp, len(devs))
-        if k == 1:
+        split = False
+        if o["shard"] and self.limit < math.inf and len(devs) >= 2:
+            split = dl > self.limit * (STRUCT_HYSTERESIS if self._was_split(r) else 1.0)
+        if not split:
             if dl > self.limit:
                 why = "sharding is off" if not o["shard"] else "it has too few devices or CPUs"
                 self.warn("warn", f"router '{r}' carries {dl} Mbps of plans, above the split limit "
                                   f"{int(self.limit)}, but stays whole ({why})")
             self.items.append(_Item(f"router:{r}", "router", base, dl, ul, c, router=r, devices=devs))
             return
-
-        snames = [base] + [self.names.claim(f"{base} #{i}", "(shard)") for i in range(2, k + 1)]
-        split = self._split_devices(devs, snames)
-        out = []
-        for s in snames:
-            sdl, sul, sc = _sum(split[s])
-            it = _Item(f"shard:{s}", "shard", s, sdl, sul, sc, router=r, devices=split[s])
-            self.items.append(it)
-            out.append(it)
-        self.shards[r] = out
+        # Spread over the CPUs in pack(), after the whole items (_fill_shards).
+        self.split_routers.append(r)
         if o["dl"] or o["ul"]:
-            self.warn("warn", f"router '{r}' is split into {k} shards; its configured limit applies to each shard")
+            self.warn("warn", f"router '{r}' is split across CPUs; its configured limit applies to each shard")
         if dl > self.N * self.limit:
             self.warn("error", f"router '{r}' alone needs more than all {self.N} CPUs")
-
-    def _split_devices(self, devs, snames):
-        loads = {s: 0 for s in snames}
-        members = {s: [] for s in snames}
-        out = {s: [] for s in snames}
-        fresh = []
-        for d in devs:
-            if self.P.sticky and d.parent in loads:
-                loads[d.parent] += max(1, d.dl) if d.has_ip else 0
-                members[d.parent].append((d.code, max(1, d.dl) if d.has_ip else 0))
-                out[d.parent].append(d)
-            else:
-                fresh.append(d)
-        idx = {s: i for i, s in enumerate(snames)}
-        for d in sorted(fresh, key=lambda d: (-(max(1, d.dl) if d.has_ip else 0), d.code)):
-            s = min(snames, key=lambda s: (loads[s], len(out[s]), idx[s]))
-            w = max(1, d.dl) if d.has_ip else 0
-            loads[s] += w
-            members[s].append((d.code, w))
-            out[s].append(d)
-        by_code = {d.code: d for d in devs}
-        for code, src, dst in rebalance_moves(loads, members, self.P.rebalance_ratio):
-            d = by_code[code]
-            out[src].remove(d)
-            out[dst].append(d)
-        return out
 
     # ── 4. pack ────────────────────────────────────────────────────────────
     def pack(self):
@@ -946,6 +917,102 @@ class _Planner:
             if d.has_ip:
                 self.bin_dl[b] += max(1, d.dl)
             counts[b] += 1
+
+        self._fill_shards()
+
+    def _fill_shards(self):
+        """
+        Spread each split router's devices over the CPUs so that, together with
+        the whole items already placed, every CPU ends up at the same load (the
+        water level). A device stays on its CPU while that CPU is at most
+        SHARD_SLACK over the level; new and displaced devices go to the
+        router's own CPUs first, then to the emptiest ones, so a router uses as
+        few CPUs as it can. Each (router, CPU) pair becomes one shard node.
+        """
+        if not self.split_routers:
+            return
+        N = self.N
+
+        def wt(d):
+            return max(1, d.dl) if d.has_ip else 0
+        level = _water_level(self.bin_dl, sum(wt(d) for r in self.split_routers for d in self.by_router[r]))
+        cap = level * SHARD_SLACK
+        load = list(self.bin_dl)
+        groups = {r: {} for r in self.split_routers}          # router → {CPU: [devices]}
+        free = {r: [] for r in self.split_routers}
+        sticky = []
+        for r in self.split_routers:
+            for d in self.by_router[r]:
+                place = self.prior.places.get(d.parent) if self.prior_ok and d.parent else None
+                b = self.bin_index.get(place[0]) if place else None
+                if b is None:
+                    free[r].append(d)
+                else:
+                    sticky.append((b, r, d))
+        for b, r, d in sorted(sticky, key=lambda s: (s[0], s[2].code)):
+            if load[b] + wt(d) <= cap:
+                groups[r].setdefault(b, []).append(d)
+                load[b] += wt(d)
+            else:
+                free[r].append(d)                              # its CPU is over the level: move it
+        for r in sorted(self.split_routers, key=lambda r: (-sum(wt(d) for d in free[r]), r)):
+            for d in sorted(free[r], key=lambda d: (-wt(d), d.code)):
+                own = sorted(groups[r], key=lambda b: (load[b], b))
+                rest = sorted((b for b in range(N) if b not in groups[r]), key=lambda b: (load[b], b))
+                b = next((b for b in own + rest if load[b] < level and load[b] + wt(d) <= cap), None)
+                if b is None:
+                    b = min(range(N), key=lambda b: (load[b], b))
+                groups[r].setdefault(b, []).append(d)
+                load[b] += wt(d)
+
+        for r in self.split_routers:
+            names = self._name_shards(r, groups[r])
+            kind = "shard" if len(groups[r]) > 1 else "router"
+            items = []
+            for b in sorted(groups[r]):
+                devs = groups[r][b]
+                sdl, sul, sc = _sum(devs)
+                it = _Item(f"{kind}:{names[b]}", kind, names[b], sdl, sul, sc, router=r, devices=devs, bin=b)
+                self.items.append(it)
+                self.bin_items[b].append(it)
+                self.bin_dl[b] += sdl
+                items.append(it)
+            if len(items) > 1:
+                self.shards[r] = items
+
+    def _name_shards(self, r, groups):
+        """
+        {CPU: shard name}: a CPU keeps the name most of its devices had there in
+        the last plan; the others get the router's name, then "R #2", "R #3", ….
+        """
+        base, pat = self.rnode[r], self._shard_names(r)
+        if len(groups) == 1:
+            return {b: base for b in groups}
+        names, used = {}, set()
+        for b, devs in sorted(groups.items(), key=lambda g: (-len(g[1]), g[0])):
+            seen = {}
+            for d in devs:
+                place = self.prior.places.get(d.parent) if d.parent and pat.match(d.parent) else None
+                if place and place[0] == self.bin_names[b]:
+                    seen[d.parent] = seen.get(d.parent, 0) + 1
+            for name in sorted(seen, key=lambda n: (-seen[n], n)):
+                if name not in used:
+                    names[b] = name
+                    used.add(name)
+                    break
+        k = 2
+        for b in sorted(groups):
+            if b in names:
+                continue
+            if base not in used:
+                names[b] = base
+            else:
+                while f"{base} #{k}" in used:
+                    k += 1
+                names[b] = f"{base} #{k}"
+            used.add(names[b])
+        # The router's own name is already claimed for it; shard names are claimed here.
+        return {b: (n if n == base else self.names.claim(n, "(shard)")) for b, n in names.items()}
 
     # ── 5. emit ────────────────────────────────────────────────────────────
     def _mk(self, kind, ident, dl, ul, ntype, virtual=False):
