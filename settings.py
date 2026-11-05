@@ -137,6 +137,13 @@ _DEFAULTS = {
         "pause_above_pct": 80,
         "resume_below_pct": 60,
     },
+    "auto_fix": {
+        # The GUI applies the safe fixes (graph file repair, restarting a
+        # stopped / stuck service, restarting lqosd when LibreQoS updates
+        # fail) on its own. Each job's fix is tried at most once per cooldown.
+        "enabled": True,
+        "cooldown_minutes": 15,
+    },
 }
 
 
@@ -288,6 +295,16 @@ def events_settings():
     except (TypeError, ValueError):
         keep = 30.0
     return {"keep_days": min(max(keep, 1.0), 3650.0)}
+
+
+def auto_fix_settings():
+    """The [auto_fix] settings, re-read from settings.json on every call (no restart needed)."""
+    a = _load()["auto_fix"]
+    try:
+        cooldown = float(a.get("cooldown_minutes", 15))
+    except (TypeError, ValueError):
+        cooldown = 15.0
+    return {"enabled": bool(a.get("enabled", True)), "cooldown": min(max(cooldown, 1.0), 1440.0) * 60}
 
 
 def host_snmp_settings():

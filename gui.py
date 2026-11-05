@@ -1,4 +1,5 @@
 import os
+import errno
 import json
 import random
 import shutil
@@ -29,16 +30,17 @@ from settings import (
     LOGIN_MAX_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, WAN_MANUAL_ACTIVE_CUTOFF, SCAN_INTERVAL,
     LQOS_CONF_PATH as _SETTINGS_LQOS_CONF,
     atomic_write_text, write_if_changed, libreqos_dir, libreqos_version, burst_settings,
-    topology_settings, host_snmp_settings, events_settings,
+    topology_settings, host_snmp_settings, events_settings, auto_fix_settings,
 )
 from device_database import (
     ensure_jobs_table, prune_jobs, timed_job, unshaped_by_ip_ranges,
-    ensure_webhook_table, record_webhook_event,
+    ensure_webhook_table, record_webhook_event, request_rescan, request_apply,
 )
 import app_update
 import cpu_planner
 import event_log
 import hardware_check
+import job_fixer
 import host_snmp
 import queue_stats
 import snmp
@@ -908,10 +910,14 @@ def _job_conditions(conn, now):
         ctx = {"job": name, "kind": kind, "service": service, "runs": runs, "failed runs": errors,
                "last run": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_run)) if last_run else "never"}
         if status == "error":
+            diag = job_fixer.diagnose({"name": name, "kind": kind, "service": service, "status": status,
+                                       "last_error": last_error})
             out.append({"key": f"job:{name}:failing", "level": "error", "title": f"Job '{name}' is failing",
                         "message": last_error or "failed", "context": ctx,
-                        "detail": f"Its last run failed ({errors} of {runs} runs have failed so far).",
-                        "fix": f"See the {service} logs on the Services tab for the full error."})
+                        "detail": f"Its last run failed ({errors} of {runs} runs have failed so far). "
+                                  + (diag["cause"] if diag else ""),
+                        "fix": (f"Pollers → Pollers and jobs → “{diag['label']}”. " if diag else "")
+                               + f"The {service} logs on the Services tab have the full error."})
         if every and last_run and now - last_run > every * 2.5 + 60:
             out.append({"key": f"job:{name}:late", "level": "warning", "title": f"Job '{name}' has stopped running",
                         "message": f"'{name}' runs every {every:.0f} s but last ran {(now - last_run) / 60:.0f} min ago.",
@@ -1313,39 +1319,45 @@ def _poll_routers(conn):
     targets = _router_targets(_load_config())
     latest, job_names = {}, []
     for kind, router in targets:
-        name = router.get("name") or router.get("address", "")
-        job_names.append(f"router {name}")
-        with timed_job(conn, f"router {name}", "router", "gui", MONITOR_STEP) as job:
-            info = _poll_router(kind, router)
-            job["error"] = info["error"]
-        key = _router_key(kind, name)
-        with _mon_lock:
-            prev = _mon["routers"].get(key)
-        rules, lists = info.pop("nat_rules", None), info.pop("nat_lists", {})
-        if rules is not None:
-            info["nat"] = _nat_findings(rules, lists, _router_ips(conn, name))
-        elif info.get("via") == "snmp" and prev and "nat" in prev:
-            info["nat"] = prev["nat"]        # SNMP polls check NAT (over the API) only now and then
-        if kind == "bras" and info.get("via") == "snmp" and info.get("ok") and _service_on(router, "hotspot"):
-            info["hotspot"] = _scanned_hotspot_users(conn, name)
-        _add_interface_rates(info, prev)
+        job_names.append(f"router {router.get('name') or router.get('address', '')}")
+        key, info = _poll_and_record(conn, kind, router)
         latest[key] = info
-        updates = [(key, "router", [info.get(k) for k in RRD_SCHEMAS["router"]])]
-        if info.get("ppp") is not None:
-            updates.append((_rrd_ppp(key), "ppp", [info["ppp"]]))
-        if info.get("hotspot") is not None:
-            updates.append((_rrd_hotspot(key), "hotspot", [info["hotspot"]]))
-        for iface, counters in (info.get("ifaces") or {}).items():
-            updates.append((_rrd_iface(key, iface), "iface", [counters.get(k) for k in RRD_SCHEMAS["iface"]]))
-        for rrd, schema, values in updates:
-            try:
-                _rrd_update(rrd, schema, values)
-            except Exception as e:
-                app.logger.warning(f"router RRD {rrd}: {e}")
     prune_jobs(conn, "gui", "router", job_names)
     with _mon_lock:
         _mon["routers"] = latest
     _record_conditions(conn, "router", _router_conditions(latest))
+
+
+def _poll_and_record(conn, kind, router):
+    """Poll one router, record the poll as its job and update its RRDs. Returns (key, info)."""
+    name = router.get("name") or router.get("address", "")
+    with timed_job(conn, f"router {name}", "router", "gui", MONITOR_STEP) as job:
+        info = _poll_router(kind, router)
+        job["error"] = info["error"]
+    key = _router_key(kind, name)
+    with _mon_lock:
+        prev = _mon["routers"].get(key)
+    rules, lists = info.pop("nat_rules", None), info.pop("nat_lists", {})
+    if rules is not None:
+        info["nat"] = _nat_findings(rules, lists, _router_ips(conn, name))
+    elif info.get("via") == "snmp" and prev and "nat" in prev:
+        info["nat"] = prev["nat"]        # SNMP polls check NAT (over the API) only now and then
+    if kind == "bras" and info.get("via") == "snmp" and info.get("ok") and _service_on(router, "hotspot"):
+        info["hotspot"] = _scanned_hotspot_users(conn, name)
+    _add_interface_rates(info, prev)
+    updates = [(key, "router", [info.get(k) for k in RRD_SCHEMAS["router"]])]
+    if info.get("ppp") is not None:
+        updates.append((_rrd_ppp(key), "ppp", [info["ppp"]]))
+    if info.get("hotspot") is not None:
+        updates.append((_rrd_hotspot(key), "hotspot", [info["hotspot"]]))
+    for iface, counters in (info.get("ifaces") or {}).items():
+        updates.append((_rrd_iface(key, iface), "iface", [counters.get(k) for k in RRD_SCHEMAS["iface"]]))
+    for rrd, schema, values in updates:
+        try:
+            _rrd_update(rrd, schema, values)
+        except Exception as e:
+            app.logger.warning(f"router RRD {rrd}: {e}")
+    return key, info
 
 
 # ── Burst (PowerBoost-style, for all traffic) ─────────────────────────────
@@ -1587,6 +1599,7 @@ def start_monitoring():
     threading.Thread(target=_monitor_loop, args=(_stats_job, "stats"), daemon=True).start()
     threading.Thread(target=_monitor_loop, args=(_poll_routers, "router polls"), daemon=True).start()
     threading.Thread(target=_monitor_loop, args=(_burst_tick, "burst", BURST_CHECK_STEP), daemon=True).start()
+    threading.Thread(target=_monitor_loop, args=(_autofix_tick, "auto-fix"), daemon=True).start()
 
 
 # ── Graphs (rendered by rrdtool, styled to match the GUI) ──────────────────
@@ -1822,6 +1835,532 @@ def _libreqos_services():
     return _lqos_state["value"]
 
 
+# ── Fix buttons and auto-fix (Pollers → Pollers and jobs) ───────────────────
+# job_fixer decides what a job's error means and which fix applies; the
+# fixes are carried out here. Every run returns the steps it took (shown
+# under the job), and the last result per job is kept in memory for the
+# table. Auto-fix runs the fixes job_fixer marks safe, once a minute, each
+# at most once per cooldown, and logs what it did to the Events history.
+RRD_BROKEN_DIR  = RRD_DIR / "broken"     # graph files set aside by a fix
+FIX_RESULT_KEEP = 3600                   # seconds a fix result stays shown under its job
+GUI_RESTART_GRACE = 600                  # auto-fix never restarts the GUI sooner than this after it started
+_fix_results: dict = {}                  # job name → last fix result
+_fix_running: set = set()
+_fix_lock = threading.Lock()
+_autofix_tried: dict = {}                # (job name, fix id) → when auto-fix last ran it
+
+
+class _Steps(list):
+    """What a fix did, step by step: ok True / False, or None for plain information."""
+    def __init__(self):
+        super().__init__()
+        self.commands = []               # commands to paste on a router, when nothing here can fix it
+
+    def add(self, ok, text):
+        self.append({"ok": None if ok is None else bool(ok), "text": str(text)})
+        return ok
+
+
+def _job_status(job, now):
+    """A job's shown status: its own, or 'late' when its service stopped running it."""
+    every = job.get("every") or 0
+    if every and now - (job.get("last_run") or 0) > every * 2.5 + 60:
+        return "late"
+    return job.get("status") or ""
+
+
+def _load_jobs(now=None):
+    """Every job as a dict with its shown status (WAN jobs only while WAN assignment is on)."""
+    now = now or time.time()
+    wan_on = _wan_enabled(_load_config())
+    try:
+        con = _db_con()
+        try:
+            ensure_jobs_table(con)
+            rows = con.execute("SELECT * FROM jobs ORDER BY service, kind, name").fetchall()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return []
+    jobs = []
+    for r in rows:
+        if r["service"] == "wan_service" and not wan_on:
+            continue
+        job = dict(r)
+        job["status"] = _job_status(job, now)
+        jobs.append(job)
+    return jobs
+
+
+def _job_target_name(job):
+    """The router a scan / webhook / router job is named after ('scan AC 1' → 'AC 1'), or ''."""
+    for prefix in ("scan ", "webhook ", "router "):
+        if job["name"].startswith(prefix):
+            return job["name"][len(prefix):]
+    return ""
+
+
+def _job_routers(job):
+    """[(kind, router)] a job talks to: its own router, or every core router for WAN jobs."""
+    cfg = _load_config()
+    if job.get("kind") == "wan":
+        return [("core", r) for r in cfg.get("cores") or [] if r.get("address")]
+    target = _job_target_name(job)
+    if not target:
+        return []
+    raw_bras = [r for r in cfg.get("bras") or [] if isinstance(r, dict)]
+    candidates = [("bras", r, n) for r, n in zip(raw_bras, _router_names(cfg))] + \
+                 [("core", r, r.get("name")) for r in cfg.get("cores") or [] if isinstance(r, dict)]
+    for kind, r, synced_name in candidates:
+        if target in (synced_name, r.get("name"), r.get("address")):
+            return [(kind, {**r, "port": int(r.get("port", 8728) or 8728)})]
+    return []
+
+
+# ── Graph files ──
+
+def _rrd_last(path):
+    r = subprocess.run([RRDTOOL, "last", str(path)], capture_output=True, text=True, timeout=10)
+    out = r.stdout.strip()
+    return int(out) if r.returncode == 0 and out.isdigit() else None
+
+
+def _rrd_set_aside(path):
+    """Move a graph file out of the way (into rrd/broken/); the next sample starts a fresh one."""
+    RRD_BROKEN_DIR.mkdir(parents=True, exist_ok=True)
+    dest = RRD_BROKEN_DIR / f"{path.stem}-{time.strftime('%Y%m%d-%H%M%S')}.rrd"
+    os.replace(path, dest)
+    return dest
+
+
+def _rrd_shift_back(path, now):
+    """Rewrite one graph file so its last update is before now (dump → shift → restore). Returns seconds moved."""
+    dump = subprocess.run([RRDTOOL, "dump", str(path)], capture_output=True, text=True, timeout=120)
+    if dump.returncode != 0:
+        raise RuntimeError(dump.stderr.strip() or "rrdtool dump failed")
+    xml, shift = job_fixer.shift_rrd_dump(dump.stdout, now)
+    if not shift:
+        return 0
+    with tempfile.TemporaryDirectory(dir=RRD_DIR, prefix=".repair-") as tmp:
+        src, out = Path(tmp) / "dump.xml", Path(tmp) / path.name
+        src.write_text(xml)
+        r = subprocess.run([RRDTOOL, "restore", str(src), str(out)], capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or "rrdtool restore failed")
+        os.replace(out, path)
+    return shift
+
+
+def _fix_rrd_clock(job, steps):
+    """The clock went back: move every graph file whose last update is in the 'future' back to now."""
+    if not RRDTOOL:
+        steps.add(False, "rrdtool is not installed")
+        return False, "rrdtool is not installed"
+    now = int(time.time())
+    repaired, reset, moved = 0, 0, 0
+    for path in sorted(RRD_DIR.glob("*.rrd")):
+        last = _rrd_last(path)
+        if last is None or last < now:
+            continue
+        try:
+            moved = max(moved, _rrd_shift_back(path, now))
+            repaired += 1
+        except Exception as e:
+            dest = _rrd_set_aside(path)
+            reset += 1
+            steps.add(None, f"{path.name}: could not rewrite it ({e}); moved to rrd/broken/{dest.name}, it starts over")
+    if repaired:
+        steps.add(True, f"Moved the last update of {repaired} graph file(s) back by up to "
+                        f"{job_fixer.fmt_span(moved)}; their history moves back with it")
+    if not repaired and not reset:
+        steps.add(True, "No graph file is ahead of the clock any more")
+    steps.add(None, "The next sample (within a minute) is written normally")
+    return True, f"Repaired {repaired + reset} graph file(s)" if repaired + reset else "Graph files are fine now"
+
+
+def _fix_rrd_rebuild(job, steps):
+    m = job_fixer.RRD_OTHER_RE.search(job.get("last_error") or "")
+    path = RRD_DIR / Path(m.group("file")).name if m else None
+    if not path or not path.exists():
+        steps.add(True, "The graph file is gone already; the next sample creates it again")
+        return True, "Graph file will be recreated"
+    dest = _rrd_set_aside(path)
+    steps.add(True, f"Moved {path.name} to rrd/broken/{dest.name}; the next sample starts a fresh one")
+    return True, f"Rebuilding {path.name}"
+
+
+# ── Services ──
+
+def _restart_unit(name, steps):
+    """Restart one of this app's services (or LibreQoS in its required order); True when it came up."""
+    if name == "gui":
+        _gui_action_later(("restart",), delay=2.0)
+        steps.add(True, "Restarting the GUI in 2 s; this page reconnects by itself")
+        return True
+    if name in ("lqosd", "lqos_scheduler"):
+        r = _restart_libreqos()
+        steps.add(r.get("ok"), "Restarted lqosd, then lqos_scheduler" if r.get("ok")
+                  else f"Restarting LibreQoS failed: {r.get('error')}")
+        if r.get("log"):
+            steps.add(None, "Last log lines:\n" + r["log"])
+        return bool(r.get("ok"))
+    unit = _svc_name(name)
+    _systemctl("reset-failed", unit, capture_output=True, text=True, timeout=10)
+    r = _systemctl("restart", unit, capture_output=True, text=True, timeout=90)
+    if r.returncode != 0:
+        steps.add(False, f"systemctl restart {unit}: {r.stderr.strip() or 'failed'}")
+        ok = False
+    else:
+        time.sleep(2)
+        state = _unit_state(unit)
+        ok = state in ("active", "activating")
+        steps.add(ok, f"Restarted {unit}: it is {state}")
+    if not ok:
+        tail = _journal_tail(unit)
+        if tail:
+            steps.add(None, "Last log lines:\n" + tail)
+    return ok
+
+
+def _ensure_running(name, steps):
+    """Start a service that should be running a job; True when it runs."""
+    state = _unit_state(_svc_name(name))
+    if state in ("active", "activating", "reloading", "unknown"):   # unknown: no systemd (dev / preview)
+        return True
+    steps.add(None, f"{name} is {state}")
+    return _restart_unit(name, steps)
+
+
+def _retry_job(job, steps):
+    """Run a job again now, or as soon as its service can. True when the re-run was started or queued."""
+    service, kind, name = job.get("service"), job.get("kind"), job["name"]
+    if service == "updatecsv":
+        if not _ensure_running("updatecsv", steps):
+            return False
+        con = _db_con()
+        try:
+            ensure_webhook_table(con)
+            target = _job_target_name(job)
+            if kind in ("poller", "webhook") and target:
+                request_rescan(con, target)
+                steps.add(True, f"Asked updatecsv to rescan {target} now (its row updates when the scan ends)")
+            else:
+                request_apply(con)
+                steps.add(True, "Asked updatecsv to rebuild the files and re-apply LibreQoS now")
+        finally:
+            con.close()
+        return True
+    if service == "wan_service":
+        return _restart_unit("wan_service", steps)    # it runs a cycle as it starts
+    if kind == "router":
+        targets = _job_routers(job)
+        if not targets:
+            steps.add(False, "This router is no longer in config.json")
+            return False
+        conn = sqlite3.connect(str(DB_PATH), timeout=30)
+        try:
+            key, info = _poll_and_record(conn, *targets[0])
+        finally:
+            conn.close()
+        with _mon_lock:
+            _mon["routers"][key] = info
+        steps.add(info.get("ok"), f"Polled {targets[0][1].get('name') or ''} again: "
+                                  + ("it answers" if info.get("ok") else info.get("error") or "no answer"))
+        return bool(info.get("ok"))
+    if kind == "burst":
+        _burst["last_pass"] = 0
+        steps.add(True, "The next burst check (within 10 s) runs a full class pass")
+        return True
+    steps.add(True, "It runs again on its next interval (within a minute)")
+    return True
+
+
+def _fix_retry(job, steps):
+    ok = _retry_job(job, steps)
+    return ok, "Re-run started" if ok else "Could not re-run it"
+
+
+def _fix_restart_service(job, steps):
+    service = job.get("service") or ""
+    if service not in MANAGED_SERVICES:
+        steps.add(False, f"'{service}' is not a service this app manages")
+        return False, "Unknown service"
+    steps.add(None, f"{service} is {_unit_state(_svc_name(service))}")
+    ok = _restart_unit(service, steps)
+    return ok, f"Restarted {service}" if ok else f"{service} would not start — see its log lines"
+
+
+def _fix_apply(job, steps):
+    """A failed LibreQoS update: restart LibreQoS when it is down or hung, then re-apply."""
+    lqosd, sched = _unit_state("lqosd.service"), _unit_state("lqos_scheduler.service")
+    steps.add(lqosd in ("active", "unknown"), f"lqosd is {lqosd}, lqos_scheduler is {sched}")
+    hung = bool(job_fixer.LQOSD_RE.search(job.get("last_error") or ""))
+    if lqosd not in ("active", "unknown") or sched == "failed" or hung:
+        if not _restart_unit("lqosd", steps):
+            return False, "LibreQoS would not restart — see its log lines"
+    if not _retry_job(job, steps):
+        return False, "Could not ask updatecsv to re-apply"
+    return True, "LibreQoS re-apply requested"
+
+
+def _fix_config(job, steps):
+    """config.json is unusable: put back the last copy a sync cycle could read (the broken one is kept)."""
+    last_good = CONFIG_PATH.with_name(CONFIG_PATH.name + ".lastgood")
+    try:
+        current = CONFIG_PATH.read_text()
+    except OSError as e:
+        current = None
+        steps.add(False, f"config.json: {e}")
+    if current is not None:
+        try:
+            json.loads(current)
+            steps.add(None, "config.json is valid JSON; a setting in it is not usable: "
+                            + (job.get("last_error") or "")[:200])
+        except ValueError as e:
+            steps.add(False, f"config.json is not valid JSON: {e}")
+    if not last_good.exists():
+        steps.add(False, "There is no last good copy yet (updatecsv keeps one after every cycle that can read "
+                         "config.json, from this version on)")
+        return False, "Fix config.json in Settings → Raw JSON"
+    good = last_good.read_text()
+    if good == current:
+        steps.add(False, "config.json is the same as the last good copy, so restoring it would change nothing")
+        return False, "Fix the setting named above in Settings"
+    if current is not None:
+        backup = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.broken-{time.strftime('%Y%m%d-%H%M%S')}")
+        atomic_write_text(backup, current, mode=0o600)
+        steps.add(True, f"Kept the unusable file as {backup.name}")
+    atomic_write_text(CONFIG_PATH, good)
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(last_good.stat().st_mtime))
+    steps.add(True, f"Restored config.json from the last good copy (saved {when})")
+    _retry_job(job, steps)
+    return True, "Restored the last good config.json"
+
+
+def _fix_free_disk(job, steps):
+    """Free space: old journal logs, apt's package cache, graph files set aside over a week ago."""
+    du = shutil.disk_usage("/")
+    before = du.free
+    for label, cmd in (("Trimmed the system journal to 200 MB", [JOURNALCTL, "--vacuum-size=200M"]),
+                       ("Emptied apt's package cache", [_which("apt-get") or "apt-get", "clean"])):
+        try:
+            r = subprocess.run(_as_root(cmd), capture_output=True, text=True, timeout=120)
+            steps.add(r.returncode == 0, label if r.returncode == 0 else f"{label}: {r.stderr.strip()[-200:]}")
+        except Exception as e:
+            steps.add(False, f"{label}: {e}")
+    removed = 0
+    for p in RRD_BROKEN_DIR.glob("*.rrd") if RRD_BROKEN_DIR.exists() else []:
+        if time.time() - p.stat().st_mtime > 7 * 86400:
+            p.unlink(missing_ok=True)
+            removed += 1
+    if removed:
+        steps.add(True, f"Deleted {removed} old set-aside graph file(s)")
+    du = shutil.disk_usage("/")
+    ok = du.free / du.total >= 0.03
+    steps.add(ok, f"Freed {_fmt_bytes(max(0, du.free - before))}: {_fmt_bytes(du.free)} free now")
+    if not ok:
+        steps.add(None, "Still nearly full: find what is big with  du -xh / | sort -h | tail -20")
+    return ok, f"{_fmt_bytes(du.free)} free now"
+
+
+# ── Routers ──
+
+def _probe_router(kind, router):
+    """Where the path to a router's API stops: DNS, route, ping, TCP port, login. See job_fixer.router_verdict."""
+    addr = (router.get("address") or "").strip()
+    port = int(router.get("port", 8728) or 8728)
+    p = {"address": addr, "port": port}
+    try:
+        p["ip"] = socket.getaddrinfo(addr, port, type=socket.SOCK_STREAM)[0][4][0]
+        p["resolved"] = True
+    except (OSError, UnicodeError) as e:
+        p.update(resolved=False, resolve_error=str(e))
+        return p
+    ip_bin = _which("ip")
+    if ip_bin:
+        try:
+            r = subprocess.run([ip_bin, "route", "get", p["ip"]], capture_output=True, text=True, timeout=5)
+            line = r.stdout.strip().splitlines()[0] if r.returncode == 0 and r.stdout.strip() else ""
+            # "192.0.2.11 via 172.20.10.1 dev eth0 src 172.20.10.2 uid 1000" → "via 172.20.10.1 dev eth0 src …"
+            parts = dict(re.findall(r"\b(via|dev|src) (\S+)", line))
+            if parts:
+                p["route"] = " ".join(f"{k} {parts[k]}" for k in ("via", "dev", "src") if k in parts)
+                p["src"] = parts.get("src", "")
+        except Exception:
+            pass
+    ping_bin = _which("ping")
+    p["ping"] = None
+    if ping_bin:
+        try:
+            p["ping"] = subprocess.run([ping_bin, "-c", "2", "-W", "1", p["ip"]],
+                                       capture_output=True, text=True, timeout=10).returncode == 0
+        except Exception:
+            pass
+    t0 = time.monotonic()
+    try:
+        with socket.create_connection((p["ip"], port), timeout=4):
+            p.update(tcp="ok", tcp_ms=(time.monotonic() - t0) * 1000)
+    except ConnectionRefusedError as e:
+        p.update(tcp="refused", tcp_error=str(e))
+    except socket.timeout:
+        p.update(tcp="timeout", tcp_error="timed out")
+    except OSError as e:
+        p.update(tcp={errno.EHOSTUNREACH: "unreachable", errno.ENETUNREACH: "no_route"}.get(e.errno, "error"),
+                 tcp_error=str(e))
+    if p["tcp"] == "ok":
+        pool = None
+        try:
+            pool = _connect_router_api(router)
+            pool.socket_timeout = 5
+            ident = (pool.get_api().get_resource("/system/identity").get() or [{}])[0]
+            p.update(login="ok", identity=ident.get("name", ""))
+        except Exception as e:
+            msg = str(e) or type(e).__name__
+            p.update(login="auth" if job_fixer.ROUTER_AUTH_RE.search(msg) else "error", login_error=msg)
+        finally:
+            if pool is not None:
+                try:
+                    pool.disconnect()
+                except Exception:
+                    pass
+    with _mon_lock:
+        health = _mon["routers"].get(_router_key(kind, router.get("name") or addr))
+    if health:
+        p["health_ok"], p["health_via"] = health.get("ok"), health.get("via")
+    return p
+
+
+def _fix_router(job, steps):
+    """Probe the job's router(s); when the API answers again, re-run the job. Otherwise say where it stops."""
+    targets = _job_routers(job)
+    if not targets:
+        steps.add(False, "No router in config.json matches this job")
+        return False, "Router not found in config.json"
+    all_ok = True
+    for kind, router in targets:
+        p = _probe_router(kind, router)
+        name = router.get("name") or p["address"]
+        steps.add(p.get("resolved"), f"{name}: {p['address']} → {p.get('ip') or 'does not resolve'}")
+        if p.get("route"):
+            steps.add(None, f"route: {p['route']}")
+        if p.get("ping") is not None:
+            steps.add(p["ping"], "ping answers" if p["ping"] else "ping: no answer")
+        if "tcp" in p:
+            steps.add(p["tcp"] == "ok", f"TCP {p['port']} (API): " +
+                      (f"open in {p['tcp_ms']:.0f} ms" if p["tcp"] == "ok" else p.get("tcp_error") or p["tcp"]))
+        if p.get("login"):
+            steps.add(p["login"] == "ok", "API login: " +
+                      (f"ok, identity {p.get('identity') or '?'}" if p["login"] == "ok" else p.get("login_error", "")))
+        verdict = job_fixer.router_verdict(p)
+        steps.add(verdict["ok"], verdict["cause"])
+        if verdict["advice"]:
+            steps.add(None, verdict["advice"])
+        steps.commands += [c for c in verdict["commands"] if c not in steps.commands]
+        all_ok = all_ok and verdict["ok"]
+    if not all_ok:
+        return False, "The router cannot be reached from here — see the steps for what to change"
+    if job_fixer.ROUTER_PERM_RE.search(job.get("last_error") or ""):
+        steps.add(None, "If it fails again on permissions: Troubleshoot → API permissions shows what the user lacks")
+    ok = _retry_job(job, steps)
+    return ok, "The router answers again; job re-run" if ok else "The router answers, but the re-run failed"
+
+
+JOB_FIXES = {
+    "rrd_clock":       _fix_rrd_clock,
+    "rrd_rebuild":     _fix_rrd_rebuild,
+    "restart_service": _fix_restart_service,
+    "apply":           _fix_apply,
+    "config":          _fix_config,
+    "free_disk":       _fix_free_disk,
+    "router":          _fix_router,
+    "retry":           _fix_retry,
+}
+
+
+def _run_fix(job, auto=False):
+    """Run the fix job_fixer picks for a job; returns (and keeps) the result shown under it."""
+    name = job["name"]
+    diag = job_fixer.diagnose(job)
+    if diag is None:
+        return {"ok": True, "summary": "The job runs fine now; nothing to fix", "steps": [], "commands": [],
+                "auto": auto, "at": time.time()}
+    with _fix_lock:
+        if name in _fix_running:
+            return {"ok": False, "summary": "A fix for this job is already running", "steps": [],
+                    "commands": [], "auto": auto, "at": time.time()}
+        _fix_running.add(name)
+    steps, started = _Steps(), time.time()
+    try:
+        ok, summary = JOB_FIXES[diag["id"]](job, steps)
+    except Exception as e:
+        ok, summary = False, f"The fix stopped with an error: {e}"
+        steps.add(False, str(e) or type(e).__name__)
+    finally:
+        with _fix_lock:
+            _fix_running.discard(name)
+    result = {"ok": bool(ok), "id": diag["id"], "label": diag["label"], "summary": summary,
+              "steps": list(steps), "commands": steps.commands, "auto": auto,
+              "at": time.time(), "took": time.time() - started}
+    _fix_results[name] = result
+    if auto:
+        app.logger.warning(f"Auto-fix for job '{name}' ({diag['label']}): "
+                           f"{'done' if ok else 'did not help'} — {summary}")
+    else:
+        app.logger.info(f"Fix for job '{name}' ({diag['label']}): {'done' if ok else 'failed'} — {summary}")
+    return result
+
+
+def _may_auto_restart(service):
+    """Auto-fix restarts a service that crashed or hangs, never one stopped on purpose."""
+    if service == "gui":
+        return time.time() - _STARTED_AT > GUI_RESTART_GRACE
+    return _unit_state(_svc_name(service)) in ("active", "activating", "failed")
+
+
+def _autofix_tick(conn):
+    """Once a minute: run the safe fix of every failing or stopped job whose cooldown has passed."""
+    s = auto_fix_settings()
+    if not s["enabled"]:
+        return
+    now = time.time()
+    for job in _load_jobs(now):
+        diag = job_fixer.diagnose(job)
+        if not diag or not diag["auto"]:
+            continue
+        key = (job["name"], diag["id"])
+        if now - _autofix_tried.get(key, 0) < s["cooldown"]:
+            continue
+        if diag["id"] == "restart_service" and not _may_auto_restart(job.get("service", "")):
+            continue
+        _autofix_tried[key] = now
+        _run_fix(job, auto=True)
+
+
+@app.route("/api/jobs/fix", methods=["POST"])
+@require_auth
+def fix_job():
+    """Run the fix for one job of the Pollers table (the Fix button)."""
+    name = str((request.get_json(silent=True) or {}).get("name") or "")
+    job = next((j for j in _load_jobs() if j["name"] == name), None)
+    if job is None:
+        return jsonify({"ok": False, "error": f"No job named '{name}'"}), 404
+    return jsonify({"ok": True, "result": _run_fix(job)})
+
+
+@app.route("/api/jobs/autofix", methods=["POST"])
+@require_auth
+def set_autofix():
+    """Turn auto-fix on or off (settings.json auto_fix.enabled)."""
+    enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
+    try:
+        content = json.loads(SETTINGS_PATH.read_text()) if SETTINGS_PATH.exists() else {}
+        content["auto_fix"] = {**(content.get("auto_fix") or {}), "enabled": enabled}
+        atomic_write_text(SETTINGS_PATH, json.dumps(content, indent=4))
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    return jsonify({"ok": True, "enabled": enabled})
+
+
 @app.route("/api/monitor")
 @require_auth
 def monitor_status():
@@ -1854,25 +2393,13 @@ def monitor_status():
         routers.append(info)
 
     wan_on = _wan_enabled(cfg)
-    jobs = []
-    try:
-        con = _db_con()
-        try:
-            ensure_jobs_table(con)
-            rows = con.execute("SELECT * FROM jobs ORDER BY service, kind, name").fetchall()
-        finally:
-            con.close()
-    except sqlite3.Error:
-        rows = []
-    for r in rows:
-        if r["service"] == "wan_service" and not wan_on:
-            continue
-        job = dict(r)
-        every = job["every"] or 0
-        if every and now - job["last_run"] > every * 2.5 + 60:
-            job["status"] = "late"     # the service is stopped or stuck
+    jobs = _load_jobs(now)
+    for job in jobs:
         job["cpu_now"] = cpu_now.get(job["name"])
-        jobs.append(job)
+        job["fix"] = job_fixer.diagnose(job)
+        result = _fix_results.get(job["name"])
+        job["fix_result"] = result if result and now - result["at"] < FIX_RESULT_KEEP else None
+        job["fixing"] = job["name"] in _fix_running
 
     checks = _service_checks() + _nat_checks(routers) + checks
     services = _libreqos_services()             # cached for 15 s, so the second call is free
@@ -1901,6 +2428,7 @@ def monitor_status():
         "burst": {k: _burst.get(k) for k in ("state", "util", "error", "classes", "raised", "seconds")},
         "wan_enabled": wan_on,
         "events": events,
+        "auto_fix": auto_fix_settings()["enabled"],
     })
 
 
@@ -2730,15 +3258,15 @@ def webhook_status():
         try:
             for row in con.execute(
                     "SELECT router, COUNT(*), SUM(processed_at = 0) FROM webhook_events "
-                    "WHERE received_at >= ? GROUP BY router", (time.time() - 86400,)):
+                    "WHERE received_at >= ? AND event NOT IN ('rescan', 'apply') GROUP BY router", (time.time() - 86400,)):
                 counts[row[0]] = (row[1], row[2] or 0)
             for row in con.execute(
                     "SELECT router, event, user, ip, received_at FROM webhook_events "
-                    "WHERE id IN (SELECT MAX(id) FROM webhook_events GROUP BY router)"):
+                    "WHERE id IN (SELECT MAX(id) FROM webhook_events WHERE event NOT IN ('rescan', 'apply') GROUP BY router)"):
                 last[row[0]] = dict(row)
             recent = [dict(r) for r in con.execute(
                 "SELECT router, event, user, ip, source_ip, received_at, processed_at "
-                "FROM webhook_events ORDER BY id DESC LIMIT 25")]
+                "FROM webhook_events WHERE event NOT IN ('rescan', 'apply') ORDER BY id DESC LIMIT 25")]
         except sqlite3.OperationalError:
             pass                      # no event has been received yet
         finally:

@@ -110,6 +110,21 @@ def record_webhook_event(conn, router, event, service='', user='', ip='', caller
     conn.commit()
 
 
+# Requests from the GUI's Fix buttons, queued like webhook events so
+# updatecsv wakes up at once: rescan one router (router = its name), or
+# rebuild and re-apply LibreQoS's files (router = ALL_ROUTERS).
+RESCAN_EVENT, APPLY_EVENT, ALL_ROUTERS = 'rescan', 'apply', '*'
+INTERNAL_EVENTS = (RESCAN_EVENT, APPLY_EVENT)
+
+
+def request_rescan(conn, router_name):
+    record_webhook_event(conn, router_name, RESCAN_EVENT, source_ip='gui')
+
+
+def request_apply(conn):
+    record_webhook_event(conn, ALL_ROUTERS, APPLY_EVENT, source_ip='gui')
+
+
 def pending_webhook_events(conn):
     return conn.execute("SELECT COUNT(*) FROM webhook_events WHERE processed_at = 0").fetchone()[0]
 

@@ -11,12 +11,13 @@ from cpu_planner import dedupe_router_names, topology_errors, lqos_conf_warnings
 from device_database import (
     DeviceDatabase, timed_job, prune_jobs, unshaped_by_ip_ranges,
     pending_webhook_events, take_webhook_events, prune_webhook_events,
+    RESCAN_EVENT, APPLY_EVENT,
 )
 from node_assigner import NodeAssigner, STRATEGY_CPU, STRATEGY_FLAT, STRATEGY_AUTO_CPU, ALL_STRATEGIES
 from router_scanner import RouterScanner
 from settings import (
     SCAN_INTERVAL, ERROR_RETRY_INTERVAL, LIBREQOS_UPDATE_COMMAND, LIBREQOS_UPDATE_TIMEOUT,
-    LQOS_CONF_PATH, libreqos_dir, libreqos_version, webhook_settings,
+    LQOS_CONF_PATH, libreqos_dir, libreqos_version, webhook_settings, atomic_write_text,
 )
 
 try:
@@ -30,6 +31,7 @@ except ImportError:
 # directory), or in LQSYNC_HOME when set (preview server, tests).
 APP_HOME    = os.environ.get('LQSYNC_HOME', '')
 CONFIG_JSON = os.path.join(APP_HOME, 'config.json')
+LAST_GOOD_CONFIG = CONFIG_JSON + '.lastgood'
 DB_FILE     = os.path.join(APP_HOME, 'devices.db')
 LQOS_CONF   = LQOS_CONF_PATH
 # ShapedDevices.csv and network.json stay in LibreQoS's directory, where LibreQoS reads them.
@@ -70,7 +72,8 @@ def read_config_json():
     """
     try:
         with open(CONFIG_JSON, 'r') as f:
-            config = json.load(f)
+            raw = f.read()
+        config = json.loads(raw)
 
         if not isinstance(config, dict):
             raise ValueError("top level must be a JSON object")
@@ -120,6 +123,7 @@ def read_config_json():
         logger.info(
             f"Read {len(routers)} routers from {CONFIG_JSON} (strategy={strategy})"
         )
+        save_last_good_config(raw)
         return SyncConfig(routers, strategy, queues, promote_to_root, topology,
                           queues_raw is True)
 
@@ -129,6 +133,24 @@ def read_config_json():
         raise ConfigError(f"invalid JSON in {CONFIG_JSON}: {e}")
     except Exception as e:
         raise ConfigError(f"unusable {CONFIG_JSON}: {e}")
+
+
+def save_last_good_config(raw):
+    """
+    Keep a copy of the last config.json a cycle could use, for the GUI's
+    "Restore last good config.json" fix. Written only when it changed, and
+    readable by root only: it holds the routers' passwords.
+    """
+    try:
+        try:
+            with open(LAST_GOOD_CONFIG, 'r') as f:
+                if f.read() == raw:
+                    return
+        except FileNotFoundError:
+            pass
+        atomic_write_text(LAST_GOOD_CONFIG, raw, mode=0o600)
+    except OSError as e:
+        logger.warning(f"Could not save {LAST_GOOD_CONFIG}: {e}")
 
 
 def libreqos_update_argv():
@@ -292,9 +314,12 @@ def run_webhook_cycle(db, scanner, assigner, cfg, events, update_pending=False) 
     full cycle. Returns True while a LibreQoS update is still pending.
     """
     ws = webhook_settings()
+    # The GUI's Fix buttons: re-apply LibreQoS even if no file changes
+    force_apply = any(e['event'] == APPLY_EVENT for e in events)
     by_router = {}
     for e in events:
-        by_router.setdefault(e['router'], []).append(e)
+        if e['event'] != APPLY_EVENT:
+            by_router.setdefault(e['router'], []).append(e)
     scan_time, scanned_ok = time.time(), []
     for router in cfg.routers:
         evs = by_router.pop(router['name'], None)
@@ -303,7 +328,13 @@ def run_webhook_cycle(db, scanner, assigner, cfg, events, update_pending=False) 
         users = {e['user'] for e in evs if e['event'] in ('up', 'down') and e['user']}
         full = len(users) > ws['full_scan_over'] or any(
             e['event'] not in ('up', 'down') or not e['user'] for e in evs)
-        with timed_job(db.conn, f"webhook {router['name']}", 'webhook', 'updatecsv', 0) as job:
+        # A rescan the GUI asked for counts as the router's regular scan job
+        if all(e['event'] == RESCAN_EVENT for e in evs):
+            job_args = (f"scan {router['name']}", 'poller', 'updatecsv', SCAN_INTERVAL)
+            logger.info(f"Rescan of {router['name']} requested from the GUI")
+        else:
+            job_args = (f"webhook {router['name']}", 'webhook', 'updatecsv', 0)
+        with timed_job(db.conn, *job_args) as job:
             if full:
                 ok, _ = scanner.scan_router(router, scan_time)
                 if ok:
@@ -316,7 +347,9 @@ def run_webhook_cycle(db, scanner, assigner, cfg, events, update_pending=False) 
                     f"{'' if ok else ' failed: ' + scanner.last_error}")
     for name, evs in by_router.items():
         logger.warning(f"Webhook: {len(evs)} event(s) for '{name}', which is not configured; ignored")
-    return build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending)
+    if force_apply:
+        logger.info("Rebuild and LibreQoS re-apply requested from the GUI")
+    return build_and_apply(db, assigner, cfg, scan_time, scanned_ok, update_pending or force_apply)
 
 
 def main():

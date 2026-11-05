@@ -525,6 +525,30 @@ code { font-size: .8rem; color: #94a3b8; }
 .st-ok    { color: var(--green); }
 .st-error { color: #ff7b72; }
 .st-late  { color: var(--yellow); }
+.jobs-table td.fix-cell { white-space: nowrap; text-align: right; }
+.btn-fix { background: #21262d; border: 1px solid var(--border); color: var(--strong); border-radius: 6px; padding: .26rem .6rem; font-size: .74rem; font-weight: 600; cursor: pointer; font-family: inherit; white-space: nowrap; }
+.btn-fix:hover:not(:disabled) { border-color: var(--muted); background: #30363d; }
+.btn-fix:disabled { opacity: .65; cursor: progress; }
+.btn-fix .bi { margin-right: .25rem; }
+.btn-fix .auto-tag { color: var(--green); font-size: .64rem; font-weight: 700; margin-left: .35rem; text-transform: uppercase; letter-spacing: .03em; }
+.job-cause { display: block; color: var(--muted); font-size: .72rem; white-space: normal; max-width: 560px; margin-top: .2rem; }
+.fix-res { margin-top: .35rem; max-width: 640px; border-left: 2px solid var(--border); padding: .15rem 0 .15rem .55rem; font-size: .74rem; white-space: normal; }
+.fix-res.ok  { border-left-color: var(--green); }
+.fix-res.bad { border-left-color: #ff7b72; }
+.fix-res-hd { cursor: pointer; color: var(--text); }
+.fix-res.ok .fix-res-hd .bi { color: var(--green); }
+.fix-res.bad .fix-res-hd .bi { color: #ff7b72; }
+.fix-steps { list-style: none; margin: .3rem 0 0; padding: 0; font-family: var(--mono); font-size: .7rem; }
+.fix-steps li { display: flex; gap: .4rem; padding: .08rem 0; color: var(--text); }
+.fix-steps li span { white-space: pre-wrap; word-break: break-word; }
+.fix-steps li.ok .bi   { color: var(--green); }
+.fix-steps li.bad .bi  { color: #ff7b72; }
+.fix-steps li.info .bi { color: var(--muted); }
+.fix-cmds { margin-top: .35rem; }
+.fix-cmds pre { margin: .2rem 0; padding: .45rem .55rem; background: #0d1117; border: 1px solid var(--border); border-radius: 6px; font-size: .7rem; white-space: pre-wrap; word-break: break-all; color: var(--strong); }
+.autofix-tgl { display: inline-flex; align-items: center; gap: .35rem; font-size: .78rem; color: var(--text); cursor: pointer; user-select: none; }
+.fix-spin { display: inline-block; width: .7rem; height: .7rem; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: fixspin .8s linear infinite; vertical-align: -1px; margin-right: .3rem; }
+@keyframes fixspin { to { transform: rotate(360deg); } }
 
 /* ── LibreQoS settings (lqos.conf form) ── */
 .lq-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
@@ -991,11 +1015,17 @@ code { font-size: .8rem; color: #94a3b8; }
   <div class="card" style="margin-top:1rem">
     <div class="card-hd">
       <span><i class="bi bi-cpu"></i> Pollers and jobs <span class="hd-sub">CPU = share of one core over the last minute, measured per job</span></span>
+      <div class="ov-tools">
+        <label class="autofix-tgl" title="Apply the safe fixes on its own (graph file repair, restarting a crashed or stuck service, restarting LibreQoS when its updates fail). Each job at most once per 15 minutes; every auto-fix is logged on the Events tab.">
+          <input type="checkbox" id="autofix-toggle" onchange="setAutoFix(this.checked)"> Auto-fix
+        </label>
+        <button class="seg-btn" id="btn-fix-all" onclick="fixAllJobs()" disabled><i class="bi bi-wrench-adjustable"></i> Fix all</button>
+      </div>
     </div>
     <div style="overflow-x:auto">
       <table class="jobs-table">
-        <thead><tr><th>Job</th><th>Kind</th><th>Status</th><th>Every</th><th>Last run</th><th>Took</th><th>CPU now</th><th>CPU total</th><th>Runs</th><th>Errors</th></tr></thead>
-        <tbody id="jobs-body"><tr><td colspan="10" class="dim">loading…</td></tr></tbody>
+        <thead><tr><th>Job</th><th>Kind</th><th>Status</th><th>Every</th><th>Last run</th><th>Took</th><th>CPU now</th><th>CPU total</th><th>Runs</th><th>Errors</th><th></th></tr></thead>
+        <tbody id="jobs-body"><tr><td colspan="11" class="dim">loading…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -6890,12 +6920,21 @@ function renderPollers(d) {
         </div></div>`).join('');
 
   // ── jobs ──
+  const fixable = jobs.filter(j => j.fix && j.status !== 'ok');
+  const fixAll = document.getElementById('btn-fix-all');
+  fixAll.disabled = !fixable.length || jobFixBusy.size > 0;
+  fixAll.innerHTML = `<i class="bi bi-wrench-adjustable"></i> Fix all${fixable.length ? ` (${fixable.length})` : ''}`;
+  const tgl = document.getElementById('autofix-toggle');
+  if (document.activeElement !== tgl) tgl.checked = !!d.auto_fix;
+
   document.getElementById('jobs-body').innerHTML = !jobs.length
-    ? '<tr><td colspan="10" class="dim">No jobs have run yet — each service records its first run within one interval.</td></tr>'
+    ? '<tr><td colspan="11" class="dim">No jobs have run yet — each service records its first run within one interval.</td></tr>'
     : jobs.map(j => `<tr>
         <td class="name">${esc(j.name)}<span class="dim" style="font-size:.72rem"> ${esc(j.service)}</span>
           ${j.status === 'error' && j.last_error ? `<span class="job-err">${esc(j.last_error)}</span>` : ''}
-          ${j.status === 'late' ? `<span class="job-err" style="color:var(--yellow)">no run for ${fmtAgo(j.last_run, now).replace(' ago', '')} — is ${esc(j.service)} running?</span>` : ''}</td>
+          ${j.status === 'late' ? `<span class="job-err" style="color:var(--yellow)">no run for ${fmtAgo(j.last_run, now).replace(' ago', '')} — is ${esc(j.service)} running?</span>` : ''}
+          ${j.fix && j.status !== 'ok' ? `<span class="job-cause">${esc(j.fix.cause)}</span>` : ''}
+          ${fixResultHtml(j, now)}</td>
         <td>${esc(j.kind)}</td>
         <td><span class="st st-${esc(j.status)}">${esc(j.status)}</span></td>
         <td>${fmtEvery(j.every)}</td>
@@ -6905,7 +6944,102 @@ function renderPollers(d) {
         <td>${fmtDur(j.cpu_total)}</td>
         <td>${j.runs}</td>
         <td class="${j.errors ? 'errs' : ''}" title="${j.errors ? esc(`last error ${fmtAgo(j.last_error_at, now)}: ${j.last_error}`) : ''}">${j.errors}</td>
+        <td class="fix-cell">${fixButtonHtml(j)}</td>
       </tr>`).join('');
+}
+
+// ── Fix buttons and auto-fix for the jobs table ──
+const jobFixBusy = new Set();      // jobs whose fix this page started and is waiting for
+const jobFixOpen = new Set();      // jobs whose fix steps are expanded
+
+function fixButtonHtml(j) {
+  if (!j.fix || j.status === 'ok') return '';
+  if (j.fixing || jobFixBusy.has(j.name))
+    return `<button class="btn-fix" disabled><span class="fix-spin"></span>Fixing…</button>`;
+  return `<button class="btn-fix" data-job="${esc(j.name)}" onclick="fixJob(this.dataset.job)"
+      title="${esc(j.fix.cause)}"><i class="bi bi-wrench-adjustable"></i>${esc(j.fix.label)}${
+      j.fix.auto ? '<span class="auto-tag" title="Auto-fix applies this one on its own">auto</span>' : ''}</button>`;
+}
+
+function fixResultHtml(j, now) {
+  const r = j.fix_result;
+  // A fixed job keeps its result shown for 15 minutes; a failing one while the server keeps it
+  if (!r || (j.status === 'ok' && now - r.at > 900)) return '';
+  const open = jobFixOpen.has(j.name);
+  const icon = ok => ok === true ? 'check2' : ok === false ? 'x-lg' : 'dot';
+  const steps = open ? `<ul class="fix-steps">${(r.steps || []).map(s =>
+      `<li class="${s.ok === true ? 'ok' : s.ok === false ? 'bad' : 'info'}"><i class="bi bi-${icon(s.ok)}"></i><span>${esc(s.text)}</span></li>`).join('')}</ul>` : '';
+  const cmds = open && (r.commands || []).length ? `<div class="fix-cmds"><span class="dim">Paste in the router's terminal:</span>
+      <pre>${esc(r.commands.join('\n'))}</pre>
+      <button class="btn-fix" onclick="copyFixCommands(this)"><i class="bi bi-clipboard"></i>Copy</button></div>` : '';
+  return `<div class="fix-res ${r.ok ? 'ok' : 'bad'}">
+      <div class="fix-res-hd" data-job="${esc(j.name)}" onclick="toggleFixSteps(this.dataset.job)">
+        <i class="bi bi-${r.ok ? 'check2-circle' : 'exclamation-triangle'}"></i>
+        ${r.auto ? 'Auto-fix' : 'Fix'} ${fmtAgo(r.at, now)}: ${esc(r.summary)}
+        <span class="dim">· ${open ? 'hide' : 'details'}</span></div>${steps}${cmds}</div>`;
+}
+
+function toggleFixSteps(name) {
+  jobFixOpen.has(name) ? jobFixOpen.delete(name) : jobFixOpen.add(name);
+  if (monitorData) renderPollers(monitorData);
+}
+
+async function copyFixCommands(btn) {
+  const text = btn.previousElementSibling.textContent;
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) {                               // plain-http pages have no clipboard API
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast('Commands copied');
+}
+
+async function fixJob(name, quiet = false) {
+  if (jobFixBusy.has(name)) return null;
+  jobFixBusy.add(name);
+  jobFixOpen.add(name);
+  if (monitorData) renderPollers(monitorData);
+  let result = null;
+  try {
+    const d = await apiJson('/api/jobs/fix', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                               body: JSON.stringify({ name }) });
+    if (!d.ok) throw new Error(d.error || 'the fix failed');
+    result = d.result;
+    const j = monitorData && (monitorData.jobs || []).find(x => x.name === name);
+    if (j) j.fix_result = result;
+    if (!quiet) toast(`${name}: ${result.summary}`, result.ok, result.ok ? 4000 : 8000);
+  } catch (e) {
+    toast(`${name}: ${e.message}`, false, 8000);
+  } finally {
+    jobFixBusy.delete(name);
+    await loadMonitor();
+    if (monitorData) renderPollers(monitorData);
+  }
+  return result;
+}
+
+async function fixAllJobs() {
+  const names = ((monitorData && monitorData.jobs) || []).filter(j => j.fix && j.status !== 'ok').map(j => j.name);
+  let fixed = 0;
+  for (const name of names) {                // one at a time: fixes may restart the same service
+    const r = await fixJob(name, true);
+    if (r && r.ok) fixed++;
+  }
+  if (names.length) toast(`Fixed ${fixed} of ${names.length} job(s)` + (fixed < names.length ? ' — see the details under the others' : ''),
+                          fixed === names.length, 6000);
+}
+
+async function setAutoFix(on) {
+  try {
+    const d = await apiJson('/api/jobs/autofix', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                   body: JSON.stringify({ enabled: on }) });
+    if (!d.ok) throw new Error(d.error || 'could not save');
+    if (monitorData) monitorData.auto_fix = d.enabled;
+    toast(d.enabled ? 'Auto-fix on: safe fixes run on their own' : 'Auto-fix off');
+  } catch (e) {
+    toast(`Auto-fix: ${e.message}`, false);
+    document.getElementById('autofix-toggle').checked = !on;
+  }
 }
 
 function fmtBps(bps) {
